@@ -1,0 +1,52 @@
+{
+  "exam": {
+    "title": "在线考试监考客户端",
+    "targetUrl": "https://oj.hntou.fmcf.cc/",
+    "allowedDomains": [
+      "oj.hntou.fmcf.cc"
+    ]
+  },
+  "systemNetworkLock": {
+    "enabled": true,
+    "proxyPort": 18899
+  },
+  "window": {
+    "kiosk": true,
+    "alwaysOnTop": true,
+    "preventMinimize": true,
+    "disableDevTools": true
+  },
+  "recording": {
+    "enabled": true,
+    "outputDir": "./records",
+    "fps": 15,
+    "videoFormat": "mp4",
+    "recordAudio": false,
+    "captureMouse": true
+  },
+  "antiCheat": {
+    "blockShortcuts": [
+      "Alt+Tab",
+      "CommandOrControl+Shift+I",
+      "CommandOrControl+R",
+      "F5",
+      "F11",
+      "F12"
+    ],
+    "processBlacklist": [
+      "chrome.exe",
+      "msedge.exe",
+      "firefox.exe",
+      "WeChat.exe",
+      "QQ.exe",
+      "DingTalk.exe",
+      "Feishu.exe",
+      "Telegram.exe",
+      "AnyDesk.exe",
+      "ToDesk.exe",
+      "TeamViewer.exe"
+    ],
+    "checkProcessIntervalMs": 3000,
+    "singleScreenOnly": true
+  }
+}

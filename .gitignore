@@ -1,0 +1,23 @@
+# Node 依赖
+node_modules/
+
+# 录屏产物与考试日志
+records/
+*.mp4
+*.webm
+*.log
+
+# 大型二进制文件 (ffmpeg 通过 npm 或独立下载)
+bin/ffmpeg.exe
+bin/*.exe
+
+# 构建输出
+dist/
+out/
+build/
+
+# 本地环境
+.npmrc
+.env
+.DS_Store
+Thumbs.db

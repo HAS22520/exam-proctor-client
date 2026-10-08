@@ -1,0 +1,27 @@
+{
+  "name": "exam-proctor-client",
+  "version": "1.0.0",
+  "description": "专用于在线评测系统的安全监考客户端 (具备全屏锁屏、屏幕录制、网站访问白名单阻断)",
+  "main": "app/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "proctor",
+    "exam",
+    "screen-recording",
+    "kiosk",
+    "whitelist"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.3.0"
+  }
+}
