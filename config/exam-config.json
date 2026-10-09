@@ -28,23 +28,34 @@
       "F12"
     ],
     "processBlacklist": [
+      "DeepSeek Harness.exe",
+      "DeepSeek.exe",
+      "QQ.exe",
+      "QQEX.exe",
+      "WeChat.exe",
+      "WeChatAppEx.exe",
       "chrome.exe",
       "msedge.exe",
       "firefox.exe",
-      "WeChat.exe",
-      "QQ.exe",
+      "ChatGPT.exe",
+      "Claude.exe",
+      "Kimi.exe",
+      "Chatbox.exe",
       "DingTalk.exe",
       "Feishu.exe",
       "Telegram.exe",
       "AnyDesk.exe",
       "ToDesk.exe",
       "TeamViewer.exe",
+      "RustDesk.exe",
       "clash-verge.exe",
       "verge-mihomo.exe",
       "clash.exe",
-      "v2ray.exe"
+      "v2rayN.exe",
+      "v2ray.exe",
+      "sing-box.exe"
     ],
-    "checkProcessIntervalMs": 3000,
+    "checkProcessIntervalMs": 1500,
     "singleScreenOnly": true
   }
 }

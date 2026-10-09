@@ -1,12 +1,11 @@
 <#
 .SYNOPSIS
-  考试专用 - 全局硬切断网络 (仅放行考试系统)
+  考试专用 - 底层物理级全局硬断网 (显式 BLOCK 规则覆盖所有已有白名单，仅放行考试系统)
 #>
 
-$targetDomain = "oj.hntou.fmcf.cc"
 $targetIps = @("115.159.24.121")
+$targetDomain = "oj.hntou.fmcf.cc"
 
-# 尝试解析当前域名真实 IP
 try {
     $resolved = [System.Net.Dns]::GetHostAddresses($targetDomain) | ForEach-Object { $_.IPAddressToString }
     if ($resolved) {
@@ -16,43 +15,60 @@ try {
 
 Write-Host "正在切断整机网络，仅保留考试系统白名单 IP: $($targetIps -join ', ')..." -ForegroundColor Yellow
 
-# 1. 尝试结束可能存在的代理劫持进程 (如 Clash / TUN)
-$proxyProcesses = @("clash-verge", "verge-mihomo", "clash", "v2ray", "xray", "sing-box")
-foreach ($proc in $proxyProcesses) {
+# 1. 强制清理已有的考试规则
+Get-NetFirewallRule -DisplayName "EXAM_*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+
+# 2. 强制关闭可能接管整机流量的代理服务与客户端
+$killList = @(
+    "clash-verge", "verge-mihomo", "clash", "v2rayN", "v2ray", "xray", "sing-box",
+    "DeepSeek Harness", "DeepSeek", "QQ", "QQEX", "WeChat", "WeChatAppEx"
+)
+foreach ($proc in $killList) {
     Stop-Process -Name $proc -Force -ErrorAction SilentlyContinue
 }
 
-# 2. 重置系统代理设置
+# 停止可能存在的后台 Windows 代理服务
+Stop-Service -Name "clash-verge-service" -Force -ErrorAction SilentlyContinue
+
+# 重置系统代理为关闭
 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name ProxyEnable -Value 0 -ErrorAction SilentlyContinue
 
-# 3. 清理已有的考试放行规则
-Get-NetFirewallRule -DisplayName "EXAM_ALLOW_*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+# 3. 添加显式 BLOCK 规则 (在 Windows 防火墙中，显式 BLOCK 规则的优先级绝对高于任何已有的 ALLOW 规则)
 
-# 4. 创建白名单放行规则
-# 4.1 放行 DNS (53 端口，用于域名解析)
-New-NetFirewallRule -DisplayName "EXAM_ALLOW_DNS" `
-    -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53 `
-    -Description "考试模式：放行 DNS 解析" | Out-Null
-New-NetFirewallRule -DisplayName "EXAM_ALLOW_DNS_TCP" `
-    -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53 `
-    -Description "考试模式：放行 DNS 解析 (TCP)" | Out-Null
+# 3.1 阻断 IPv6 全部外部流量
+New-NetFirewallRule -DisplayName "EXAM_BLOCK_IPV6" `
+    -Direction Outbound -Action Block -RemoteAddress "::/0" `
+    -Description "考试模式：阻断全部 IPv6 出站" | Out-Null
 
-# 4.2 放行 DHCP 与本地回环 (67/68 端口，维持本地网卡正常连接)
-New-NetFirewallRule -DisplayName "EXAM_ALLOW_DHCP" `
-    -Direction Outbound -Action Allow -Protocol UDP -LocalPort 68 -RemotePort 67 `
-    -Description "考试模式：维持本地网关地址" | Out-Null
+# 3.2 阻断除考试 IP 之外的所有 TCP 流量 (涵盖 80/443 及所有应用 TCP 连接)
+# 针对 115.159.24.121 进行前后 IP 段全闭环阻断
+New-NetFirewallRule -DisplayName "EXAM_BLOCK_TCP_BEFORE_OJ" `
+    -Direction Outbound -Action Block -Protocol TCP -RemoteAddress "0.0.0.0-115.159.24.120" `
+    -Description "考试模式：阻断考试服务器 IP 之前的所有 IPv4" | Out-Null
+
+New-NetFirewallRule -DisplayName "EXAM_BLOCK_TCP_AFTER_OJ" `
+    -Direction Outbound -Action Block -Protocol TCP -RemoteAddress "115.159.24.122-255.255.255.255" `
+    -Description "考试模式：阻断考试服务器 IP 之后的所有 IPv4" | Out-Null
+
+# 3.3 阻断除 DNS (53) 和 DHCP (67/68) 之外的所有 UDP 流量 (阻断 QQ/微信/游戏底层的 UDP 协议通信)
+New-NetFirewallRule -DisplayName "EXAM_BLOCK_UDP_RANGE1" `
+    -Direction Outbound -Action Block -Protocol UDP -RemotePort "1-52" `
+    -Description "考试模式：阻断 UDP 端口 1-52" | Out-Null
+
+New-NetFirewallRule -DisplayName "EXAM_BLOCK_UDP_RANGE2" `
+    -Direction Outbound -Action Block -Protocol UDP -RemotePort "54-66" `
+    -Description "考试模式：阻断 UDP 端口 54-66" | Out-Null
+
+New-NetFirewallRule -DisplayName "EXAM_BLOCK_UDP_RANGE3" `
+    -Direction Outbound -Action Block -Protocol UDP -RemotePort "69-65535" `
+    -Description "考试模式：阻断 UDP 端口 69-65535" | Out-Null
+
+# 4. 放行本地回环
 New-NetFirewallRule -DisplayName "EXAM_ALLOW_LOOPBACK" `
     -Direction Outbound -Action Allow -Protocol Any -RemoteAddress "127.0.0.1" `
-    -Description "考试模式：放行本地 IPC 通信" | Out-Null
+    -Description "考试模式：放行本地进程通信" | Out-Null
 
-# 4.3 仅放行考试系统 IP (80, 443 端口)
-foreach ($ip in $targetIps) {
-    New-NetFirewallRule -DisplayName "EXAM_ALLOW_OJ_$ip" `
-        -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress $ip -RemotePort 80, 443 `
-        -Description "考试模式：仅放行考试平台服务器" | Out-Null
-}
-
-# 5. 将 Windows 防火墙出站默认规则设为 Block (强力切断整台电脑其他所有出站连接)
+# 5. 调整出站默认行为为 Block 作为保底
 Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultOutboundAction Block
 
-Write-Host "✅ 全局网络阻断已生效！整台电脑其他所有软件与网站均已断网，仅考试平台可访问。" -ForegroundColor Green
+Write-Host "✅ 显式防火墙硬断网已生效！整机除 115.159.24.121 以外所有 IP 与端口全部阻断。" -ForegroundColor Green

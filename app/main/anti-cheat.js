@@ -90,32 +90,35 @@ class AntiCheatGuard {
     const blacklist = this.config.processBlacklist || [];
     if (blacklist.length === 0) return;
 
-    const interval = this.config.checkProcessIntervalMs || 5000;
+    const interval = this.config.checkProcessIntervalMs || 1500;
     const detectedBadProcs = new Set();
 
-    this.timer = setInterval(() => {
+    const scanAndKill = () => {
       exec('tasklist /fo csv /nh', (err, stdout) => {
         if (err || !stdout) return;
 
         const currentProcesses = stdout.toLowerCase();
         for (const badProc of blacklist) {
           if (currentProcesses.includes(badProc.toLowerCase())) {
-            console.warn(`[AntiCheat] [WARN] 检测到黑名单后台进程运行中: ${badProc}`);
+            console.warn(`[AntiCheat] [TERMINATE] 强制关闭黑名单违规软件: ${badProc}`);
+            
+            // 立即强制终止违规程序
+            exec(`taskkill /F /T /IM "${badProc}"`, () => {});
+
             this.violationLogs.push({
-              type: 'FORBIDDEN_PROCESS',
+              type: 'FORBIDDEN_PROCESS_KILLED',
               process: badProc,
               time: new Date().toISOString()
             });
 
-            // 避免高频短时间重复刷屏记录同个已发现进程
             if (!detectedBadProcs.has(badProc)) {
               detectedBadProcs.add(badProc);
               if (this.auditLogger) {
                 this.auditLogger.logViolation({
                   source: 'ANTI_CHEAT',
-                  type: 'FORBIDDEN_PROCESS',
+                  type: 'FORBIDDEN_PROCESS_KILLED',
                   target: badProc,
-                  detail: `检测到黑名单违规软件运行中: ${badProc}`
+                  detail: `检测到违规软件运行，已自动强制关闭: ${badProc}`
                 });
               }
             }
@@ -124,7 +127,11 @@ class AntiCheatGuard {
           }
         }
       });
-    }, interval);
+    };
+
+    // 启动时立即执行一次强制查杀，随后开启高频实时守护
+    scanAndKill();
+    this.timer = setInterval(scanAndKill, interval);
   }
 
   stop() {
