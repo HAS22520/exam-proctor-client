@@ -6,9 +6,8 @@
       "oj.hntou.fmcf.cc"
     ]
   },
-  "systemNetworkLock": {
-    "enabled": true,
-    "proxyPort": 18899
+  "globalFirewallLock": {
+    "enabled": true
   },
   "window": {
     "kiosk": true,
@@ -17,12 +16,7 @@
     "disableDevTools": true
   },
   "recording": {
-    "enabled": true,
-    "outputDir": "./records",
-    "fps": 15,
-    "videoFormat": "mp4",
-    "recordAudio": false,
-    "captureMouse": true
+    "enabled": false
   },
   "antiCheat": {
     "blockShortcuts": [
@@ -44,7 +38,11 @@
       "Telegram.exe",
       "AnyDesk.exe",
       "ToDesk.exe",
-      "TeamViewer.exe"
+      "TeamViewer.exe",
+      "clash-verge.exe",
+      "verge-mihomo.exe",
+      "clash.exe",
+      "v2ray.exe"
     ],
     "checkProcessIntervalMs": 3000,
     "singleScreenOnly": true

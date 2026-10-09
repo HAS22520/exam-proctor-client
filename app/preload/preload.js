@@ -51,17 +51,10 @@ function initProctorToolbar() {
         color: #e2e8f0;
         letter-spacing: 0.3px;
       }
-      .recording-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: #ef4444;
-        box-shadow: 0 0 10px #ef4444;
-        animation: pulse 1.6s infinite ease-in-out;
-      }
-      @keyframes pulse {
-        0%, 100% { opacity: 1; transform: scale(1); }
-        50% { opacity: 0.3; transform: scale(0.8); }
+      .shield-icon {
+        display: flex;
+        align-items: center;
+        color: #10b981;
       }
       .timer-badge {
         font-size: 13px;
@@ -106,8 +99,12 @@ function initProctorToolbar() {
     </style>
     <div class="proctor-pill">
       <div class="badge-status">
-        <div class="recording-dot"></div>
-        <span>监考录像中</span>
+        <span class="shield-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+          </svg>
+        </span>
+        <span>全局网络锁定中</span>
       </div>
       <div class="timer-badge" id="exam-timer">00:00:00</div>
       <div class="divider"></div>

@@ -13,9 +13,9 @@ app.commandLine.appendSwitch('log-level', '3');
 
 const AuditLogger = require('./audit-logger');
 const NetworkGuard = require('./network-guard');
-const ScreenRecorder = require('./screen-recorder');
 const AntiCheatGuard = require('./anti-cheat');
 const SystemProxyGuard = require('./system-proxy-guard');
+const FirewallGuard = require('./firewall-guard');
 
 // 资源路径解析（兼容开发环境与打包后的 extraResources）
 function resolveAppResource(relPath) {
@@ -38,9 +38,9 @@ try {
       targetUrl: 'https://oj.hntou.fmcf.cc/',
       allowedDomains: ['oj.hntou.fmcf.cc']
     },
+    globalFirewallLock: { enabled: true },
     systemNetworkLock: { enabled: true, proxyPort: 18899 },
-    window: { kiosk: false, alwaysOnTop: false },
-    recording: { enabled: true }
+    window: { kiosk: false, alwaysOnTop: false }
   };
 }
 
@@ -54,9 +54,9 @@ if (app.isPackaged) {
 let mainWindow = null;
 let auditLogger = null;
 let networkGuard = null;
-let screenRecorder = null;
 let antiCheatGuard = null;
 let systemProxyGuard = null;
+let firewallGuard = null;
 let isQuitting = false;
 let isCleanedUp = false;
 
@@ -103,7 +103,7 @@ function createWindow() {
         cancelId: 0,
         title: '退出提示',
         message: '确定要退出监考系统吗？',
-        detail: '退出后系统将解除网络白名单限制，停止录屏并生成违规访问审计报告。'
+        detail: '退出后系统将解除全局断网限制并生成违规访问审计报告。'
       });
 
       if (choice === 1) {
@@ -124,6 +124,12 @@ function createWindow() {
 // 清理所有监考与网络限制资源并生成报告
 async function cleanupAllResources() {
   console.log('[Main] [INFO] 正在清理资源并恢复系统正常网络...');
+  if (firewallGuard) {
+    try {
+      firewallGuard.unlock();
+    } catch (e) {}
+    firewallGuard = null;
+  }
   if (systemProxyGuard) {
     try {
       systemProxyGuard.stop();
@@ -136,12 +142,6 @@ async function cleanupAllResources() {
     } catch (e) {}
     antiCheatGuard = null;
   }
-  if (screenRecorder && screenRecorder.isRecording) {
-    try {
-      await screenRecorder.stop();
-    } catch (e) {}
-    screenRecorder = null;
-  }
   if (auditLogger) {
     try {
       auditLogger.finalize();
@@ -153,6 +153,9 @@ async function cleanupAllResources() {
 // 进程意外中断保底恢复
 function registerSafetyHandlers() {
   const safeExit = () => {
+    if (firewallGuard) {
+      try { firewallGuard.unlock(); } catch (e) {}
+    }
     if (systemProxyGuard) {
       try { systemProxyGuard.disableSystemProxy(); } catch (e) {}
     }
@@ -177,7 +180,17 @@ app.whenReady().then(async () => {
   // 1. 初始化集中式审计日志模块
   auditLogger = new AuditLogger(config);
 
-  // 2. 启动整机系统级白名单网络锁定
+  // 2. 启动 Windows 防火墙全局硬断网 (底层拦截所有其他外网出站，仅放行考试系统)
+  if (config.globalFirewallLock?.enabled) {
+    firewallGuard = new FirewallGuard(config, auditLogger);
+    try {
+      firewallGuard.lock();
+    } catch (err) {
+      console.warn('[Main] [WARN] 全局防火墙锁定启动异常:', err.message);
+    }
+  }
+
+  // 3. 启动整机系统级白名单代理作为双重防护
   if (config.systemNetworkLock?.enabled) {
     systemProxyGuard = new SystemProxyGuard(config, auditLogger);
     try {
@@ -185,12 +198,6 @@ app.whenReady().then(async () => {
     } catch (err) {
       console.warn('[Main] [WARN] 系统级网络锁定启动遇到异常，继续运行客户端拦截:', err.message);
     }
-  }
-
-  // 3. 启动屏幕录制
-  if (config.recording?.enabled) {
-    screenRecorder = new ScreenRecorder(config);
-    screenRecorder.start();
   }
 
   // 4. 创建主考试窗口
@@ -201,7 +208,7 @@ app.whenReady().then(async () => {
   });
 });
 
-// 应用退出前保存录屏数据、审计报告并恢复网络
+// 应用退出前保存审计报告并恢复网络
 app.on('before-quit', async (e) => {
   if (!isCleanedUp) {
     e.preventDefault();

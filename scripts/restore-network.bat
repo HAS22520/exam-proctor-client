@@ -1,10 +1,16 @@
 @echo off
 chcp 65001 >nul
-echo 正在重置 Windows 网络代理设置...
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f >nul
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0notify-wininet.ps1"
-echo.
 echo ====================================================
-echo [OK] Windows 系统代理已关闭，网络已完全恢复正常！
+echo   正在紧急恢复 Windows 全局网络与防火墙设置...
+echo ====================================================
+
+:: 重置代理
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f >nul
+
+:: 执行防火墙恢复脚本 (请求管理员提权执行)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"\"%~dp0unlock-firewall.ps1\"\"'"
+
+echo.
+echo [OK] 全局网络与防火墙已全部恢复正常！
 echo ====================================================
 pause
