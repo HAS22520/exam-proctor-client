@@ -1,0 +1,29 @@
+{
+  "version": "1.0.0",
+  "minClientVersion": "1.0.0",
+  "releaseDate": "2026-10-09T14:36:21.447Z",
+  "description": "在线考试监考客户端稳定版",
+  "changelog": [
+    "全面强化微信 (Weixin.exe)、QQ及即时通讯软件的实时查杀",
+    "切断 TUN 虚拟网卡隧道与本地代理服务，阻断代理旁路",
+    "修正 Windows 防火墙 IPv6 标准 CIDR 规则，杜绝协议绕过",
+    "支持云端远程热更新与策略热同步"
+  ],
+  "config": {
+    "version": "1.0.0",
+    "url": "https://cdn.jsdelivr.net/gh/HAS22520/exam-proctor-client@main/config/exam-config.json",
+    "fallbackUrl": "https://raw.githubusercontent.com/HAS22520/exam-proctor-client/main/config/exam-config.json"
+  },
+  "hotUpdate": {
+    "version": "1.0.0",
+    "asarUrl": "https://cdn.jsdelivr.net/gh/HAS22520/exam-proctor-client@main/updates/app.asar",
+    "fallbackUrl": "https://raw.githubusercontent.com/HAS22520/exam-proctor-client/main/updates/app.asar",
+    "size": 62827,
+    "sha256": "97b73b508d702f10cb892efd27a4a8348f244bf3d997353d3259b5e8a406a76b"
+  },
+  "fullUpdate": {
+    "version": "1.0.0",
+    "installerUrl": "https://github.com/HAS22520/exam-proctor-client/releases/download/v1.0.0/在线监考客户端.Setup.1.0.0.exe",
+    "portableUrl": "https://github.com/HAS22520/exam-proctor-client/releases/download/v1.0.0/在线监考客户端.1.0.0.exe"
+  }
+}

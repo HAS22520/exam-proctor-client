@@ -6,6 +6,13 @@
       "oj.hntou.fmcf.cc"
     ]
   },
+  "updater": {
+    "enabled": true,
+    "checkOnStartup": true,
+    "timeoutMs": 4000,
+    "versionUrl": "https://cdn.jsdelivr.net/gh/HAS22520/exam-proctor-client@main/version.json",
+    "fallbackVersionUrl": "https://raw.githubusercontent.com/HAS22520/exam-proctor-client/main/version.json"
+  },
   "globalFirewallLock": {
     "enabled": true
   },

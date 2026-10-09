@@ -16,6 +16,7 @@ const NetworkGuard = require('./network-guard');
 const AntiCheatGuard = require('./anti-cheat');
 const SystemProxyGuard = require('./system-proxy-guard');
 const FirewallGuard = require('./firewall-guard');
+const HotUpdater = require('./updater');
 
 // 资源路径解析（兼容开发环境与打包后的 extraResources）
 function resolveAppResource(relPath) {
@@ -26,23 +27,39 @@ function resolveAppResource(relPath) {
   return path.resolve(__dirname, '../../', relPath);
 }
 
-// 读取配置
-const configPath = resolveAppResource('config/exam-config.json');
-let config = {};
-try {
-  config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-} catch (e) {
-  console.error('[Main] [ERROR] 加载配置文件失败，使用默认配置', e);
-  config = {
-    exam: {
-      targetUrl: 'https://oj.hntou.fmcf.cc/',
-      allowedDomains: ['oj.hntou.fmcf.cc']
-    },
-    globalFirewallLock: { enabled: true },
-    systemNetworkLock: { enabled: true, proxyPort: 18899 },
-    window: { kiosk: false, alwaysOnTop: false }
-  };
+// 读取与动态合并配置 (支持打包自带配置与云端热同步已缓存配置)
+function loadConfig() {
+  const configPath = resolveAppResource('config/exam-config.json');
+  let cfg = {};
+  try {
+    cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  } catch (e) {
+    console.error('[Main] [ERROR] 加载配置文件失败，使用默认配置', e);
+    cfg = {
+      exam: {
+        targetUrl: 'https://oj.hntou.fmcf.cc/',
+        allowedDomains: ['oj.hntou.fmcf.cc']
+      },
+      globalFirewallLock: { enabled: true },
+      systemNetworkLock: { enabled: false },
+      window: { kiosk: true, alwaysOnTop: true }
+    };
+  }
+
+  // 动态合并云端热同步已缓存的配置
+  try {
+    const userCfgPath = path.join(app.getPath('userData'), 'config', 'exam-config.json');
+    if (fs.existsSync(userCfgPath)) {
+      const userCfg = JSON.parse(fs.readFileSync(userCfgPath, 'utf-8'));
+      cfg = Object.assign(cfg, userCfg);
+      console.log('[Main] [CONFIG] 已成功载入云端同步缓存配置');
+    }
+  } catch (e) {}
+
+  return cfg;
 }
+
+let config = loadConfig();
 
 // 打包模式下，如果输出路径是相对路径，让 records 位于 exe 所在的同级目录下
 if (app.isPackaged) {
@@ -51,6 +68,7 @@ if (app.isPackaged) {
   config.recording.outputDir = path.resolve(exeDir, config.recording.outputDir || './records');
 }
 
+let splashWindow = null;
 let mainWindow = null;
 let auditLogger = null;
 let networkGuard = null;
@@ -59,6 +77,45 @@ let systemProxyGuard = null;
 let firewallGuard = null;
 let isQuitting = false;
 let isCleanedUp = false;
+
+// 创建极速启动与热更新进度弹窗
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 480,
+    height: 290,
+    frame: false,
+    resizable: false,
+    center: true,
+    alwaysOnTop: true,
+    backgroundColor: '#0f172a',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, '../splash/splash-preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+
+  splashWindow.loadFile(path.join(__dirname, '../splash/splash.html'));
+  splashWindow.once('ready-to-show', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.show();
+    }
+  });
+}
+
+function updateSplashStatus(data) {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.webContents.send('splash:status', data);
+  }
+}
+
+function closeSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.destroy();
+    splashWindow = null;
+  }
+}
 
 function createWindow() {
   const isKiosk = config.window?.kiosk ?? true;
@@ -213,10 +270,38 @@ app.whenReady().then(async () => {
     }
   }
 
-  // 1. 初始化集中式审计日志模块
+  // 1. 打开极速启动与热更新进度弹窗
+  createSplashWindow();
+
+  // 2. 在切断全局网络之前，执行热更新与云端策略检测 (带超时保护)
+  config = loadConfig();
+  if (config.updater?.enabled !== false) {
+    const updater = new HotUpdater(config, auditLogger);
+    try {
+      const res = await updater.checkAndApplyUpdate((status) => {
+        updateSplashStatus(status);
+      });
+      if (res && res.updated) {
+        // 热补丁已应用并触发重启，主进程退出
+        return;
+      }
+    } catch (updateErr) {
+      console.warn('[Main] [WARN] 热更新检测遇到异常，正常进入监考:', updateErr.message);
+    }
+    // 重新载入可能更新的配置
+    config = loadConfig();
+  }
+
+  updateSplashStatus({
+    message: '考场安全策略已同步，正在启动监考全屏环境...',
+    percent: 100
+  });
+  await new Promise(r => setTimeout(r, 600));
+
+  // 3. 初始化集中式审计日志模块
   auditLogger = new AuditLogger(config);
 
-  // 2. 启动 Windows 防火墙全局硬断网 (底层拦截所有其他外网出站，仅放行考试系统)
+  // 4. 启动 Windows 防火墙全局硬断网 (底层拦截所有其他外网出站，仅放行考试系统)
   if (config.globalFirewallLock?.enabled) {
     firewallGuard = new FirewallGuard(config, auditLogger);
     try {
@@ -226,7 +311,7 @@ app.whenReady().then(async () => {
     }
   }
 
-  // 3. 启动整机系统级白名单代理作为双重防护
+  // 5. 启动整机系统级白名单代理作为双重防护 (可选)
   if (config.systemNetworkLock?.enabled) {
     systemProxyGuard = new SystemProxyGuard(config, auditLogger);
     try {
@@ -236,7 +321,8 @@ app.whenReady().then(async () => {
     }
   }
 
-  // 4. 创建主考试窗口
+  // 6. 关闭 Splash 启动窗并创建主全屏考试监考窗口
+  closeSplashWindow();
   createWindow();
 
   app.on('activate', () => {
