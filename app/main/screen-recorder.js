@@ -15,8 +15,12 @@ class ScreenRecorder {
     }
   }
 
-  // 寻找 FFmpeg 执行文件路径 (优先项目内 bin/ffmpeg.exe，其次 npm 内置 ffmpeg-static，最后系统环境变量 ffmpeg)
+  // 寻找 FFmpeg 执行文件路径 (优先打包 extraResources，其次项目内 bin/ffmpeg.exe，再次 npm 内置 ffmpeg-static，最后系统环境变量 ffmpeg)
   resolveFfmpegPath() {
+    if (process.resourcesPath) {
+      const packagedFfmpeg = path.join(process.resourcesPath, 'bin/ffmpeg.exe');
+      if (fs.existsSync(packagedFfmpeg)) return packagedFfmpeg;
+    }
     const localFfmpeg = path.resolve(__dirname, '../../bin/ffmpeg.exe');
     if (fs.existsSync(localFfmpeg)) {
       return localFfmpeg;

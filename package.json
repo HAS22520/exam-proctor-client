@@ -23,5 +23,51 @@
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0"
+  },
+  "build": {
+    "appId": "com.exam.proctor",
+    "productName": "在线监考客户端",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "app/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin"
+      },
+      {
+        "from": "config",
+        "to": "config"
+      },
+      {
+        "from": "scripts",
+        "to": "scripts"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    }
   }
 }

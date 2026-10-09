@@ -17,8 +17,17 @@ const ScreenRecorder = require('./screen-recorder');
 const AntiCheatGuard = require('./anti-cheat');
 const SystemProxyGuard = require('./system-proxy-guard');
 
+// 资源路径解析（兼容开发环境与打包后的 extraResources）
+function resolveAppResource(relPath) {
+  if (app.isPackaged && process.resourcesPath) {
+    const p = path.join(process.resourcesPath, relPath);
+    if (fs.existsSync(p)) return p;
+  }
+  return path.resolve(__dirname, '../../', relPath);
+}
+
 // 读取配置
-const configPath = path.resolve(__dirname, '../../config/exam-config.json');
+const configPath = resolveAppResource('config/exam-config.json');
 let config = {};
 try {
   config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -33,6 +42,13 @@ try {
     window: { kiosk: false, alwaysOnTop: false },
     recording: { enabled: true }
   };
+}
+
+// 打包模式下，如果输出路径是相对路径，让 records 位于 exe 所在的同级目录下
+if (app.isPackaged) {
+  const exeDir = path.dirname(process.execPath);
+  config.recording = config.recording || {};
+  config.recording.outputDir = path.resolve(exeDir, config.recording.outputDir || './records');
 }
 
 let mainWindow = null;

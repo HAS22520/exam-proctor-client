@@ -11,7 +11,9 @@ class SystemProxyGuard {
     this.auditLogger = auditLogger;
     this.server = null;
     this.isActive = false;
-    this.notifyScript = path.resolve(__dirname, '../../scripts/notify-wininet.ps1');
+    this.notifyScript = (process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'scripts/notify-wininet.ps1')))
+      ? path.join(process.resourcesPath, 'scripts/notify-wininet.ps1')
+      : path.resolve(__dirname, '../../scripts/notify-wininet.ps1');
   }
 
   isDomainAllowed(hostname) {
