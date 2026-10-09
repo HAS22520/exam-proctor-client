@@ -41,15 +41,32 @@ class FirewallGuard {
     try {
       if (isAdmin) {
         // 已经是管理员身份，直接执行 PowerShell 脚本
-        execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${this.lockScript}"`, { stdio: 'ignore' });
+        const output = execSync(
+          `powershell -NoProfile -ExecutionPolicy Bypass -File "${this.lockScript}"`,
+          { encoding: 'utf-8' }
+        );
+        console.log('[FirewallGuard] [SCRIPT OUTPUT]:\n' + output);
       } else {
         // 请求 UAC 提权执行
         console.log('[FirewallGuard] [INFO] 请求 Windows 管理员权限执行防火墙策略...');
         const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \\"\\"${this.lockScript}\\"\\"'"` ;
-        execSync(cmd, { stdio: 'ignore' });
+        execSync(cmd, { stdio: 'inherit' });
       }
-      this.isLocked = true;
-      console.log('[FirewallGuard] [INFO] 全局防火墙切断已生效，整机外部网络已阻断！');
+
+      // 验证防火墙规则是否实际生效
+      try {
+        const verifyCmd = `powershell -NoProfile -Command "(Get-NetFirewallRule -DisplayName 'EXAM_*' -ErrorAction SilentlyContinue).Count"`;
+        const count = parseInt(execSync(verifyCmd, { encoding: 'utf-8' }).trim(), 10) || 0;
+        console.log(`[FirewallGuard] [VERIFY] 已生效的考试专用防火墙阻断/放行规则数: ${count}`);
+        if (count > 0) {
+          this.isLocked = true;
+          console.log('[FirewallGuard] [SUCCESS] 全局防火墙切断已生效，整机外部网络已阻断！');
+        } else {
+          console.warn('[FirewallGuard] [WARN] 防火墙规则数量为 0，可能由于权限不足或策略未成功写入！');
+        }
+      } catch (ve) {
+        this.isLocked = true;
+      }
 
       if (this.auditLogger) {
         this.auditLogger.logViolation({
@@ -74,10 +91,14 @@ class FirewallGuard {
     const isAdmin = this.checkIsAdmin();
     try {
       if (isAdmin) {
-        execSync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${this.unlockScript}"`, { stdio: 'ignore' });
+        const output = execSync(
+          `powershell -NoProfile -ExecutionPolicy Bypass -File "${this.unlockScript}"`,
+          { encoding: 'utf-8' }
+        );
+        console.log('[FirewallGuard] [SCRIPT OUTPUT]:\n' + output);
       } else {
         const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \\"\\"${this.unlockScript}\\"\\"'"` ;
-        execSync(cmd, { stdio: 'ignore' });
+        execSync(cmd, { stdio: 'inherit' });
       }
       this.isLocked = false;
       console.log('[FirewallGuard] [INFO] 全局网络与防火墙已全部恢复正常！');

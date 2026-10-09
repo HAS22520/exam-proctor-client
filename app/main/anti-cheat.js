@@ -93,16 +93,26 @@ class AntiCheatGuard {
     const interval = this.config.checkProcessIntervalMs || 1500;
     const detectedBadProcs = new Set();
 
+    // 启动时立即执行一次强制查杀高危即时通讯与AI工具
+    const initialFastKillList = [
+      'Weixin.exe', 'WeChat.exe', 'WeChatAppEx.exe', 'WXWork.exe',
+      'QQ.exe', 'QQProtect.exe', 'TIM.exe',
+      'DeepSeek.exe', 'DeepSeek Harness.exe', 'chatbox.exe'
+    ];
+    const killArgs = initialFastKillList.map(p => `/IM "${p}"`).join(' ');
+    exec(`taskkill /F /T ${killArgs}`, () => {});
+
     const scanAndKill = () => {
       exec('tasklist /fo csv /nh', (err, stdout) => {
         if (err || !stdout) return;
 
         const currentProcesses = stdout.toLowerCase();
         for (const badProc of blacklist) {
-          if (currentProcesses.includes(badProc.toLowerCase())) {
+          const procLower = badProc.toLowerCase();
+          if (currentProcesses.includes(procLower)) {
             console.warn(`[AntiCheat] [TERMINATE] 强制关闭黑名单违规软件: ${badProc}`);
             
-            // 立即强制终止违规程序
+            // 立即强制终止违规程序及其子进程
             exec(`taskkill /F /T /IM "${badProc}"`, () => {});
 
             this.violationLogs.push({
@@ -129,7 +139,7 @@ class AntiCheatGuard {
       });
     };
 
-    // 启动时立即执行一次强制查杀，随后开启高频实时守护
+    // 随后开启高频实时守护
     scanAndKill();
     this.timer = setInterval(scanAndKill, interval);
   }

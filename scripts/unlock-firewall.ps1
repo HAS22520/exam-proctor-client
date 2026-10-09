@@ -1,23 +1,37 @@
-<#
-.SYNOPSIS
-  考试结束 - 恢复 Windows 系统级防火墙与全局网络
-#>
+# Exam Recovery - Restore Windows Firewall and Global Network
+Write-Host "[Firewall] Restoring global network and firewall..." -ForegroundColor Yellow
 
-Write-Host "正在解除考试网络锁定，恢复全局出站网络..." -ForegroundColor Yellow
-
-# 1. 恢复防火墙出站默认规则为 Allow
+# 1. Restore firewall default outbound action to Allow
 Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultOutboundAction Allow
 
-# 2. 清理所有考试显式阻断与放行规则
+# 2. Remove all exam explicit block and allow rules
 Get-NetFirewallRule -DisplayName "EXAM_*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 
-# 3. 恢复可能被停止的代理后台服务
-Start-Service -Name "clash-verge-service" -ErrorAction SilentlyContinue
+# 3. Re-enable IPv6 stack binding
+Enable-NetAdapterBinding -Name * -ComponentId ms_tcpip6 -ErrorAction SilentlyContinue
 
-# 4. 刷新 WinINet 网络缓存
+# 4. Re-enable any disabled virtual network adapters
+Get-NetAdapter | Where-Object {
+    ($_.InterfaceDescription -match 'Tunnel|TAP|Wintun|VPN|Virtual') -or
+    ($_.Name -match 'Mihomo|Clash|v2ray|sing-box')
+} | ForEach-Object {
+    Write-Host "[Firewall] Re-enabling adapter: $($_.Name)"
+    Enable-NetAdapter -Name $_.Name -Confirm:$false -ErrorAction SilentlyContinue
+}
+
+# 5. Restart proxy background services if installed
+Get-Service | Where-Object { $_.Name -match 'clash|verge' } | ForEach-Object {
+    Write-Host "[Firewall] Restarting service: $($_.Name)"
+    Start-Service -Name $_.Name -ErrorAction SilentlyContinue
+}
+
+# 6. Flush DNS cache
+Clear-DnsClientCache -ErrorAction SilentlyContinue
+
+# 7. Refresh WinINet settings if helper script exists
 $notifyScript = Join-Path $PSScriptRoot "notify-wininet.ps1"
 if (Test-Path $notifyScript) {
     & $notifyScript
 }
 
-Write-Host "✅ 全局网络与防火墙已完全恢复正常！" -ForegroundColor Green
+Write-Host "[Firewall] Global network and firewall fully restored!" -ForegroundColor Green

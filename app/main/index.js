@@ -175,8 +175,44 @@ function registerSafetyHandlers() {
 }
 registerSafetyHandlers();
 
+// 检查管理员权限
+function checkAdminPrivilege() {
+  if (process.platform !== 'win32') return true;
+  try {
+    execSync('net session', { stdio: 'ignore' });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // 应用启动生命周期
 app.whenReady().then(async () => {
+  // 管理员权限自提权检测 (确保 Windows 防火墙与底层网络管控 100% 生效)
+  if (process.platform === 'win32' && !checkAdminPrivilege()) {
+    console.warn('[Main] [WARN] 未检测到管理员权限，正在请求 UAC 提权启动...');
+    if (app.isPackaged) {
+      try {
+        const exe = process.execPath;
+        const args = process.argv.slice(1);
+        const argList = args.length > 0 ? `-ArgumentList ${args.map(a => `'"${a}"'`).join(',')}` : '';
+        const cmd = `Start-Process -FilePath "${exe}" ${argList} -Verb RunAs`;
+        execSync(`powershell -NoProfile -Command "${cmd}"`);
+        app.exit(0);
+        return;
+      } catch (elevErr) {
+        dialog.showErrorBox(
+          '需要管理员权限',
+          '在线考试监考客户端需要管理员权限以执行整机网络管控。\n请右键点击程序并选择【以管理员身份运行】。'
+        );
+        app.exit(1);
+        return;
+      }
+    } else {
+      console.warn('[Main] [DEV WARNING] 当前开发环境下未以管理员身份运行，部分底层网络规则可能受限。建议以管理员身份运行终端。');
+    }
+  }
+
   // 1. 初始化集中式审计日志模块
   auditLogger = new AuditLogger(config);
 
