@@ -94,6 +94,61 @@ HTTPS 必需，只有 localhost 可使用 HTTP。`start`、`build`、`pack`、`d
 
 正式分发需要代码签名。Windows 可设置 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`；Mac 设置 `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`，以及 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 进行公证。未配置证书时可生成测试包；不能把未签名测试包当成已完成正式签名/公证的发行包。
 
+## 本地 Docker 构建 Windows
+
+在 WSL/Linux 的客户端目录执行，沿用填写好的 `config/build.local.json`：
+
+```bash
+npm run build:docker -- --config config/build.local.json --win --x64 --check
+npm run build:docker -- --config config/build.local.json --win --x64
+# 只生成便携 EXE
+npm run build:docker -- --config config/build.local.json --win --x64 --portable
+```
+
+采用 [electron-builder v26 官方跨平台构建流程](https://www.electron.build/v26/docs/features/multi-platform-build/) 的 Wine 容器，默认 `electronuserland/builder:22-wine`，使用 Node 22。当前终端用户须有 Docker daemon 访问权限；构建脚本不会自动修改系统用户组或调用 sudo。`--check` 只验证配置，不启动容器。macOS 打包仍需 macOS；此容器入口仅支持 Windows x64，GitHub Actions 继续使用原有 Windows/macOS 原生 runner。
+
+首次运行自动拉取镜像并在容器内执行 `npm ci`，后续复用客户端 `.docker-cache/` 内的 npm、Electron、electron-builder 和 Wine 缓存；产物写入 `dist/`。容器只挂载独立的临时源码副本、缓存和输出目录，依赖安装在临时副本中，不使用 Hydro 或本机 `node_modules`。宿主机上的公钥文件先读取、验证，再通过环境变量传入；`build.local.json`、PEM 文件、`.env` 和服务端私钥不复制到容器。
+
+需要固定镜像版本或摘要时：
+
+```bash
+PROCTOR_BUILDER_IMAGE=electronuserland/builder:22-wine-03.25 npm run build:docker -- --config config/build.local.json --win --x64
+```
+
+`PROCTOR_*` 公钥、版本和地址环境变量与普通 `build` 一样可以覆盖 JSON 配置。这个本地容器入口用于生成测试包，没有转发宿主机签名证书变量；正式签名发行使用原生构建或 GitHub Actions 中的证书配置。
+
+## 比赛读取认证与结束监考
+
+兼容 HydroNext 提交 `b74f64ed` 的读取保护：开启监考的比赛在读取题目、提交页面、题目文件、题单、打印页面和比赛私有文件前，需要带有 `problem_view` 或 `contest_view` 的 GET 签名证明。客户端通过签名身份响应确认账号、域和比赛，完成版本与设备认证后，按原始路径和读取参数生成证明。深链接、刷新和附件请求也会自动补充证明；每次读取生成新的 nonce，已有前端桥接证明保持原样。身份、握手和状态接口不走读取签名，跨源跳转剥离监考令牌和证明。
+
+版本或认证密钥不匹配时不能获得有效证明，由 OJ 拒绝读取和提交；客户端不会用调试身份绕过服务端检查。普通比赛及赛后浏览仍由 OJ 的既有规则决定。客户端进入比赛前应先报名并登录，且构建版本必须与后台指定版本完全一致。
+
+点击“结束监考”先明确提示必须上传日志才能确认成绩，随后打开本地独立上传窗口，显示整理/加密、实际网络上传百分比和字节数、等待服务端确认、成功或待补传状态。上传到 100% 仍需等待有效回执，才允许“完成并退出”。网络中断时提示日志已加密保存在本机、成绩待确认，可选择保留日志退出，联网后重新启动并登录原账号补传。此时不能继续做题。多个待上传比赛依次显示，各自成功才报告全部完成。
+
+考试页面的监考面板显示认证状态、已监考时长、待补传数量，可收起以减少遮挡；管理员调试和补传按钮按当前可信状态显示。
+
+## 管理员解密日志
+
+`tools/decrypt-log.py` 是离线命令行工具，需要 Python 3.9+ 和 `cryptography`。Windows 可用 `py` 代替下面的 `python3`：
+
+```bash
+python3 -m venv .venv
+# Linux/macOS；Windows 使用 .venv/Scripts/python.exe 执行后续命令
+.venv/bin/python -m pip install -r tools/requirements.txt
+.venv/bin/python tools/decrypt-log.py downloaded.hplog --private-key /path/to/log-private.pem -o decrypted.log
+```
+
+使用 OJ 后台“日志解密私钥”（RSA-3072），不是 Ed25519 认证私钥，也不是客户端构建用公钥。工具也接受 JSON：`{"keyId":"…","encryptionPrivateKey":"-----BEGIN PRIVATE KEY-----\n…"}`，或后台响应的 `privateKeys` / `keys` 包装结构；可用 `--key-id` 额外核对密钥 ID。加密 PEM 使用 `--password` 交互输入密码。私钥只供管理员本地解密，不放入客户端配置、安装包或 Actions 公钥变量。
+
+输出 `.log` 保留原始 UTF-8 JSON Lines：首行是账号/域/比赛绑定元数据，后续每行一个监考事件。文件完整性经过 RSA-OAEP/SHA-256 解包和 AES-256-GCM 校验；错误密钥、截断或篡改不会生成输出文件，已有文件也不会被破坏。默认拒绝覆盖，确需替换时加 `--force`。实时的 `journal.enc` 需要本机 OS 保护的密钥，不能作为 `.hplog` 输入。
+
+验证客户端和解密工具：
+
+```bash
+npm test
+python3 -m unittest discover -s tools/tests -v
+```
+
 ## root 调试与系统保护
 
 只有构建配置 `debug.allowRoot=true` 且 OJ **签名响应**确认 具有 `PRIV_ALL` 超级管理员权限时，才自动进入 root 调试：恢复 Windows 防火墙、停止防作弊快捷键/进程扫描、退出 kiosk、允许网络访问所有 HTTP(S) 地址，并可打开开发工具。用户名为 root 的普通账号不能开启。切换账号或验签失败立即取消调试；前端无法请求任意签名或自行声明 root。调试不豁免服务端版本、令牌、提交证明及日志要求。

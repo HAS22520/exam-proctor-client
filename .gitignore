@@ -1,5 +1,8 @@
 # Node 依赖
 node_modules/
+.docker-cache/
+__pycache__/
+.venv/
 
 # 录屏产物与考试日志
 records/

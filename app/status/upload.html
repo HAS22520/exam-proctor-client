@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'">
+  <title>结束监考 · 上传日志</title>
+  <link rel="stylesheet" href="upload.css">
+</head>
+<body>
+  <main>
+    <span class="badge">HYDRO · 监考客户端</span>
+    <h1>上传日志，完成监考</h1>
+    <p class="intro">开启监考的比赛需要成功上传日志，成绩才能有效。请保持网络连接，等待服务端确认。</p>
+    <section class="card" aria-live="polite">
+      <div class="row"><strong id="phase">正在结束监考</strong><span id="percent">准备中</span></div>
+      <progress id="progress" max="100" aria-label="日志上传进度"></progress>
+      <div class="row detail"><span id="bytes">正在整理并加密日志</span><span id="contest"></span></div>
+    </section>
+    <p id="message" class="message" role="status">日志只上传加密文件，请勿强制关闭客户端。</p>
+    <button id="exit" disabled>请等待上传完成</button>
+    <p class="footnote">网络中断时日志会保留在本机，可联网后登录原考试账号补传。</p>
+  </main>
+  <script src="upload.js"></script>
+</body>
+</html>

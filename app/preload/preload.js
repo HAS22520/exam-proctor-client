@@ -6,27 +6,57 @@ contextBridge.exposeInMainWorld('examAPI', {
 });
 window.addEventListener('DOMContentLoaded', () => {
   const host = document.createElement('div');
-  host.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483647';
+  host.id = 'hydro-proctor-status';
+  host.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483647;max-width:calc(100vw - 32px)';
   const shadow = host.attachShadow({ mode: 'closed' });
+  const style = document.createElement('style');
+  style.textContent = `
+    *{box-sizing:border-box} .panel{width:296px;max-width:100%;padding:16px;border:1px solid #e1e7f0;background:#fff;color:#23324b;border-radius:14px;font:12px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;box-shadow:0 8px 32px #1c35541a}
+    .heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}.brand{font-size:11px;color:#71819b;letter-spacing:1px;font-weight:600}.badge{font-size:11px;padding:2px 8px;background:#edf2fc;color:#5e74a4;border-radius:20px}.badge[data-state=connected]{background:#e8f7ef;color:#23865d}.badge[data-state=debug]{background:#fff4df;color:#a57927}
+    .status{font-size:14px;font-weight:600}.meta{color:#8894a8;font-size:11px;margin:4px 0 10px}.message{color:#6b7890;font-size:11px;line-height:1.6;white-space:pre-line}.actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}button{border:1px solid #dfe6f1;border-radius:8px;background:white;color:#577098;padding:7px 11px;font:inherit;cursor:pointer}button.end{margin-left:auto;background:#edf2fc;color:#4265b1;border-color:#edf2fc}button:focus-visible{outline:2px solid #7b99e3;outline-offset:2px}button:disabled{opacity:.55;cursor:wait}button[hidden]{display:none}
+    .toggle{border:0;padding:0 3px;color:#8a96aa;font-size:16px;background:none}.panel.collapsed .body{display:none}.panel.collapsed .heading{margin-bottom:0}
+  `;
   const box = document.createElement('div');
-  box.style.cssText = 'padding:12px;background:#172033;color:white;border-radius:12px;font:13px system-ui;box-shadow:0 4px 20px #0004;max-width:360px';
+  box.className = 'panel';
+  const heading = document.createElement('div'); heading.className = 'heading';
+  const brand = document.createElement('span'); brand.className = 'brand'; brand.textContent = 'HYDRO · 监考';
+  const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = '连接中';
+  const toggle = document.createElement('button'); toggle.className = 'toggle'; toggle.textContent = '−'; toggle.setAttribute('aria-label', '收起监考面板');
+  toggle.onclick = () => { const collapsed = box.classList.toggle('collapsed'); toggle.textContent = collapsed ? '+' : '−'; toggle.setAttribute('aria-label', collapsed ? '展开监考面板' : '收起监考面板'); };
+  heading.append(brand, badge, toggle);
+  const body = document.createElement('div'); body.className = 'body';
   const status = document.createElement('div');
+  status.className = 'status';
+  const meta = document.createElement('div'); meta.className = 'meta';
+  const message = document.createElement('div'); message.className = 'message';
+  const actions = document.createElement('div'); actions.className = 'actions';
   const end = document.createElement('button');
+  end.className = 'end';
   end.textContent = '结束监考';
-  end.style.cssText = 'margin-top:8px;padding:6px 12px;cursor:pointer';
-  end.onclick = () => ipcRenderer.invoke('exam:request-quit').catch(() => {});
+  const action = async (channel, button) => {
+    button.disabled = true;
+    try { await ipcRenderer.invoke(channel); } catch { message.textContent = '操作未完成，请检查登录状态与网络后重试。'; }
+    finally { button.disabled = false; }
+  };
+  end.onclick = () => action('exam:request-quit', end);
   const debug = document.createElement('button');
   debug.textContent = 'root 调试'; debug.hidden = true;
-  debug.onclick = () => ipcRenderer.invoke('exam:debug').catch(() => {});
+  debug.onclick = () => action('exam:debug', debug);
   const retry = document.createElement('button'); retry.textContent = '补传日志'; retry.hidden = true;
-  retry.onclick = () => ipcRenderer.invoke('exam:retry').catch(() => {});
-  box.append(status, end, retry, debug); shadow.append(box); document.documentElement.append(host);
+  retry.onclick = () => action('exam:retry', retry);
+  actions.append(retry, debug, end); body.append(status, meta, message, actions); box.append(heading, body); shadow.append(style, box); document.documentElement.append(host);
   async function update() {
     try {
       const data = await ipcRenderer.invoke('exam:status');
-      const elapsed = data.createdAt ? ` · ${Math.floor((Date.now() - Date.parse(data.createdAt)) / 60000)} 分钟` : '';
-      status.textContent = `${data.debug ? 'root 调试模式' : data.authenticated ? '监考认证已连接' : '未建立监考会话'}${elapsed}${data.pendingUploads ? ` · 待补传 ${data.pendingUploads}` : ''}${data.message ? `\n${data.message}` : ''}`;
-      status.style.whiteSpace = 'pre-line';
+      badge.dataset.state = data.debug ? 'debug' : data.authenticated ? 'connected' : 'pending';
+      badge.textContent = data.debug ? '管理员' : data.authenticated ? '已认证' : '待验证';
+      status.textContent = data.debug ? '管理员调试模式' : data.authenticated ? '监考进行中' : '等待比赛认证';
+      const elapsed = data.createdAt ? `已监考 ${Math.max(0, Math.floor((Date.now() - Date.parse(data.createdAt)) / 60000))} 分钟` : '登录后进入比赛，自动验证客户端';
+      meta.textContent = `${elapsed}${data.pendingUploads ? ` · 待补传 ${data.pendingUploads} 份` : ''}`;
+      message.textContent = data.upload && ['uploading', 'verifying'].includes(data.upload.phase)
+        ? `日志${data.upload.phase === 'verifying' ? '等待服务端确认' : '上传中'}${Number.isFinite(data.upload.percent) ? ` · ${data.upload.percent}%` : ''}`
+        : data.message || (data.authenticated ? '结束监考时请完成日志上传。' : '客户端版本须与系统指定版本一致。');
+      end.disabled = !!data.finishing;
       debug.hidden = !(data.root && data.allowRootDebug);
       retry.hidden = !data.pendingUploads;
     } catch { status.textContent = '请返回考试系统查看监考状态'; }

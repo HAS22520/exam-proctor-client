@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { ProtectedStore } = require('./device-store');
 const { validateConfig } = require('./config-policy');
 const { ProctorController } = require('./proctor-controller');
@@ -8,11 +9,13 @@ const NetworkGuard = require('./network-guard');
 const AntiCheatGuard = require('./anti-cheat');
 const FirewallGuard = require('./firewall-guard');
 const Updater = require('./updater');
+const ProctorRequestGuard = require('./proctor-request-guard');
 
 app.setName('HydroProctorClient');
-let window, controller, network, antiCheat, firewall, config, trust;
+let window, controller, network, antiCheat, firewall, config, trust, uploadWindow;
 let quitting = false, exiting = false, root = false, debug = false, timer, trustedUrl;
 let latestStatus = { phase: 'idle', message: '正在连接 OJ' };
+let exitReady = false;
 const directory = app.getPath('userData');
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.on('second-instance', () => { if (window) { window.restore(); window.focus(); } });
@@ -59,6 +62,31 @@ function ipcContext(event) {
   return url.href;
 }
 
+function uploadContext(event) {
+  if (!uploadWindow || event.sender !== uploadWindow.webContents || event.senderFrame !== uploadWindow.webContents.mainFrame
+    || event.senderFrame.url !== pathToFileURL(path.join(__dirname, '../status/upload.html')).href) throw new Error('Upload IPC requires the native progress window');
+}
+
+function publishStatus(status) {
+  latestStatus = { ...status, debug, root, exitReady, networkMode: process.platform === 'win32' ? 'windows-firewall' : 'application-allowlist' };
+  if (uploadWindow && !uploadWindow.isDestroyed()) uploadWindow.webContents.send('exam:upload-status', latestStatus);
+}
+
+async function showUploadWindow() {
+  exitReady = false;
+  uploadWindow = new BrowserWindow({ width: 560, height: 490, minWidth: 430, minHeight: 440, title: '结束监考 · 上传日志',
+    parent: window, modal: true, autoHideMenuBar: true, resizable: false,
+    webPreferences: { preload: path.join(__dirname, '../status/upload-preload.js'), nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: false } });
+  uploadWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  uploadWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  uploadWindow.on('close', (event) => { if (!quitting) event.preventDefault(); });
+  await uploadWindow.loadFile(path.join(__dirname, '../status/upload.html'));
+}
+
+function completeExit() {
+  controller.shutdown(); quitting = true; app.quit();
+}
+
 async function syncLogin() {
   if (exiting || window.isDestroyed()) return;
   const url = window.webContents.getURL();
@@ -83,19 +111,24 @@ async function requestExit() {
   if (response !== 1) { exiting = false; return; }
   clearInterval(timer);
   antiCheat.stop();
+  window.setKiosk(false); window.setAlwaysOnTop(false);
   let restored = false;
   try {
+    await showUploadWindow();
     firewall.unlock(); restored = true;
     const uploaded = await controller.finish();
-    if (!uploaded) await dialog.showMessageBox(window, { type: 'warning', message: '日志已加密保存，尚未上传',
-      detail: '成绩待确认。请保留本机客户端数据，联网后重新打开客户端并登录原考试账号完成补传。' });
-    controller.shutdown();
-    quitting = true;
-    app.quit();
+    exitReady = true;
+    publishStatus({ ...latestStatus, upload: uploaded ? { ...latestStatus.upload, phase: 'complete', percent: 100 }
+      : { phase: 'deferred', sent: 0, total: 0, percent: null },
+      message: uploaded ? (latestStatus.upload?.empty ? '本次没有需要上传的监考日志，可以退出客户端。' : '日志上传完成，服务端已确认接收。')
+        : '日志已加密保存，成绩待确认。联网后请使用原考试账号补传。' });
   } catch {
     await dialog.showMessageBox(window, { type: 'error', message: '结束监考失败，请保留客户端数据',
       detail: restored ? '本地日志仍保留，请重试结束监考。' : '系统网络尚未恢复，请重试，或使用随包提供的恢复脚本。' });
     exiting = false;
+    // Closing attempts stay closed; retry sealing/upload instead of resuming access.
+    controller.finishing = false;
+    if (uploadWindow && !uploadWindow.isDestroyed()) { uploadWindow.destroy(); uploadWindow = null; }
     timer = setInterval(syncLogin, 15000);
     await syncLogin();
   }
@@ -132,7 +165,7 @@ app.whenReady().then(async () => {
   antiCheat = new AntiCheatGuard(window, config, logger);
   controller = new ProctorController({ config, directory: journals, protectedStore: store,
     session: window.webContents.session, version: app.getVersion(), onIdentity: applyIdentity,
-    onStatus: (status) => { latestStatus = { ...status, debug, root, networkMode: process.platform === 'win32' ? 'windows-firewall' : 'application-allowlist' }; } });
+    onStatus: publishStatus });
   ipcMain.handle('exam:status', (event) => { ipcContext(event); return { ...latestStatus, debug, root, allowRootDebug: config.debug.allowRoot }; });
   ipcMain.handle('exam:proctor-headers', async (event, request) => {
     const url = ipcContext(event);
@@ -141,6 +174,8 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('exam:request-quit', async (event) => { ipcContext(event); await requestExit(); });
   ipcMain.handle('exam:retry', async (event) => { await controller.retryManually(ipcContext(event)); });
+  ipcMain.handle('exam:upload-status', (event) => { uploadContext(event); return latestStatus; });
+  ipcMain.handle('exam:upload-exit', (event) => { uploadContext(event); if (!exitReady) throw new Error('日志仍在处理中'); completeExit(); });
   ipcMain.handle('exam:debug', async (event) => {
     await controller.sync(ipcContext(event));
     if (!root || !config.debug.allowRoot) throw new Error('只有已验证的 root 账号可以使用调试模式');
@@ -148,13 +183,19 @@ app.whenReady().then(async () => {
     return true;
   });
   const requests = window.webContents.session.webRequest;
+  const requestMethods = new Map();
+  const requestGuard = new ProctorRequestGuard(controller, config, window.webContents, () => updates.minimumBlocked);
   requests.onBeforeSendHeaders((details, callback) => {
-    if (details.webContentsId === window.webContents.id && details.method === 'POST'
-      && Object.keys(details.requestHeaders).some((key) => key.toLowerCase() === 'x-proctor-token')) controller.inFlight.add(details.id);
-    callback({ requestHeaders: details.requestHeaders });
+    requestGuard.headers(details).then((headers) => {
+      if (details.webContentsId === window.webContents.id && Object.keys(headers).some((key) => key.toLowerCase() === 'x-proctor-token')) {
+        controller.inFlight.add(details.id); requestMethods.set(details.id, details.method);
+      }
+      callback({ requestHeaders: headers });
+    }).catch(() => callback({ cancel: true }));
   });
   const settled = (details) => {
-    if (controller.inFlight.delete(details.id)) controller.logViolation({ source: 'SUBMISSION', type: 'SUBMISSION_RESPONSE',
+    const read = requestMethods.get(details.id) === 'GET'; requestMethods.delete(details.id);
+    if (controller.inFlight.delete(details.id)) controller.logViolation({ source: read ? 'ACCESS' : 'SUBMISSION', type: read ? 'ACCESS_RESPONSE' : 'SUBMISSION_RESPONSE',
       target: details.url, detail: String(details.statusCode || details.error || '') });
   };
   requests.onCompleted(settled);

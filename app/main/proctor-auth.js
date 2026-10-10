@@ -6,6 +6,18 @@ class ProctorError extends Error {
   get retryable() { return !this.status || this.status === 429 || this.status >= 500 || /in progress|retry/i.test(this.message); }
 }
 
+function parseReply(raw, status, type) {
+  if (status >= 300 && status < 400) throw new ProctorError('Login or redirect requires attention', status);
+  if (!type.includes('application/json')) throw new ProctorError('Server did not return protocol JSON', status);
+  if (raw.length > 1024 * 1024) throw new ProctorError('Protocol response too large', 400);
+  const data = JSON.parse(raw);
+  if (status < 200 || status >= 300 || data.error) {
+    const reason = data.error?.params?.find((value) => typeof value === 'string') || data.error?.message || 'Proctor request rejected';
+    throw new ProctorError(String(reason).slice(0, 300), status);
+  }
+  return data;
+}
+
 class Transport {
   constructor(session, origin, timeoutMs = 15000) { this.session = session; this.origin = origin; this.timeoutMs = timeoutMs; }
 
@@ -15,22 +27,19 @@ class Transport {
     const signal = AbortSignal.timeout(timeoutMs);
     const response = await this.session.fetch(url.href, { method, redirect: 'manual', credentials: 'include', cache: 'no-store', signal,
       headers: { Accept: 'application/json', Origin: this.origin, ...headers }, body });
-    if (response.status >= 300 && response.status < 400) throw new ProctorError('Login or redirect requires attention', response.status);
     const type = response.headers.get('content-type') || '';
+    if (response.status >= 300 && response.status < 400) throw new ProctorError('Login or redirect requires attention', response.status);
     if (!type.includes('application/json')) throw new ProctorError('Server did not return protocol JSON', response.status);
     const raw = await response.text();
-    if (raw.length > 1024 * 1024) throw new ProctorError('Protocol response too large', 400);
-    const data = JSON.parse(raw);
-    if (!response.ok || data.error) {
-      const reason = data.error?.params?.find((value) => typeof value === 'string') || data.error?.message || 'Proctor request rejected';
-      // Do not forward raw responses, tokens, proofs or stacks to the renderer/log.
-      throw new ProctorError(String(reason).slice(0, 300), response.status);
-    }
-    return data;
+    return parseReply(raw, response.status, type);
   }
 
   json(path, body, headers) {
     return this.request(path, { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json', ...headers } });
+  }
+
+  upload(path, options) {
+    return require('./upload-transport').uploadFile({ session: this.session, origin: this.origin, path, ...options });
   }
 }
 
@@ -110,9 +119,10 @@ class ProctorAuth {
     try { return await this.pending; } finally { this.pending = null; }
   }
 
-  proof(action, path, payload) {
+  proof(action, path, payload, method = 'POST') {
+    if (method !== (['problem_view', 'contest_view'].includes(action) ? 'GET' : 'POST')) throw new Error('Invalid proctor proof method');
     if (!this.session || Date.now() >= Date.parse(this.session.expiresAt)) throw new Error('Session expired');
-    const proof = { protocol: PROTOCOL, action, method: 'POST', path, tokenHash: this.session.tokenHash,
+    const proof = { protocol: PROTOCOL, action, method, path, tokenHash: this.session.tokenHash,
       fingerprint: this.device.fingerprint, version: this.version, payloadHash: digest(canonical(payload)), timestamp: Date.now(), nonce: nonce() };
     return { 'x-proctor-token': this.session.token,
       'x-proctor-proof': Buffer.from(JSON.stringify({ payload: proof, signature: sign(proof, this.device.privateKey) })).toString('base64url') };
@@ -125,4 +135,4 @@ class ProctorAuth {
   }
 }
 
-module.exports = { ProctorAuth, Transport, ProctorError, identity };
+module.exports = { ProctorAuth, Transport, ProctorError, identity, parseReply };

@@ -1,0 +1,26 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #17243b; background: #f5f7fc; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { padding: 28px 32px 22px; max-width: 600px; margin: auto; }
+.badge { color: #4263b2; font-size: 11px; letter-spacing: 1.5px; font-weight: 700; }
+h1 { margin: 14px 0 10px; font-size: 25px; letter-spacing: -.5px; }
+.intro { font-size: 13px; line-height: 1.7; color: #63708a; margin: 0 0 20px; }
+.card { background: white; border: 1px solid #e3e8f2; border-radius: 14px; padding: 20px; box-shadow: 0 5px 20px #20366306; }
+.row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.row strong { font-size: 14px; }
+#percent { font-size: 13px; font-variant-numeric: tabular-nums; color: #4263b2; }
+progress { display: block; appearance: none; border: 0; border-radius: 8px; width: 100%; height: 8px; overflow: hidden; margin: 17px 0 12px; background: #edf1f8; accent-color: #5275d6; }
+progress::-webkit-progress-bar { background: #edf1f8; border-radius: 8px; }
+progress::-webkit-progress-value { background: #5275d6; border-radius: 8px; transition: width .2s; }
+progress:not([value]) { background: linear-gradient(90deg, #edf1f8, #93acee, #edf1f8); background-size: 200%; animation: pending 1.6s linear infinite; }
+@keyframes pending { to { background-position: -200% 0; } }
+.detail { color: #7c889e; font-size: 11px; }
+#contest { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message { min-height: 38px; font-size: 12px; line-height: 1.6; margin: 17px 0; color: #64718a; }
+button { width: 100%; border: 0; border-radius: 10px; padding: 12px; background: #4265c2; color: white; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+button:disabled { background: #e3e9f5; color: #8a98b0; cursor: wait; }
+button:focus-visible { outline: 3px solid #adbef0; outline-offset: 3px; }
+.footnote { text-align: center; color: #8a96aa; font-size: 11px; line-height: 1.6; margin: 13px 0 0; }
+body[data-phase="complete"] #phase, body[data-phase="complete"] #percent { color: #21845b; }
+body[data-phase="deferred"] #phase { color: #af7229; }
+@media (max-width: 460px) { main { padding: 22px; } h1 { font-size: 22px; } }

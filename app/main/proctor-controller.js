@@ -6,6 +6,7 @@ const { atomicWrite } = require('./device-store');
 const { canonical, digest } = require('./proctor-crypto');
 const { contextFromUrl } = require('./config-policy');
 const { ProctorAuth, Transport, identity } = require('./proctor-auth');
+const { accessRequest } = require('./proctor-access');
 
 function submission(request, context, login) {
   if (request?.action !== 'submit' || request.method !== 'POST' || request.path !== context.submitPath
@@ -23,8 +24,10 @@ function submission(request, context, login) {
 }
 
 class ProctorController {
-  constructor({ config, directory, protectedStore, session, version, onIdentity = async () => {}, onStatus = () => {} }) {
+  constructor({ config, directory, protectedStore, session, version, onIdentity = async () => {}, onStatus = () => {},
+    createTransport = (origin, timeout) => new Transport(session, origin, timeout) }) {
     Object.assign(this, { config, directory, protectedStore, electronSession: session, version, onIdentity, onStatus });
+    this.createTransport = createTransport;
     this.device = protectedStore.device();
     this.current = null;
     this.records = new Map();
@@ -33,6 +36,7 @@ class ProctorController {
     this.finishing = false;
     this.retryPending = null;
     this.proofPending = Promise.resolve();
+    this.uploadProgress = null;
   }
 
   status(message = '') {
@@ -47,12 +51,15 @@ class ProctorController {
       } catch { /* Damaged states are handled by recovery, never replaced here. */ }
     }
     this.onStatus({ authenticated: !!active?.auth?.session, phase: active?.journal?.state.phase || 'idle',
-      createdAt: active?.journal?.state.createdAt || null, root: !!this.current?.login.root, message, pendingUploads });
+      createdAt: active?.journal?.state.createdAt || null, root: !!this.current?.login.root, message, pendingUploads,
+      finishing: this.finishing, upload: this.uploadProgress });
   }
 
   async sync(url) {
+    if (this.finishing) throw new Error('监考正在结束，请等待日志处理完成');
     if (this.syncPending) {
       await this.syncPending;
+      if (this.finishing) throw new Error('监考正在结束，请等待日志处理完成');
       if (this.lastUrl === url) return this.current;
     }
     this.syncPending = this.syncNow(url);
@@ -62,7 +69,7 @@ class ProctorController {
   async syncNow(url) {
     const context = contextFromUrl(url);
     if (!this.config.exam.allowedOrigins.includes(context.origin)) throw new Error('Untrusted exam origin');
-    const transport = new Transport(this.electronSession, context.origin);
+    const transport = this.createTransport(context.origin);
     let login;
     try { login = await identity(transport, context, this.config.trust); }
     catch (error) {
@@ -123,7 +130,7 @@ class ProctorController {
       const prefix = current.context.origin === state.binding.origin && current.login.domainId === state.binding.domainId
         ? current.context.prefix : `/d/${encodeURIComponent(state.binding.domainId)}`;
       const context = contextFromUrl(`${state.binding.origin}${prefix}/contest/${state.binding.tid}`);
-      const transport = new Transport(this.electronSession, context.origin);
+      const transport = this.createTransport(context.origin);
       const login = await identity(transport, context, this.config.trust);
       if (login.uid !== state.binding.uid || login.domainId !== state.binding.domainId) continue;
       const auth = new ProctorAuth({ context, transport, identity: login, trust: this.config.trust, device: this.device, version: this.version, attemptId: state.binding.attemptId });
@@ -143,6 +150,7 @@ class ProctorController {
   headers(url, request) {
     const work = this.proofPending.catch(() => {}).then(async () => {
       if (this.finishing) throw new Error('监考正在结束，禁止新提交');
+      if (['problem_view', 'contest_view'].includes(request?.action)) return this.accessHeaders(url, request);
       const record = await this.sync(url);
       const payload = submission(request, record.context, record.login);
       if (!record.journal || record.journal.state.phase !== 'open' || record.completed) throw new Error('本场监考已结束');
@@ -153,6 +161,31 @@ class ProctorController {
     });
     this.proofPending = work.then(() => {}, () => {});
     return work;
+  }
+
+  async accessHeaders(url, request) {
+    const source = contextFromUrl(url);
+    const target = accessRequest(request, source);
+    const current = this.lastUrl === url && Date.parse(this.current?.login.expiresAt) > Date.now() + 5000
+      ? this.current : await this.sync(url);
+    if (!current.login.uid) throw new Error('请登录后验证监考客户端');
+    const uid = current.login.uid, domainId = current.login.domainId;
+    const record = this.lastUrl === target.identityUrl && Date.parse(this.current?.login.expiresAt) > Date.now() + 5000
+      ? this.current : await this.sync(target.identityUrl);
+    if (record.login.uid !== uid || record.login.domainId !== domainId) throw new Error('登录身份已变更，请重新验证');
+    if (!record.login.proctorEnabled) return {};
+    if (this.finishing || !record.journal || record.journal.state.phase !== 'open' || record.completed) throw new Error('本场监考已结束，不能继续做题');
+    const session = await record.auth.ensure();
+    if (session.completed || this.finishing) throw new Error('本场监考已结束');
+    const remote = await record.transport.request(record.context.proctorPath, { method: 'GET' });
+    if (remote.state !== 'open') { record.journal.close(); throw new Error('服务端监考已结束，不能继续做题'); }
+    record.journal.append(request.action === 'problem_view' ? 'PROBLEM_VIEW' : 'CONTEST_VIEW', target.payload);
+    return record.auth.proof(request.action, request.path, target.payload, 'GET');
+  }
+
+  progress(phase, record, details = {}) {
+    this.uploadProgress = { phase, tid: record?.journal?.binding.tid || '', sent: 0, total: 0, percent: null, ...details };
+    this.status();
   }
 
   async confirmedUpload(record, sha256) {
@@ -166,42 +199,51 @@ class ProctorController {
   }
 
   async upload(record) {
+    this.progress('preparing', record);
     const filename = await record.journal.finalize();
-    const blob = await fs.openAsBlob(filename);
+    const size = fs.statSync(filename).size;
     const hash = crypto.createHash('sha256');
     for await (const chunk of fs.createReadStream(filename)) hash.update(chunk);
     const sha256 = hash.digest('hex');
-    if (await this.confirmedUpload(record, sha256)) return;
+    if (await this.confirmedUpload(record, sha256)) { this.progress('complete', record, { percent: 100 }); return; }
     const session = await record.auth.ensure();
     if (session.completed) {
       if (!await this.confirmedUpload(record, sha256)) throw new Error('Server receipt does not match the local log');
-      return;
+      this.progress('complete', record, { percent: 100 }); return;
     }
     const uploadName = `proctor-${record.journal.binding.attemptId}.hplog`;
-    const form = new FormData();
-    form.set('operation', 'upload');
-    form.set('file', blob, uploadName);
+    this.progress('uploading', record, { total: size });
     try {
-      const result = await record.transport.request(record.context.proctorPath, { body: form, timeoutMs: 120000,
-        headers: record.auth.proof('upload', record.context.proctorPath, { filename: uploadName, size: blob.size, sha256 }) });
+      const result = await record.transport.upload(record.context.proctorPath, { filename, uploadName,
+        onProgress: (progress) => this.progress(progress.phase, record, progress),
+        headers: record.auth.proof('upload', record.context.proctorPath, { filename: uploadName, size, sha256 }) });
       if (result.ok !== true || !/^[a-f0-9]{24}$/.test(result.receipt || '')) throw new Error('Missing log upload receipt');
       record.journal.uploaded(result.receipt);
+      this.progress('complete', record, { sent: size, total: size, percent: 100 });
     } catch (error) {
       if (!await this.confirmedUpload(record, sha256).catch(() => false)) throw error;
+      this.progress('complete', record, { sent: size, total: size, percent: 100 });
     }
   }
 
   async finish() {
     if (this.finishing) return false;
     this.finishing = true;
+    this.progress('closing');
     await this.proofPending;
     if (this.syncPending) await this.syncPending.catch(() => {});
     if (this.retryPending) await this.retryPending;
     const active = [...this.records.values()].filter((record) => record.journal && record.journal.state.phase !== 'uploaded');
     const deadline = Date.now() + 30000;
     while (this.inFlight.size && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!active.length) {
+      this.progress('complete', null, { percent: 100, empty: true });
+      this.status('本次没有需要上传的监考日志');
+      return true;
+    }
     let allUploaded = true;
     for (const record of active) {
+      this.progress('closing', record);
       record.journal.close();
       try {
         if (this.inFlight.size) throw new Error('提交仍在处理中，日志将在联网后补传');
@@ -218,6 +260,7 @@ class ProctorController {
         await record.journal.finalize();
         Object.assign(record.journal.state, { uploadError: '日志未上传，成绩待确认；请使用原账号联网补传', retryAfter: Date.now() + 60000 });
         record.journal.saveState();
+        this.progress('deferred', record);
       }
     }
     this.status(allUploaded ? '日志上传完成' : '日志未上传，成绩待确认；将在联网后补传');
@@ -262,7 +305,7 @@ class ProctorController {
         const prefix = this.current.context.origin === state.binding.origin && this.current.login.domainId === state.binding.domainId
           ? this.current.context.prefix : `/d/${encodeURIComponent(state.binding.domainId)}`;
         const context = contextFromUrl(`${state.binding.origin}${prefix}/contest/${state.binding.tid}`);
-        const transport = new Transport(this.electronSession, context.origin, 120000);
+        const transport = this.createTransport(context.origin, 120000);
         const login = await identity(transport, context, this.config.trust);
         if (login.uid !== state.binding.uid || login.domainId !== state.binding.domainId) continue;
         record = this.records.get(entry) || { context, login, transport,
@@ -279,6 +322,7 @@ class ProctorController {
           Object.assign(record.journal.state, { uploadError: '日志补传失败，请检查账号、版本及服务端策略', retryCount: count,
             retryAfter: Date.now() + Math.min(3600000, 60000 * 2 ** Math.min(count, 6)), permanentError: error.retryable === false, failureVersion: this.version, failureKeyId: this.config.trust.keyId });
           record.journal.saveState();
+          this.progress('deferred', record);
         }
         this.status('存在待补传日志；版本、密钥或环境错误需管理员处理');
       }
