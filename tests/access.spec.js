@@ -54,7 +54,7 @@ test('GET proof binds read action/path/payload and generates a fresh nonce on ev
 
 test('network guard authenticates deep links/refreshes and attachments, preserving bridge proofs', async () => {
   const calls = [], token = 't'.repeat(43), result = { 'x-proctor-token': token, 'x-proctor-proof': 'signed' };
-  const controller = { records: new Map([[tid, { context: { origin }, auth: { session: { token } } }]]),
+  const controller = { current: { login: { uid: 7 } }, records: new Map([[tid, { login: { uid: 7 }, context: { origin }, auth: { session: { token } } }]]),
     headers: async (...args) => { calls.push(args); return result; }, status: () => {} };
   const guard = new ProctorRequestGuard(controller, { exam: { allowedOrigins: [origin] } },
     { id: 1, getURL: () => `${origin}/d/exam/contest/${tid}/problems` });
@@ -74,4 +74,43 @@ test('network guard authenticates deep links/refreshes and attachments, preservi
   assert.deepEqual(await guard.headers(details), details.requestHeaders);
   guard.isBlocked = () => true;
   assert.deepEqual(await guard.headers({ ...details, requestHeaders: { ...result, Accept: 'text/html' } }), { Accept: 'text/html' });
+});
+
+test('a prior account or closed attempt cannot forward its cached bridge proof', async () => {
+  const previous = { login: { uid: 7 }, context: { origin }, auth: { session: { token: 'old-token' } } };
+  const fresh = { 'x-proctor-token': 'new-token', 'x-proctor-proof': 'new-proof' }, calls = [];
+  const controller = { current: { login: { uid: 8 } }, records: new Map([[tid, previous]]),
+    headers: async () => { calls.push(1); return fresh; }, status: () => {} };
+  const guard = new ProctorRequestGuard(controller, { exam: { allowedOrigins: [origin] } }, { id: 1, getURL: () => `${origin}/contest/${tid}` });
+  const details = { url: `${origin}/contest/${tid}/problems`, method: 'GET', webContentsId: 1, resourceType: 'mainFrame',
+    requestHeaders: { 'x-proctor-token': 'old-token', 'x-proctor-proof': 'old-proof' } };
+  assert.deepEqual(await guard.headers(details), fresh);
+  controller.current.login.uid = 7; previous.journal = { state: { phase: 'uploaded' } };
+  assert.deepEqual(await guard.headers(details), fresh);
+  assert.equal(calls.length, 2);
+});
+
+test('closing attempts retain native finish/refresh/upload proofs on their own protocol endpoint', async () => {
+  const proctorPath = `/d/exam/contest/${tid}/proctor`, proof = { 'x-proctor-token': 'token', 'x-proctor-proof': 'signed' };
+  const controller = { current: { login: { uid: 7 } }, records: new Map([[tid, { login: { uid: 7 }, context: { origin, proctorPath },
+    journal: { state: { phase: 'closing' } }, auth: { session: { token: 'token' } } }]]), headers: () => assert.fail('protocol must not request new read proofs') };
+  const guard = new ProctorRequestGuard(controller, { exam: { allowedOrigins: [origin] } }, { id: 1 });
+  const details = { url: origin + proctorPath, method: 'POST', webContentsId: -1, requestHeaders: proof };
+  assert.deepEqual(await guard.headers(details), proof);
+  assert.deepEqual(await guard.headers({ ...details, url: 'https://other.example' + proctorPath }), {});
+  controller.current.login.uid = 8;
+  assert.deepEqual(await guard.headers(details), {});
+});
+
+test('completed attempts show their specific reason and trace the failure without exposing request credentials', async () => {
+  const messages = [], traces = [];
+  const controller = { records: new Map(), trace: (...entry) => traces.push(entry), status: (message) => messages.push(message), headers: async () => {
+    throw Object.assign(new Error('本场监考已结束且日志已上传'), { code: 'PROCTOR_ATTEMPT_COMPLETE', publicMessage: '本场监考已结束且日志已上传' });
+  } };
+  const guard = new ProctorRequestGuard(controller, { exam: { allowedOrigins: [origin] } }, { id: 1, getURL: () => `${origin}/contest/${tid}` });
+  const headers = await guard.headers({ url: `${origin}/contest/${tid}/problems`, method: 'GET', webContentsId: 1,
+    resourceType: 'mainFrame', requestHeaders: { Accept: 'text/html', 'x-proctor-token': 'private-token', 'x-proctor-proof': 'private-proof' } });
+  assert.deepEqual(headers, { Accept: 'text/html' }); assert.equal(messages.at(-1), '本场监考已结束且日志已上传');
+  assert.equal(traces[0][1], 'request.authentication-failed'); assert.equal(traces[0][2].code, 'PROCTOR_ATTEMPT_COMPLETE');
+  assert.doesNotMatch(JSON.stringify(traces), /private-token|private-proof/);
 });

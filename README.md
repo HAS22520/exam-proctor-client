@@ -98,7 +98,7 @@ npm run release:hot -- --config config/build.local.json
 
 独立客户端仓库的 `.github/workflows/build.yml` 提供手动 workflow_dispatch 构建。将客户端仓库推送 GitHub 后，添加 Secrets：`PROCTOR_AUTH_PUBLIC_KEY`、`PROCTOR_LOG_PUBLIC_KEY`；添加 Variable：`PROCTOR_KEY_ID`。Actions 页面填写版本、考试地址、两个 origin JSON 数组、更新清单 URL，以及是否允许 root 调试。
 
-输出三个独立 Artifact：Windows x64（NSIS 安装包和便携 EXE）、macOS x64（DMG/ZIP）、macOS arm64（DMG/ZIP）。工作流只上传构建结果，不自动发布 Release。Mac runner 使用明确的 Intel/Arm 标签，参见 [GitHub 官方 runner 列表](https://github.com/actions/runner-images)。
+Actions 的 `build_type` 可以选 `installers`（完整安装包）、`asar`（应用归档）或 `all`（默认，两者都构建）。完整安装包使用 Windows/macOS 原生 runner，输出 Windows x64（NSIS/便携 EXE）、macOS x64（DMG/ZIP）、macOS arm64（DMG/ZIP）三个 Artifact；ASAR 在独立 Ubuntu job 中执行 `release:hot`，输出 `HydroProctor-<version>-asar` Artifact，内含 ASAR 与版本/大小/哈希 JSON，沿用同一组公钥、版本与地址参数。工作流只上传构建结果，不自动发布 Release、上传 OJ 或启用自动热更新。Mac runner 使用明确的 Intel/Arm 标签，参见 [GitHub 官方 runner 列表](https://github.com/actions/runner-images)。
 
 正式分发需要代码签名。Windows 可设置 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`；Mac 设置 `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`，以及 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 进行公证。未配置证书时可生成测试包；不能把未签名测试包当成已完成正式签名/公证的发行包。
 
@@ -132,6 +132,8 @@ PROCTOR_BUILDER_IMAGE=electronuserland/builder:22-wine-03.25 npm run build:docke
 版本或认证密钥不匹配时不能获得有效证明，由 OJ 拒绝读取和提交；客户端不会用调试身份绕过服务端检查。普通比赛及赛后浏览仍由 OJ 的既有规则决定。客户端进入比赛前应先报名并登录，且构建版本必须与后台指定版本完全一致。
 
 同一 origin、域、比赛和题目上下文的签名身份最多缓存 20 秒，并在签名即将到期前重新获取；导航认证串行合并，比赛页与题目列表共用一次握手。每次读取和提交仍生成新的请求证明，由 OJ 校验实际请求的版本、令牌、环境和比赛状态。客户端不再对每个受保护资源额外查询比赛状态；后台定期检查及登录变化会重新获取签名身份。
+
+结束监考并上传成功后，服务端会把该账号在这场比赛中的 attempt 设为 `complete`。之后握手可能返回 HTTP 200 和 `completed: true`，而不是新的会话令牌；这代表该场监考已结束，不代表版本不匹配。客户端显示“本场监考已结束且日志已上传”，不再对此记录反复握手或恢复监考限制。按“完成并退出”退出客户端后，另一账号可以重新登录、独立认证和建立自己的日志；原账号继续同场比赛受服务端规则限制，客户端不会清除原日志或重开已结束的 attempt。
 
 点击“结束监考”先明确提示必须上传日志才能确认成绩，随后打开本地独立上传窗口，显示整理/加密、实际网络上传百分比和字节数、等待服务端确认、成功或待补传状态。上传到 100% 仍需等待有效回执，才允许“完成并退出”。网络中断时提示日志已加密保存在本机、成绩待确认，可选择保留日志退出，联网后重新启动并登录原账号补传。此时不能继续做题。多个待上传比赛依次显示，各自成功才报告全部完成。
 
@@ -170,6 +172,8 @@ python3 -m unittest discover -s tools/tests -v
 启用 root 调试的构建在每次启动时保存脱敏诊断记录，Windows 路径为 `%APPDATA%\HydroProctorClient\diagnostics\debug-<时间戳>.log`，macOS 路径为 `~/Library/Application Support/HydroProctorClient/diagnostics/debug-<时间戳>.log`。即使尚未登录或启动失败，也可查看文件最后的 `*.start` / `*.failed` 定位停在哪一步。控制台保留最近 1,000 条；文件每次启动最多 4 MiB、保留最近 3 次。诊断文件与考试用的加密 `.hplog` 分开，不作为监考证据上传；不记录请求体、代码、Cookie、令牌、密钥或完整证明，URL 移除查询参数与片段。普通构建不创建诊断文件。修改配置后必须重新构建，旧 EXE 不会自动获得控制台。
 
 诊断记录的 `time` 使用系统本地时区并带偏移，例如 `2026-10-10T18:50:45.841+08:00`，另保留 `utc` 和 `timeZone`。旧记录以 `Z` 结尾，表示 UTC，在香港本地需要加 8 小时；它本身不表示系统时钟错误。HTTP 200 的 `net::OK` 不会再记为错误，HTTP 403 等拒绝响应保留为警告。`firewall.stage` 会标明域名解析、策略快照、规则批量禁用、恢复出站策略及恢复原规则等阶段。
+
+`identity.verified` 记录签名验证后的 UID、域和比赛；`auth.session-accepted` 表示已收到并验证会话令牌，`auth.attempt-complete` 表示服务端返回已完成状态。`request.authentication-failed` 会记录读取认证失败的实际原因和错误码，不记录令牌或证明。排查换账号的问题时，可以用 UID 区分客户端是否已识别新账号，不能仅凭握手的 HTTP 200 判断仍有有效做题会话。
 
 Windows：普通考试用户握手后按配置应用系统防火墙规则，保存原出站策略和本地允许规则，退出/异常重启恢复。独立提升权限的看守进程会在客户端被强杀后恢复策略。恢复失败会保留状态；可用管理员终端运行随包 `scripts/restore-network.bat`，默认读取 `%APPDATA%\HydroProctorClient\network-state.json`。不会重置整机防火墙、清空代理或禁用所有网卡。网络权限提升仅在需要修改防火墙时请求，不强制客户端全程以管理员身份运行。
 

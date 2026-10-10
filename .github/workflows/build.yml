@@ -2,6 +2,15 @@ name: Build Hydro proctor client
 on:
   workflow_dispatch:
     inputs:
+      build_type:
+        description: Build installers, ASAR application archive, or both
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - installers
+          - asar
       version:
         description: Client version (must match OJ proctor settings)
         required: true
@@ -24,8 +33,19 @@ on:
         default: false
 permissions:
   contents: read
+env:
+  PROCTOR_CLIENT_VERSION: ${{ inputs.version }}
+  PROCTOR_AUTH_PUBLIC_KEY: ${{ secrets.PROCTOR_AUTH_PUBLIC_KEY }}
+  PROCTOR_LOG_PUBLIC_KEY: ${{ secrets.PROCTOR_LOG_PUBLIC_KEY }}
+  PROCTOR_KEY_ID: ${{ vars.PROCTOR_KEY_ID }}
+  PROCTOR_ALLOWED_ORIGINS: ${{ inputs.allowed_origins }}
+  PROCTOR_UPDATE_ORIGINS: ${{ inputs.update_origins }}
+  PROCTOR_TARGET_URL: ${{ inputs.target_url }}
+  PROCTOR_VERSION_URL: ${{ inputs.version_url }}
+  PROCTOR_ALLOW_ROOT_DEBUG: ${{ inputs.allow_root_debug && 'true' || 'false' }}
 jobs:
   build:
+    if: ${{ inputs.build_type != 'asar' }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,15 +67,6 @@ jobs:
             csc_password: MAC_CSC_KEY_PASSWORD
     runs-on: ${{ matrix.runner }}
     env:
-      PROCTOR_CLIENT_VERSION: ${{ inputs.version }}
-      PROCTOR_AUTH_PUBLIC_KEY: ${{ secrets.PROCTOR_AUTH_PUBLIC_KEY }}
-      PROCTOR_LOG_PUBLIC_KEY: ${{ secrets.PROCTOR_LOG_PUBLIC_KEY }}
-      PROCTOR_KEY_ID: ${{ vars.PROCTOR_KEY_ID }}
-      PROCTOR_ALLOWED_ORIGINS: ${{ inputs.allowed_origins }}
-      PROCTOR_UPDATE_ORIGINS: ${{ inputs.update_origins }}
-      PROCTOR_TARGET_URL: ${{ inputs.target_url }}
-      PROCTOR_VERSION_URL: ${{ inputs.version_url }}
-      PROCTOR_ALLOW_ROOT_DEBUG: ${{ inputs.allow_root_debug && 'true' || 'false' }}
       CSC_LINK: ${{ secrets[matrix.csc_link] }}
       CSC_KEY_PASSWORD: ${{ secrets[matrix.csc_password] }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -77,4 +88,23 @@ jobs:
             dist/*.exe
             dist/*.dmg
             dist/*.zip
+          if-no-files-found: error
+  asar:
+    if: ${{ inputs.build_type != 'installers' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run release:hot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HydroProctor-${{ inputs.version }}-asar
+          path: |
+            updates/*.asar
+            updates/*.json
           if-no-files-found: error

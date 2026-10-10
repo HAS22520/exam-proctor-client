@@ -73,6 +73,7 @@ async function identity(transport, context, trust) {
     origin: context.origin, clientNonce, tid: context.tid, routePid: context.problem });
   if (!Number.isSafeInteger(payload.uid) || payload.uid < 0 || typeof payload.domainId !== 'string'
     || typeof payload.root !== 'boolean' || (payload.root && payload.uid === 0)) throw new Error('Invalid signed login identity');
+  transport.trace?.('info', 'identity.verified', { uid: payload.uid, domainId: payload.domainId, tid: payload.tid, root: payload.root });
   return payload;
 }
 
@@ -95,6 +96,7 @@ class ProctorAuth {
       || ((previousAttempt || this.attemptId) && payload.attemptId !== (previousAttempt || this.attemptId))) throw new Error('Session attempt mismatch');
     this.attemptId = payload.attemptId;
     this.session = { ...payload, token: response.token, renewAt: Date.now() + (Date.parse(payload.expiresAt) - Date.now()) * 2 / 3 };
+    this.transport.trace?.('info', 'auth.session-accepted', { uid: payload.uid, domainId: payload.domainId, tid: payload.tid, version: payload.version });
     return this.session;
   }
 
@@ -112,6 +114,9 @@ class ProctorAuth {
       signature: sign(payload, this.device.privateKey) });
     if (result.completed === true) {
       if (!/^[a-f0-9]{24}$/.test(result.receipt || '')) throw new Error('Invalid completion receipt');
+      this.session = null;
+      this.transport.trace?.('info', 'auth.attempt-complete', { uid: this.login.uid, domainId: this.login.domainId,
+        tid: this.context.tid, version: this.version, completed: true });
       return { completed: true, receipt: result.receipt };
     }
     const session = this.accept(result, this.session?.attemptId);

@@ -66,7 +66,10 @@ async function applyIdentity(login) {
   }
   const uid = login?.uid ?? controller?.current?.login.uid;
   const ongoing = [...(controller?.records.values() || [])].some((record) => record.login.uid === uid && record.journal?.state.phase === 'open');
-  const protectedExam = !!uid && (!!login?.proctorEnabled || ongoing) && !debug && !exiting;
+  const activeRecord = controller?.current;
+  const closed = !!activeRecord && activeRecord.login.uid === uid && (activeRecord.completed
+    || !!activeRecord.journal && activeRecord.journal.state.phase !== 'open');
+  const protectedExam = !!uid && ((!!login?.proctorEnabled && !closed) || ongoing) && !debug && !exiting;
   if (protectedExam) {
     if (config.globalFirewallLock?.enabled) await firewall.lock();
     if (revision !== identityRevision || exiting) return;

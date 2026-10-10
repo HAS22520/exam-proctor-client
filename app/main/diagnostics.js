@@ -2,7 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const fields = new Set(['operation', 'method', 'url', 'status', 'code', 'name', 'message', 'durationMs',
-  'phase', 'percent', 'sent', 'total', 'reason', 'exitCode', 'version', 'platform', 'arch', 'debug', 'root', 'source', 'type']);
+  'phase', 'percent', 'sent', 'total', 'reason', 'exitCode', 'version', 'platform', 'arch', 'debug', 'root', 'source', 'type',
+  'uid', 'domainId', 'tid', 'state', 'completed']);
 
 function redact(value) {
   return String(value).replace(/-----BEGIN [\s\S]*?-----END [^-]+-----/g, '[KEY REDACTED]')

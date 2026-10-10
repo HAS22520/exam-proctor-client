@@ -4,12 +4,16 @@ class ProctorRequestGuard {
   constructor(controller, config, webContents, isBlocked = () => false) { Object.assign(this, { controller, config, webContents, isBlocked }); }
 
   async headers(details) {
-    const origin = new URL(details.url).origin;
+    const url = new URL(details.url), origin = url.origin;
     const original = details.requestHeaders;
     const token = Object.entries(original).find(([name]) => name.toLowerCase() === 'x-proctor-token')?.[1];
     const owner = [...this.controller.records.values()].find((record) => record.auth?.session?.token === token && token);
     // Also applies to storage redirects and root-debug navigation to external sites.
-    let headers = owner && owner.context.origin === origin ? { ...original } : stripProctorHeaders(original);
+    const sameUser = owner && owner.login.uid === this.controller.current?.login.uid;
+    // Closing attempts still need their native refresh/finish/upload proofs.
+    const protocol = details.method === 'POST' && url.pathname === owner?.context.proctorPath;
+    const usable = sameUser && (protocol || !owner.completed && (!owner.journal || owner.journal.state.phase === 'open'));
+    let headers = usable && owner.context.origin === origin ? { ...original } : stripProctorHeaders(original);
     if (details.method !== 'GET' || details.webContentsId !== this.webContents.id || !this.config.exam.allowedOrigins.includes(origin)) return headers;
     const target = accessTarget(details.url);
     if (!target) return headers;
@@ -23,9 +27,10 @@ class ProctorRequestGuard {
     try {
       headers = { ...stripProctorHeaders(headers), ...await this.controller.headers(sourceUrl,
         { action: target.action, method: 'GET', path: target.path, payload: target.payload }) };
-    } catch {
+    } catch (error) {
       // The OJ returns a content-free 403 page, including on a deep link/refresh.
-      this.controller.status('客户端验证失败，请检查登录账号、指定版本及认证密钥');
+      this.controller.trace?.('warn', 'request.authentication-failed', { url: details.url, name: error.name, code: error.code, message: error.message });
+      this.controller.status(error.publicMessage || '客户端认证未完成，请检查登录状态，或查看调试控制台中的具体原因。');
       return stripProctorHeaders(headers);
     }
     return headers;

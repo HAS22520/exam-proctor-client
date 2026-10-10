@@ -4,13 +4,19 @@ const path = require('node:path');
 const { test } = require('node:test');
 const { ProctorController } = require('../app/main/proctor-controller');
 const { Transport } = require('../app/main/proctor-auth');
-const { sign, digest, nonce, verify } = require('../app/main/proctor-crypto');
+const { canonical, sign, digest, nonce, verify } = require('../app/main/proctor-crypto');
 const { auth, trust, workspace, store, decryptLog } = require('./helpers');
 const url = 'https://oj.example.com/d/exam/contest/1234567890abcdef12345678';
 function fixture(t) {
   const directory = workspace(t), protectedStore = store(path.join(directory, 'secrets'));
-  let offline = false, uid = 7, state = 'open', receipt, challenge, attempts = 0, loseResponse = false;
+  let offline = false, uid = 7, challenge, attempts = 0, loseResponse = false;
+  const accounts = new Map();
+  const account = () => {
+    if (!accounts.has(uid)) accounts.set(uid, { state: 'open', attemptId: uid === 7 ? 'b'.repeat(24) : uid.toString(16).padStart(24, '0') });
+    return accounts.get(uid);
+  };
   const requests = [];
+  const tokens = new Map(), usedNonces = new Set();
   const envelope = (payload) => ({ payload, signature: sign(payload, auth.privateKey) });
   const session = { fetch: async (url, request) => {
     if (offline) throw new Error('Network offline');
@@ -19,7 +25,16 @@ function fixture(t) {
     let response;
     if (String(url).endsWith('/proctor/identity')) response = envelope({ protocol: 'hydro-proctor/1', action: 'identity', keyId: trust.keyId, origin: 'https://oj.example.com',
       clientNonce: body.clientNonce, uid, domainId: 'exam', root: false, tid: body.tid || '', routePid: body.problem || '', pid: 100, proctorEnabled: true, expiresAt: new Date(Date.now() + 60000).toISOString() });
-    else if (request.method === 'GET') response = { state, logUploaded: !!receipt, receipt };
+    else if (request.method === 'GET' && String(url).endsWith('/problems')) {
+      const token = request.headers['x-proctor-token'], proof = JSON.parse(Buffer.from(request.headers['x-proctor-proof'], 'base64url'));
+      const session = tokens.get(token), p = proof.payload;
+      assert.equal(session.uid, uid); assert.equal(account().state, 'open');
+      assert.equal(p.tokenHash, digest(token)); assert.equal(p.action, 'contest_view'); assert.equal(p.method, 'GET');
+      assert.equal(p.path, new URL(url).pathname); assert.equal(p.version, '1.0.0');
+      assert.equal(p.payloadHash, digest(canonical({ tid: '1234567890abcdef12345678' })));
+      assert.ok(verify(p, proof.signature, protectedStore.device().publicKey));
+      assert.ok(!usedNonces.has(p.nonce)); usedNonces.add(p.nonce); response = { ok: true };
+    } else if (request.method === 'GET') response = { state: account().state, logUploaded: !!account().receipt, receipt: account().receipt };
     else if (body.operation === 'challenge') {
       if (body.version !== '1.0.0') return new Response(JSON.stringify({ error: { message: 'Client version mismatch' } }),
         { status: 403, headers: { 'content-type': 'application/json' } });
@@ -28,16 +43,16 @@ function fixture(t) {
       response = envelope(challenge);
     } else if (body.operation === 'handshake') {
       assert.ok(verify(challenge, body.signature, challenge.publicKey));
-      if (receipt) response = { completed: true, receipt: receipt.id };
-      else { const token = nonce(); response = { token, ...envelope({ protocol: 'hydro-proctor/1', action: 'session', keyId: trust.keyId, uid, domainId: 'exam', tid: challenge.tid,
-        fingerprint: challenge.fingerprint, version: challenge.version, tokenHash: digest(token), attemptId: 'b'.repeat(24), refreshEnabled: true, expiresAt: new Date(Date.now() + 600000).toISOString() }) }; }
-    } else if (body.operation === 'finish') { state = 'closing'; response = { ok: true }; }
+      if (account().receipt) response = { completed: true, receipt: account().receipt.id };
+      else { const token = nonce(); tokens.set(token, { uid }); response = { token, ...envelope({ protocol: 'hydro-proctor/1', action: 'session', keyId: trust.keyId, uid, domainId: 'exam', tid: challenge.tid,
+        fingerprint: challenge.fingerprint, version: challenge.version, tokenHash: digest(token), attemptId: account().attemptId, refreshEnabled: true, expiresAt: new Date(Date.now() + 600000).toISOString() }) }; }
+    } else if (body.operation === 'finish') { account().state = 'closing'; response = { ok: true }; }
     else if (body instanceof FormData) {
       attempts++; const file = body.get('file'); const bytes = Buffer.from(await file.arrayBuffer());
       const proof = JSON.parse(Buffer.from(request.headers['x-proctor-proof'], 'base64url'));
       assert.ok(verify(proof.payload, proof.signature, protectedStore.device().publicKey)); assert.equal(proof.payload.payloadHash, digest(require('../app/main/proctor-crypto').canonical({ filename: file.name, size: bytes.length, sha256: digest(bytes) })));
-      receipt = { id: 'd'.repeat(24), sha256: digest(bytes) }; state = 'complete';
-      if (loseResponse) throw new Error('Response lost'); response = { ok: true, receipt: receipt.id };
+      account().receipt = { id: 'd'.repeat(24), sha256: digest(bytes) }; account().state = 'complete';
+      if (loseResponse) throw new Error('Response lost'); response = { ok: true, receipt: account().receipt.id };
     } else throw new Error('Unexpected mock request');
     return new Response(JSON.stringify(response), { headers: { 'content-type': 'application/json' } });
   } };
@@ -58,6 +73,40 @@ function fixture(t) {
     } };
   return { options, statuses, requests, get attempts() { return attempts; }, set offline(value) { offline = value; }, set uid(value) { uid = value; }, set loseResponse(value) { loseResponse = value; } };
 }
+
+test('completed handshake is a terminal state, avoids repeat handshakes, and another account can read the same contest', async (t) => {
+  const f = fixture(t), first = new ProctorController(f.options);
+  await first.sync(url); assert.equal(await first.finish(), true); first.shutdown();
+  const oldFile = path.join(first.current.journal.directory, 'final.hplog'), oldBytes = fs.readFileSync(oldFile);
+  const controller = new ProctorController(f.options);
+  await controller.sync(url);
+  assert.equal(controller.current.completed, true); assert.equal(controller.current.auth.session, null);
+  assert.equal(f.statuses.at(-1).phase, 'complete'); assert.equal(f.statuses.at(-1).ended, true);
+  assert.equal(f.statuses.at(-1).authenticated, false); assert.match(f.statuses.at(-1).message, /日志已上传/);
+  const handshakes = () => f.requests.filter((request) => request.operation === 'handshake').length;
+  const count = handshakes();
+  const request = { action: 'contest_view', method: 'GET', path: '/d/exam/contest/1234567890abcdef12345678/problems',
+    payload: { tid: '1234567890abcdef12345678' } };
+  for (let i = 0; i < 3; i++) {
+    await assert.rejects(controller.headers(url, request), (error) => error.code === 'PROCTOR_ATTEMPT_COMPLETE');
+    await controller.sync(url, { force: true });
+  }
+  assert.equal(handshakes(), count);
+  f.uid = 8; controller.invalidateIdentity();
+  for (let i = 0; i < 2; i++) {
+    const headers = await controller.headers(url, request);
+    assert.equal((await f.options.session.fetch(`${url}/problems`, { method: 'GET', headers })).status, 200);
+    assert.equal(controller.current.login.uid, 8); assert.equal(controller.current.completed, undefined);
+    assert.equal(f.statuses.at(-1).authenticated, true); assert.equal(f.statuses.at(-1).ended, false);
+  }
+  assert.equal(handshakes(), count + 1);
+  assert.notEqual(controller.current.auth.attemptId, first.current.auth.attemptId);
+  assert.deepEqual(fs.readFileSync(oldFile), oldBytes);
+  const restarted = new ProctorController(f.options);
+  const headers = await restarted.headers(url, request);
+  assert.equal((await f.options.session.fetch(`${url}/problems`, { method: 'GET', headers })).status, 200);
+  assert.equal(restarted.current.login.uid, 8);
+});
 test('a cookie change during a signed identity response discards the old identity before handshake', async (t) => {
   const f = fixture(t), identities = [];
   let enter, release;

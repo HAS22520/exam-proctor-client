@@ -196,3 +196,11 @@ test('an older identity waiting for firewall cannot reenable kiosk after switchi
   assert.equal(f.antiCheatStarts, 0); assert.equal(f.windows[0].kiosk, false);
   assert.equal(f.windows.length, 2);
 });
+
+test('a completed contest does not relock the firewall while checking its signed identity', async (t) => {
+  const f = await fixture(t, { delayLock: true });
+  const login = { uid: 7, root: false, proctorEnabled: true };
+  f.controller.current = { login, completed: true };
+  await f.controller.options.onIdentity(login);
+  assert.equal(f.antiCheatStarts, 0); assert.equal(f.windows[0].kiosk, false);
+});

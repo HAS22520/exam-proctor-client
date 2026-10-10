@@ -23,6 +23,18 @@ function submission(request, context, login) {
   return p;
 }
 
+function requireOpenAttempt(record) {
+  let message, code;
+  if (record.completed || record.journal?.state.phase === 'uploaded') {
+    message = '本场监考已结束且日志已上传，原账号不能继续本场比赛。请进入新比赛或联系管理员处理。';
+    code = 'PROCTOR_ATTEMPT_COMPLETE';
+  } else if (!record.journal || record.journal.state.phase !== 'open') {
+    message = '本场监考已结束，日志尚待上传。请使用原账号补传日志；不能继续做题。';
+    code = 'PROCTOR_ATTEMPT_CLOSED';
+  }
+  if (message) throw Object.assign(new Error(message), { code, publicMessage: message });
+}
+
 class ProctorController {
   constructor({ config, directory, protectedStore, session, version, onIdentity = async () => {}, onStatus = () => {},
     trace = () => {}, createTransport = (origin, timeout) => new Transport(session, origin, timeout, trace) }) {
@@ -60,14 +72,15 @@ class ProctorController {
     const entry = this.identityCache.get(key);
     if (!entry || entry.validUntil <= Date.now() || Date.parse(entry.login.expiresAt) <= Date.now() + 5000) return null;
     const current = { ...entry.record, context: contextFromUrl(url), login: entry.login };
-    if (current.auth && (!current.auth.session || current.completed)) return null;
+    if (current.auth && !current.completed && !current.auth.session) return null;
     this.current = current; this.lastUrl = url;
     await this.onIdentity(current.login);
+    this.status();
     return current;
   }
 
   status(message = '') {
-    const active = this.current?.journal ? this.current : [...this.records.values()].find((record) =>
+    const active = this.current?.journal || this.current?.completed ? this.current : [...this.records.values()].find((record) =>
       record.login.uid === this.current?.login.uid && record.journal?.state.phase === 'open');
     let pendingUploads = 0;
     if (fs.existsSync(this.directory)) for (const entry of fs.readdirSync(this.directory)) {
@@ -77,9 +90,13 @@ class ProctorController {
         if (['closing', 'pending-upload'].includes(state.phase) && state.binding.uid === this.current?.login.uid) pendingUploads++;
       } catch { /* Damaged states are handled by recovery, never replaced here. */ }
     }
-    this.onStatus({ authenticated: !!active?.auth?.session, phase: active?.journal?.state.phase || 'idle',
-      createdAt: active?.journal?.state.createdAt || null, root: !!this.current?.login.root, message, pendingUploads,
-      finishing: this.finishing, upload: this.uploadProgress });
+    const ended = !!active?.completed || !!active?.journal && active.journal.state.phase !== 'open';
+    const phase = active?.completed ? 'complete' : active?.journal?.state.phase || 'idle';
+    const fallback = active?.completed || phase === 'uploaded' ? '本场监考已结束且日志已上传，原账号不能继续本场比赛。请进入新比赛或联系管理员处理。'
+      : ended ? '本场监考已结束，日志尚待上传。请使用原账号补传日志。' : '';
+    this.onStatus({ authenticated: !ended && !!active?.auth?.session, phase, ended,
+      createdAt: active?.journal?.state.createdAt || null, root: !!this.current?.login.root, pendingUploads,
+      finishing: this.finishing, upload: this.uploadProgress, message: message || fallback });
   }
 
   sync(url, options = {}) {
@@ -118,6 +135,7 @@ class ProctorController {
       throw error;
     }
     if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
+    if (this.current && this.current.login.uid !== login.uid) this.identityCache.clear();
     if (login.root || !login.uid || !login.proctorEnabled) await this.onIdentity(login);
     this.lastUrl = url;
     if (!login.uid || !login.proctorEnabled || !context.tid) {
@@ -140,7 +158,8 @@ class ProctorController {
         record.completed = true;
         this.records.set(recordKey, record);
         this.current = record;
-        this.status('监考日志已经上传，本场考试已结束');
+        await this.onIdentity(login);
+        this.status();
         return record;
       }
       const binding = { origin: context.origin, uid: login.uid, domainId: login.domainId, tid: context.tid,
@@ -155,8 +174,15 @@ class ProctorController {
     Object.assign(record, { login, context });
     record.auth.login = login;
     record.auth.context = context;
-    await record.auth.ensure();
+    if (record.completed) {
+      this.current = record;
+      await this.onIdentity(login);
+      this.status();
+      return record;
+    }
+    const renewed = await record.auth.ensure();
     if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
+    if (renewed.completed) record.completed = true;
     this.current = record;
     await this.onIdentity(login);
     this.status();
@@ -202,7 +228,7 @@ class ProctorController {
       if (['problem_view', 'contest_view'].includes(request?.action)) return this.accessHeaders(url, request);
       const record = await this.sync(url);
       const payload = submission(request, record.context, record.login);
-      if (!record.journal || record.journal.state.phase !== 'open' || record.completed) throw new Error('本场监考已结束');
+      requireOpenAttempt(record);
       const session = await record.auth.ensure();
       if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
       if (session.completed || this.finishing) throw new Error('本场监考已结束');
@@ -223,7 +249,8 @@ class ProctorController {
     const record = this.identityKey(url) === this.identityKey(target.identityUrl) ? current : await this.sync(target.identityUrl);
     if (record.login.uid !== uid || record.login.domainId !== domainId) throw new Error('登录身份已变更，请重新验证');
     if (!record.login.proctorEnabled) return {};
-    if (this.finishing || !record.journal || record.journal.state.phase !== 'open' || record.completed) throw new Error('本场监考已结束，不能继续做题');
+    if (this.finishing) throw new Error('监考正在结束，不能继续做题');
+    requireOpenAttempt(record);
     const session = await record.auth.ensure();
     if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
     if (session.completed || this.finishing) throw new Error('本场监考已结束');
