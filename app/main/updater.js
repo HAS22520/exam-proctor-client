@@ -1,305 +1,120 @@
-const { app } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const https = require('https');
-const http = require('http');
-const { spawn } = require('child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+const { Readable } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
+const crypto = require('node:crypto');
+const { secureUrl, validateConfig } = require('./config-policy');
+const { atomicWrite } = require('./device-store');
+const { verify } = require('./proctor-crypto');
 
-class HotUpdater {
-  constructor(config = {}, auditLogger = null) {
-    this.config = config.updater || {};
-    this.auditLogger = auditLogger;
-    this.localVersion = this.getLocalVersion();
-    this.timeoutMs = this.config.timeoutMs || 4000;
-  }
+function compare(a, b) {
+  if (![a, b].every((value) => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value))) throw new Error('Invalid update version');
+  const left = a.split('.').map(Number), right = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] > right[i] ? 1 : -1;
+  return 0;
+}
 
-  getLocalVersion() {
-    try {
-      const pkgPath = path.resolve(__dirname, '../../package.json');
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-        return pkg.version || '1.0.0';
-      }
-    } catch (e) {}
-    return '1.0.0';
-  }
-
-  // 版本语义号比较: 返回 1 (v1 > v2), -1 (v1 < v2), 0 (v1 == v2)
-  compareVersions(v1, v2) {
-    const p1 = (v1 || '0.0.0').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
-    const p2 = (v2 || '0.0.0').replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
-    for (let i = 0; i < Math.max(p1.length, p2.length, 3); i++) {
-      const a = p1[i] || 0;
-      const b = p2[i] || 0;
-      if (a > b) return 1;
-      if (a < b) return -1;
+class Updater {
+  constructor(config, { directory, trust, version, fetch = globalThis.fetch }) {
+    Object.assign(this, { config, directory, trust, version, fetch, minimumBlocked: false });
+    this.policyPath = path.join(directory, 'updates', 'policy.json');
+    if (fs.existsSync(this.policyPath)) {
+      const policy = JSON.parse(fs.readFileSync(this.policyPath, 'utf8'));
+      this.minimumBlocked = !!policy.minClientVersion && compare(version, policy.minClientVersion) < 0;
     }
-    return 0;
   }
 
-  // 通用网络请求 (自动处理 301/302/307 重定向及超时)
-  fetchUrl(targetUrl, timeoutMs = 4000, maxRedirects = 5) {
-    return new Promise((resolve, reject) => {
-      if (maxRedirects <= 0) {
-        return reject(new Error('Too many redirects'));
+  url(value, base) {
+    const url = secureUrl(new URL(value, base || this.config.updater.versionUrl).href);
+    if (!this.config.updater.allowedOrigins.includes(url.origin)) throw new Error('Update address outside compiled allowlist');
+    return url;
+  }
+
+  async response(value, maxBytes) {
+    let url = this.url(value);
+    const signal = AbortSignal.timeout(Math.max(4000, Math.min(120000, this.config.updater.timeoutMs || 30000)));
+    for (let count = 0; count < 6; count++) {
+      const response = await this.fetch(url, { redirect: 'manual', signal, credentials: 'omit', cache: 'no-store' });
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location');
+        if (!location) throw new Error('Missing update redirect');
+        url = this.url(location, url);
+        continue;
       }
-
-      const client = targetUrl.startsWith('https') ? https : http;
-      const req = client.get(targetUrl, {
-        headers: { 'User-Agent': 'exam-proctor-client-updater' },
-        timeout: timeoutMs
-      }, (res) => {
-        // 重定向跟随
-        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
-          return resolve(this.fetchUrl(res.headers.location, timeoutMs, maxRedirects - 1));
-        }
-
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`HTTP Error ${res.statusCode}: ${res.statusMessage}`));
-        }
-
-        let data = '';
-        res.setEncoding('utf-8');
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => resolve(data));
-      });
-
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error(`Request timeout after ${timeoutMs}ms`));
-      });
-
-      req.on('error', err => reject(err));
-    });
+      if (!response.ok || !response.body) throw new Error('Update download failed');
+      if (Number(response.headers.get('content-length') || 0) > maxBytes) throw new Error('Update exceeds size limit');
+      return response;
+    }
+    throw new Error('Too many update redirects');
   }
 
-  // 下载二进制文件到指定路径 (支持下载进度回调)
-  downloadBinary(targetUrl, destPath, onProgress, timeoutMs = 15000, maxRedirects = 5) {
-    return new Promise((resolve, reject) => {
-      if (maxRedirects <= 0) {
-        return reject(new Error('Too many redirects'));
-      }
-
-      const client = targetUrl.startsWith('https') ? https : http;
-      const req = client.get(targetUrl, {
-        headers: { 'User-Agent': 'exam-proctor-client-updater' },
-        timeout: timeoutMs
-      }, (res) => {
-        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
-          return resolve(this.downloadBinary(res.headers.location, destPath, onProgress, timeoutMs, maxRedirects - 1));
-        }
-
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`HTTP Error ${res.statusCode}`));
-        }
-
-        const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
-        let receivedBytes = 0;
-
-        const fileStream = fs.createWriteStream(destPath);
-        res.on('data', chunk => {
-          receivedBytes += chunk.length;
-          if (totalBytes > 0 && onProgress) {
-            const percent = Math.min(100, Math.round((receivedBytes / totalBytes) * 100));
-            onProgress(percent);
-          }
-        });
-
-        res.pipe(fileStream);
-
-        fileStream.on('finish', () => {
-          fileStream.close(() => resolve(destPath));
-        });
-
-        fileStream.on('error', err => {
-          fs.unlink(destPath, () => {});
-          reject(err);
-        });
-      });
-
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error('Download timeout'));
-      });
-
-      req.on('error', err => reject(err));
-    });
-  }
-
-  // 执行完整的远端更新检测与应用
-  async checkAndApplyUpdate(statusCallback = () => {}) {
-    statusCallback({
-      message: '正在检查云端安全策略与更新...',
-      percent: -1,
-      version: this.localVersion
-    });
-
-    const primaryUrl = this.config.versionUrl || 'https://cdn.jsdelivr.net/gh/HAS22520/exam-proctor-client@main/version.json';
-    const fallbackUrl = this.config.fallbackVersionUrl || 'https://raw.githubusercontent.com/HAS22520/exam-proctor-client/main/version.json';
-
-    let versionInfo = null;
-
-    // 1. 获取远端 version.json
-    try {
-      console.log(`[HotUpdater] [INFO] 正在尝试从主源获取版本信息: ${primaryUrl}`);
-      const rawJson = await this.fetchUrl(primaryUrl, this.timeoutMs);
-      versionInfo = JSON.parse(rawJson);
-    } catch (err1) {
-      console.warn(`[HotUpdater] [WARN] 主更新源连接失败 (${err1.message})，尝试备用源: ${fallbackUrl}`);
+  async json(primary, fallback) {
+    let last;
+    for (const url of [...new Set([primary, fallback].filter(Boolean))]) {
       try {
-        const rawJson = await this.fetchUrl(fallbackUrl, this.timeoutMs);
-        versionInfo = JSON.parse(rawJson);
-      } catch (err2) {
-        console.warn(`[HotUpdater] [WARN] 备用源连接失败 (${err2.message})，已切换至本地离线模式`);
-        statusCallback({
-          message: '已加载本地离线安全环境，准备就绪...',
-          percent: 100,
-          version: this.localVersion
-        });
-        return { updated: false, reason: 'OFFLINE_OR_TIMEOUT' };
-      }
-    }
-
-    if (!versionInfo || !versionInfo.version) {
-      return { updated: false, reason: 'INVALID_VERSION_INFO' };
-    }
-
-    // 2. 动态更新配置（即使版本号未变更，也能热同步云端黑名单与白名单）
-    if (versionInfo.config?.url) {
-      this.syncRemoteConfig(versionInfo.config.url).catch(() => {});
-    }
-
-    const remoteVer = versionInfo.version;
-    console.log(`[HotUpdater] [INFO] 检查完成: 本地版本 v${this.localVersion}, 云端版本 v${remoteVer}`);
-
-    // 3. 比较版本号
-    if (this.compareVersions(remoteVer, this.localVersion) > 0) {
-      console.log(`[HotUpdater] [UPDATE FOUND] 检测到新版本 v${remoteVer}，准备执行热更新...`);
-      statusCallback({
-        message: `发现新版本 v${remoteVer}，准备下载更新...`,
-        percent: 0,
-        version: remoteVer
-      });
-
-      const asarUrl = versionInfo.hotUpdate?.asarUrl || versionInfo.hotUpdate?.fallbackUrl;
-      if (!asarUrl) {
-        console.log('[HotUpdater] [INFO] 远端未提供热更新 asar 地址，跳过热更新');
-        return { updated: false, reason: 'NO_ASAR_URL' };
-      }
-
-      // 4. 下载 app.asar 热补丁
-      const tempAsar = path.join(app.getPath('temp'), `exam_app_${Date.now()}.asar`);
-      try {
-        console.log(`[HotUpdater] [DOWNLOADING] 正在下载热补丁: ${asarUrl}`);
-        await this.downloadBinary(asarUrl, tempAsar, (percent) => {
-          statusCallback({
-            message: `正在极速下载更新补丁 (${percent}%)...`,
-            percent: percent,
-            version: remoteVer
-          });
-        }, 30000);
-
-        // 校验下载的 asar 完整性 (必须大于 10KB)
-        const stat = fs.statSync(tempAsar);
-        if (stat.size < 10240) {
-          throw new Error(`下载的文件尺寸异常 (${stat.size} 字节)`);
+        const response = await this.response(url, 256 * 1024);
+        const chunks = []; let size = 0;
+        for await (const chunk of response.body) {
+          size += chunk.length; if (size > 256 * 1024) throw new Error('Update JSON too large'); chunks.push(Buffer.from(chunk));
         }
-
-        console.log(`[HotUpdater] [SUCCESS] 热更新补丁下载完成 (${stat.size} 字节)，正在应用...`);
-        statusCallback({
-          message: '热更新补丁已就绪，正在应用并重启客户端...',
-          percent: 100,
-          version: remoteVer
-        });
-
-        // 5. 应用热更新并重启应用
-        await this.applyHotPatch(tempAsar);
-        return { updated: true, newVersion: remoteVer };
-      } catch (dlErr) {
-        console.error('[HotUpdater] [ERROR] 热补丁下载或应用失败:', dlErr.message);
-        try { fs.unlinkSync(tempAsar); } catch (e) {}
-        statusCallback({
-          message: '更新下载遇到轻微波动，已使用当前版本启动...',
-          percent: 100,
-          version: this.localVersion
-        });
-        return { updated: false, reason: dlErr.message };
-      }
+        return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } catch (error) { last = error; }
     }
-
-    // 已经是最新版本
-    statusCallback({
-      message: `当前已是最新版本 (v${this.localVersion})，正在进入考场...`,
-      percent: 100,
-      version: this.localVersion
-    });
-    return { updated: false, reason: 'ALREADY_LATEST' };
+    throw last || new Error('No update URL');
   }
 
-  // 远端配置动态热同步 (保存到用户数据目录供 index.js 优先加载)
-  async syncRemoteConfig(configUrl) {
-    try {
-      const raw = await this.fetchUrl(configUrl, 3000);
-      const parsed = JSON.parse(raw);
-      if (parsed.exam?.targetUrl) {
-        const userCfgDir = path.join(app.getPath('userData'), 'config');
-        if (!fs.existsSync(userCfgDir)) fs.mkdirSync(userCfgDir, { recursive: true });
-        const userCfgPath = path.join(userCfgDir, 'exam-config.json');
-        fs.writeFileSync(userCfgPath, JSON.stringify(parsed, null, 2), 'utf-8');
-        console.log('[HotUpdater] [CONFIG] 云端考试配置热同步成功！');
-      }
-    } catch (e) {}
+  async downloadPackage(info, destination) {
+    if (!Number.isSafeInteger(info.size) || info.size < 1 || info.size > 240 * 1024 * 1024 || !/^[a-f0-9]{64}$/.test(info.sha256 || '')) throw new Error('Invalid update integrity metadata');
+    let last;
+    for (const url of [...new Set([info.asarUrl, info.fallbackUrl].filter(Boolean))]) {
+      const temp = `${destination}.tmp`;
+      try {
+        const response = await this.response(url, info.size);
+        let size = 0; const hash = crypto.createHash('sha256');
+        const source = Readable.from((async function* () {
+          for await (const chunk of response.body) { size += chunk.length; if (size > info.size) throw new Error('Update size mismatch'); hash.update(chunk); yield chunk; }
+        })());
+        await pipeline(source, fs.createWriteStream(temp, { mode: 0o600 }));
+        if (size !== info.size || hash.digest('hex') !== info.sha256) throw new Error('Update integrity mismatch');
+        fs.renameSync(temp, destination); return destination;
+      } catch (error) { fs.rmSync(temp, { force: true }); last = error; }
+    }
+    throw last || new Error('No update package URL');
   }
 
-  // 在 Windows 上通过独立后台进程安全替换 app.asar 并重启
-  async applyHotPatch(tempAsarPath) {
-    if (!app.isPackaged) {
-      console.log('[HotUpdater] [DEV MODE] 当前处于开发模式，已模拟热补丁成功，无需替换文件。');
-      await new Promise(r => setTimeout(r, 1200));
-      return;
+  async check() {
+    if (this.config.updater.checkOnStartup === false) return;
+    const manifest = await this.json(this.config.updater.versionUrl, this.config.updater.fallbackVersionUrl);
+    compare(manifest.version, this.version);
+    this.minimumBlocked = !!manifest.minClientVersion && compare(this.version, manifest.minClientVersion) < 0;
+    atomicWrite(this.policyPath, JSON.stringify({ version: manifest.version, minClientVersion: manifest.minClientVersion || '' }));
+    if (manifest.config?.url) {
+      const remote = await this.json(manifest.config.url, manifest.config.fallbackUrl);
+      const validated = validateConfig({ ...this.config, ...remote, debug: this.config.debug }, this.trust);
+      delete validated.trust;
+      atomicWrite(path.join(this.directory, 'config', 'exam-config.json'), JSON.stringify(validated));
     }
+    this.manifest = manifest;
+    const newer = compare(manifest.version, this.version) > 0;
+    if (!newer && !this.minimumBlocked) return manifest;
+    // The current OJ manifest is unsigned. Never execute downloaded ASAR based on
+    // a hash supplied by that same manifest. Native signed installers preserve
+    // macOS code signatures and support upgrading Electron itself on Windows.
+    const platform = manifest.fullUpdate?.platforms?.[process.platform]?.[process.arch];
+    const info = platform || (process.platform === 'win32' && process.arch === 'x64' ? manifest.fullUpdate : null);
+    const candidate = info?.installerUrl || info?.portableUrl;
+    if (candidate) this.installerUrl = this.url(candidate).href;
+    return manifest;
+  }
 
-    const targetAsar = path.join(process.resourcesPath, 'app.asar');
-    const exePath = process.execPath;
-    const procId = process.pid;
-
-    console.log(`[HotUpdater] [RESTART] 启动无缝热更新进程替换: ${targetAsar}`);
-
-    // 生成 Base64 编码的免转义独立 PowerShell 重启脚本
-    const psScript = `
-      $procId = ${procId}
-      $newAsar = '${tempAsarPath.replace(/'/g, "''")}'
-      $targetAsar = '${targetAsar.replace(/'/g, "''")}'
-      $exePath = '${exePath.replace(/'/g, "''")}'
-      
-      # 等待原客户端进程退出并释放 app.asar 句柄
-      Wait-Process -Id $procId -Timeout 10 -ErrorAction SilentlyContinue
-      Start-Sleep -Milliseconds 400
-      
-      # 替换 app.asar
-      Copy-Item -Path $newAsar -Destination $targetAsar -Force
-      Remove-Item -Path $newAsar -Force -ErrorAction SilentlyContinue
-      
-      # 重新启动客户端
-      Start-Process -FilePath $exePath
-    `;
-
-    const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-    const child = spawn('powershell.exe', [
-      '-NoProfile',
-      '-WindowStyle', 'Hidden',
-      '-EncodedCommand', encoded
-    ], {
-      detached: true,
-      stdio: 'ignore'
-    });
-
-    child.unref();
-
-    // 留出时间让后台脚本启动，然后主进程退出
-    await new Promise(r => setTimeout(r, 300));
-    app.exit(0);
+  // Optional independent signature extension, for release tooling and future
+  // server support. No automatic ASAR replacement is enabled by this client.
+  verifyHotUpdate(info) {
+    const payload = { action: 'hydro-proctor-update/1', version: info.version, platform: info.platform,
+      arch: info.arch, size: info.size, sha256: info.sha256 };
+    return !!this.trust.updatePublicKey && verify(payload, info.signature, this.trust.updatePublicKey);
   }
 }
 
-module.exports = HotUpdater;
+module.exports = Updater;
+module.exports.compare = compare;

@@ -1,110 +1,53 @@
-const path = require('path');
-const fs = require('fs');
-const { execSync } = require('child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
+const { atomicWrite } = require('./device-store');
 
 class FirewallGuard {
-  constructor(config, auditLogger = null) {
-    this.config = config;
-    this.auditLogger = auditLogger;
-    this.isLocked = false;
-    this.lockScript = this.resolveScript('scripts/lock-firewall.ps1');
-    this.unlockScript = this.resolveScript('scripts/unlock-firewall.ps1');
+  constructor(config, logger, directory) {
+    Object.assign(this, { config, logger, directory, isLocked: false });
+    this.statePath = path.join(directory, 'network-state.json');
   }
 
-  resolveScript(relPath) {
-    if (process.resourcesPath) {
-      const p = path.join(process.resourcesPath, relPath);
-      if (fs.existsSync(p)) return p;
-    }
-    return path.resolve(__dirname, '../../', relPath);
+  script(name) {
+    const packaged = path.join(process.resourcesPath || '', 'scripts', name);
+    return fs.existsSync(packaged) ? packaged : path.resolve(__dirname, '../../scripts', name);
   }
 
-  // 检查当前进程是否具有管理员特权
-  checkIsAdmin() {
-    if (process.platform !== 'win32') return false;
-    try {
-      execSync('net session', { stdio: 'ignore' });
-      return true;
-    } catch (e) {
+  run(name, policyPath = '') {
+    const quote = (value) => `'${value.replace(/'/g, "''")}'`;
+    const script = `& ${quote(this.script(name))} -StatePath ${quote(this.statePath)}${policyPath ? ` -PolicyPath ${quote(policyPath)} -ClientProcessId ${process.pid}` : ''}`;
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    let admin = false;
+    try { execFileSync('net.exe', ['session'], { stdio: 'ignore', windowsHide: true }); admin = true; } catch { /* UAC below. */ }
+    const args = admin ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded]
+      : ['-NoProfile', '-Command', `$p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${encoded}'); exit $p.ExitCode`];
+    execFileSync('powershell.exe', args, { stdio: 'ignore', windowsHide: true, timeout: 90000 });
+  }
+
+  recover() {
+    if (process.platform === 'win32' && fs.existsSync(this.statePath)) this.run('unlock-firewall.ps1');
+  }
+
+  lock() {
+    if (process.platform !== 'win32') {
+      this.logger?.logViolation({ source: 'FIREWALL', type: 'SYSTEM_NETWORK_FILTER_UNAVAILABLE', target: process.platform, detail: '应用内白名单仍生效' });
       return false;
     }
+    if (this.isLocked) return true;
+    const policyPath = path.join(this.directory, 'network-policy.json');
+    atomicWrite(policyPath, JSON.stringify({ origins: this.config.exam.allowedOrigins, group: `HydroProctor-${crypto.randomUUID()}` }));
+    try { this.run('lock-firewall.ps1', policyPath); this.isLocked = true; }
+    catch (error) { this.recover(); throw error; }
+    this.logger?.logViolation({ source: 'FIREWALL', type: 'NETWORK_POLICY_APPLIED', target: 'win32', detail: '' });
+    return true;
   }
 
-  // 执行全局断网锁定
-  lock() {
-    if (process.platform !== 'win32') return;
-    if (this.isLocked) return;
-
-    console.log('[FirewallGuard] [INFO] 正在启动全局网络物理切断 (仅保留考试网站)...');
-
-    const isAdmin = this.checkIsAdmin();
-    try {
-      if (isAdmin) {
-        // 已经是管理员身份，直接执行 PowerShell 脚本
-        const output = execSync(
-          `powershell -NoProfile -ExecutionPolicy Bypass -File "${this.lockScript}"`,
-          { encoding: 'utf-8' }
-        );
-        console.log('[FirewallGuard] [SCRIPT OUTPUT]:\n' + output);
-      } else {
-        // 请求 UAC 提权执行
-        console.log('[FirewallGuard] [INFO] 请求 Windows 管理员权限执行防火墙策略...');
-        const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \\"\\"${this.lockScript}\\"\\"'"` ;
-        execSync(cmd, { stdio: 'inherit' });
-      }
-
-      // 验证防火墙规则是否实际生效
-      try {
-        const verifyCmd = `powershell -NoProfile -Command "(Get-NetFirewallRule -DisplayName 'EXAM_*' -ErrorAction SilentlyContinue).Count"`;
-        const count = parseInt(execSync(verifyCmd, { encoding: 'utf-8' }).trim(), 10) || 0;
-        console.log(`[FirewallGuard] [VERIFY] 已生效的考试专用防火墙阻断/放行规则数: ${count}`);
-        if (count > 0) {
-          this.isLocked = true;
-          console.log('[FirewallGuard] [SUCCESS] 全局防火墙切断已生效，整机外部网络已阻断！');
-        } else {
-          console.warn('[FirewallGuard] [WARN] 防火墙规则数量为 0，可能由于权限不足或策略未成功写入！');
-        }
-      } catch (ve) {
-        this.isLocked = true;
-      }
-
-      if (this.auditLogger) {
-        this.auditLogger.logViolation({
-          source: 'FIREWALL_GUARD',
-          type: 'GLOBAL_NETWORK_LOCKED',
-          target: 'ALL_EXTERNAL_TRAFFIC',
-          detail: '全局网络硬阻断已激活，除考试站点外整机断网'
-        });
-      }
-    } catch (err) {
-      console.error('[FirewallGuard] [ERROR] 启动全局防火墙断网失败:', err.message);
-    }
-  }
-
-  // 恢复全局网络
   unlock() {
     if (process.platform !== 'win32') return;
-    if (!this.isLocked) return;
-
-    console.log('[FirewallGuard] [INFO] 正在恢复整机全局网络与防火墙...');
-
-    const isAdmin = this.checkIsAdmin();
-    try {
-      if (isAdmin) {
-        const output = execSync(
-          `powershell -NoProfile -ExecutionPolicy Bypass -File "${this.unlockScript}"`,
-          { encoding: 'utf-8' }
-        );
-        console.log('[FirewallGuard] [SCRIPT OUTPUT]:\n' + output);
-      } else {
-        const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \\"\\"${this.unlockScript}\\"\\"'"` ;
-        execSync(cmd, { stdio: 'inherit' });
-      }
-      this.isLocked = false;
-      console.log('[FirewallGuard] [INFO] 全局网络与防火墙已全部恢复正常！');
-    } catch (err) {
-      console.error('[FirewallGuard] [ERROR] 恢复全局网络失败:', err.message);
-    }
+    this.recover();
+    this.isLocked = false;
   }
 }
 

@@ -1,17 +1,20 @@
 {
   "exam": {
     "title": "在线考试监考客户端",
-    "targetUrl": "https://oj.hntou.fmcf.cc/",
-    "allowedDomains": [
-      "oj.hntou.fmcf.cc"
+    "targetUrl": "https://oj.example.com/",
+    "allowedOrigins": [
+      "https://oj.example.com"
     ]
   },
   "updater": {
     "enabled": true,
     "checkOnStartup": true,
-    "timeoutMs": 4000,
-    "versionUrl": "https://cdn.jsdelivr.net/gh/HAS22520/exam-proctor-client@main/version.json",
-    "fallbackVersionUrl": "https://raw.githubusercontent.com/HAS22520/exam-proctor-client/main/version.json"
+    "timeoutMs": 30000,
+    "versionUrl": "https://oj.example.com/client-updates/version.json",
+    "fallbackVersionUrl": "",
+    "allowedOrigins": [
+      "https://oj.example.com"
+    ]
   },
   "globalFirewallLock": {
     "enabled": true
@@ -71,6 +74,22 @@
       "nekoray.exe"
     ],
     "checkProcessIntervalMs": 1500,
-    "singleScreenOnly": true
+    "singleScreenOnly": true,
+    "terminateBlacklisted": false,
+    "processBlacklistByPlatform": {
+      "darwin": [
+        "Google Chrome",
+        "firefox",
+        "ChatGPT",
+        "Claude",
+        "WeChat",
+        "AnyDesk",
+        "TeamViewer",
+        "RustDesk"
+      ]
+    }
+  },
+  "debug": {
+    "allowRoot": false
   }
 }

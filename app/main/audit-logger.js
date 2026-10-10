@@ -1,126 +1,185 @@
-const fs = require('fs');
-const path = require('path');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const readline = require('node:readline');
+const { once } = require('node:events');
+const { atomicWrite, bootIdentity } = require('./device-store');
+const { canonical, digest, LOG_MAGIC } = require('./proctor-crypto');
+
+function decodeRecord(line, key, binding, seq, previousHash) {
+  const sealed = JSON.parse(line);
+  const iv = Buffer.from(sealed.iv, 'base64url');
+  const tag = Buffer.from(sealed.tag, 'base64url');
+  if (iv.length !== 12 || tag.length !== 16) throw new Error('Invalid journal encryption');
+  const cipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(Buffer.from(`HYDRO-JOURNAL/1:${binding.attemptId}`));
+  cipher.setAuthTag(tag);
+  const record = JSON.parse(Buffer.concat([cipher.update(Buffer.from(sealed.data, 'base64url')), cipher.final()]).toString('utf8'));
+  if (record.seq !== seq || record.previousHash !== previousHash) throw new Error('Invalid journal sequence');
+  return { record, iv: sealed.iv, hash: digest(canonical(sealed)) };
+}
 
 class AuditLogger {
-  constructor(config) {
-    this.outputDir = path.resolve(config.recording?.outputDir || './records');
-    if (!fs.existsSync(this.outputDir)) {
-      fs.mkdirSync(this.outputDir, { recursive: true });
-    }
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    this.startTime = new Date();
-    this.logFilePath = path.join(this.outputDir, `exam_audit_${timestamp}.log`);
-    this.jsonFilePath = path.join(this.outputDir, `exam_violations_${timestamp}.json`);
-    this.violations = [];
-
-    // 初始化日志文件头部
-    const header = [
-      '=================================================================',
-      `  在线考试安全监考系统 - 非法访问与防作弊审计日志`,
-      `  考试启动时间: ${this.formatDateTime(this.startTime)}`,
-      `  仅放行白名单域名: ${JSON.stringify(config.exam?.allowedDomains || [])}`,
-      '=================================================================\r\n\r\n'
-    ].join('\r\n');
-
-    fs.writeFileSync(this.logFilePath, header, 'utf-8');
-    fs.writeFileSync(this.jsonFilePath, '[]', 'utf-8');
-    console.log(`[AuditLogger] [INFO] 审计日志已初始化，存储路径: ${this.logFilePath}`);
-  }
-
-  formatDateTime(d = new Date()) {
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-           `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
-  }
-
-  /**
-   * 记录违规/试图访问外网事件 (实时同步落盘)
-   * @param {Object} item 
-   * @param {string} item.source 来源 ('CLIENT' | 'SYSTEM_PROXY' | 'ANTI_CHEAT')
-   * @param {string} item.type 类型代码
-   * @param {string} item.target 试图访问的目标 URL 或域名
-   * @param {string} item.detail 中文说明
-   */
-  logViolation({ source, type, target, detail }) {
-    const now = new Date();
-    const timeStr = this.formatDateTime(now);
-
-    const record = {
-      timestamp: now.toISOString(),
-      timeFormatted: timeStr,
-      source: source || 'UNKNOWN',
-      type: type || 'BLOCKED_ACCESS',
-      target: target || 'N/A',
-      detail: detail || ''
+  constructor({ directory, binding, protectedStore, logPublicKey, keyId, nowBoot }) {
+    Object.assign(this, { directory, binding, store: protectedStore, logPublicKey, keyId });
+    const bootId = nowBoot === undefined ? bootIdentity() : `test:${nowBoot}`;
+    this.statePath = path.join(directory, 'state.json');
+    this.journalPath = path.join(directory, 'journal.enc');
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const existed = fs.existsSync(this.statePath);
+    this.state = existed ? JSON.parse(fs.readFileSync(this.statePath, 'utf8')) : {
+      binding, keyId, phase: 'open', clean: false, createdAt: new Date().toISOString(), bootId,
     };
-
-    this.violations.push(record);
-
-    // 格式化单行纯文本日志并立即落盘，防止进程强退丢失
-    const line = `[${timeStr}] [${record.source}] [${record.type}] 目标: ${record.target} | 说明: ${record.detail}\r\n`;
-    try {
-      fs.appendFileSync(this.logFilePath, line, 'utf-8');
-      // 实时保存一份 JSON
-      fs.writeFileSync(this.jsonFilePath, JSON.stringify(this.violations, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('[AuditLogger] [ERROR] 写入审计日志失败:', err.message);
+    if (canonical(this.state.binding) !== canonical(binding)) throw new Error('Journal identity mismatch');
+    const secretName = `journal-${binding.attemptId}.bin`;
+    let secret = this.store.read(secretName);
+    if (!secret) {
+      if (existed || fs.existsSync(this.journalPath)) throw new Error('Journal key is missing; recovery required');
+      secret = { key: crypto.randomBytes(32).toString('base64url') };
+      this.store.write(secretName, secret);
     }
-
-    console.warn(`[AuditLogger] [AUDIT] 记录违规访问: [${record.source}] ${record.target} (${record.detail})`);
+    this.key = Buffer.from(secret.key, 'base64url');
+    if (this.key.length !== 32) throw new Error('Invalid protected journal key');
+    this.seq = 0;
+    this.previousHash = '';
+    this.usedIvs = new Set();
+    const recovered = this.recover();
+    if (this.state.phase === 'closing' && fs.existsSync(path.join(directory, 'final.hplog'))) {
+      this.state.phase = 'pending-upload';
+      this.state.finalFile = 'final.hplog';
+      this.saveState();
+    }
+    if (['open', 'closing'].includes(this.state.phase)) {
+      if (existed && !this.state.clean) this.append('ABNORMAL_EXIT_DETECTED');
+      if (existed && bootId && this.state.bootId && bootId !== this.state.bootId) this.append('SYSTEM_RESTART');
+      if (!bootId) this.append('BOOT_ID_UNAVAILABLE');
+      this.append(existed ? 'CLIENT_RESTART' : 'CLIENT_START');
+      if (recovered) this.append('JOURNAL_TAIL_RECOVERED', { bytes: recovered });
+      this.state.bootId = bootId;
+      this.state.clean = false;
+      this.saveState();
+    }
   }
 
-  /**
-   * 考试结束时生成完整的违规统计报告
-   */
-  finalize() {
-    const endTime = new Date();
-    const totalCount = this.violations.length;
+  saveState() { atomicWrite(this.statePath, JSON.stringify(this.state)); }
 
-    // 统计不同来源
-    const clientCount = this.violations.filter(v => v.source === 'CLIENT').length;
-    const systemCount = this.violations.filter(v => v.source === 'SYSTEM_PROXY').length;
-    const antiCheatCount = this.violations.filter(v => v.source === 'ANTI_CHEAT').length;
-
-    // 统计试图访问频次最高的外部域名
-    const domainStats = {};
-    for (const v of this.violations) {
+  recover() {
+    if (!fs.existsSync(this.journalPath)) return 0;
+    const bytes = fs.readFileSync(this.journalPath);
+    let offset = 0;
+    let validEnd = 0;
+    while (offset < bytes.length) {
+      const end = bytes.indexOf(10, offset);
+      if (end < 0) break;
       try {
-        let domain = v.target;
-        if (domain.startsWith('http://') || domain.startsWith('https://')) {
-          domain = new URL(domain).hostname;
-        } else {
-          domain = domain.split(':')[0];
-        }
-        domainStats[domain] = (domainStats[domain] || 0) + 1;
-      } catch (e) {
-        domainStats[v.target] = (domainStats[v.target] || 0) + 1;
+        const decoded = decodeRecord(bytes.subarray(offset, end).toString('utf8'), this.key, this.binding, this.seq + 1, this.previousHash);
+        if (this.usedIvs.has(decoded.iv)) throw new Error('Repeated journal nonce');
+        this.usedIvs.add(decoded.iv);
+        this.seq++;
+        this.previousHash = decoded.hash;
+        validEnd = end + 1;
+      } catch (error) {
+        if (end + 1 < bytes.length || !['open', 'closing'].includes(this.state.phase)) throw error;
+        break;
       }
+      offset = end + 1;
     }
+    if (validEnd === bytes.length) return 0;
+    if (!['open', 'closing'].includes(this.state.phase)) throw new Error('Finalized journal is damaged');
+    const tail = bytes.subarray(validEnd);
+    atomicWrite(path.join(this.directory, `corrupt-tail-${crypto.randomBytes(8).toString('hex')}.enc`), tail);
+    fs.truncateSync(this.journalPath, validEnd);
+    return tail.length;
+  }
 
-    const domainSummary = Object.entries(domainStats)
-      .sort((a, b) => b[1] - a[1])
-      .map(([domain, count]) => `    * ${domain}: 尝试访问 ${count} 次`)
-      .join('\r\n');
+  append(type, details = {}) {
+    if (this.sealing || !['open', 'closing'].includes(this.state.phase)) return;
+    const record = { seq: this.seq + 1, utc: new Date().toISOString(), monotonicNs: process.hrtime.bigint().toString(),
+      type, details, previousHash: this.previousHash };
+    let iv;
+    do { iv = crypto.randomBytes(12); } while (this.usedIvs.has(iv.toString('base64url')));
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.key, iv);
+    cipher.setAAD(Buffer.from(`HYDRO-JOURNAL/1:${this.binding.attemptId}`));
+    const data = Buffer.concat([cipher.update(canonical(record)), cipher.final()]);
+    const sealed = { iv: iv.toString('base64url'), tag: cipher.getAuthTag().toString('base64url'), data: data.toString('base64url') };
+    const fd = fs.openSync(this.journalPath, 'a', 0o600);
+    try { fs.writeFileSync(fd, `${canonical(sealed)}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    this.seq++;
+    this.previousHash = digest(canonical(sealed));
+    this.usedIvs.add(sealed.iv);
+  }
 
-    const summary = [
-      '\r\n=================================================================',
-      `  考试结束 - 违规访问审计统计汇总`,
-      `  交卷时间: ${this.formatDateTime(endTime)}`,
-      `  考试时长: ${Math.round((endTime - this.startTime) / 1000)} 秒`,
-      `  总违规/受阻次数: ${totalCount} 次`,
-      `    - 考试客户端内违规跳出/外链: ${clientCount} 次`,
-      `    - 整机其他程序试图联网外链: ${systemCount} 次`,
-      `    - 切屏失焦/黑名单进程报警: ${antiCheatCount} 次`,
-      `  高频涉嫌外部域名排行:`,
-      domainSummary || '    (无非法域名访问记录)',
-      '=================================================================\r\n'
-    ].join('\r\n');
+  logViolation({ source, type, target, detail }) {
+    let safeTarget = String(target || '').slice(0, 512);
+    try { const url = new URL(safeTarget); safeTarget = `${url.origin}${url.pathname}`; } catch { /* Process/shortcut. */ }
+    this.append(type || 'SECURITY_EVENT', { source: source || 'CLIENT', target: safeTarget, detail: String(detail || '').slice(0, 512) });
+  }
 
+  close() {
+    if (this.state.phase !== 'open') return;
+    this.append('FINISH_REQUESTED');
+    this.state.phase = 'closing';
+    this.saveState();
+  }
+
+  cleanShutdown() {
+    if (['open', 'closing'].includes(this.state.phase)) this.append('CLIENT_SHUTDOWN');
+    this.state.clean = true;
+    this.saveState();
+  }
+
+  async finalize() {
+    this.close();
+    const filename = path.join(this.directory, 'final.hplog');
+    if (['uploaded', 'pending-upload'].includes(this.state.phase)) return filename;
+    this.sealing = true;
+    const aesKey = crypto.randomBytes(32);
+    const iv = crypto.randomBytes(12);
+    const wrappedKey = crypto.publicEncrypt({ key: this.logPublicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: 'sha256' }, aesKey);
+    const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
+    cipher.setAAD(Buffer.from(`${LOG_MAGIC}:${this.keyId}`));
+    const header = { keyId: this.keyId, iv: iv.toString('base64url'), tag: Buffer.alloc(16).toString('base64url'),
+      wrappedKey: wrappedKey.toString('base64url') };
+    const prefix = `${LOG_MAGIC}\n${JSON.stringify(header)}\n`;
+    const temp = `${filename}.tmp`;
+    const output = fs.createWriteStream(temp, { flags: 'w', mode: 0o600 });
+    const outputDone = once(output, 'finish');
+    outputDone.catch(() => {});
+    const write = async (bytes) => { if (!output.write(bytes)) await once(output, 'drain'); };
+    const lines = readline.createInterface({ input: fs.createReadStream(this.journalPath), crlfDelay: Infinity });
     try {
-      fs.appendFileSync(this.logFilePath, summary, 'utf-8');
-      console.log(`[AuditLogger] [INFO] 审计报告汇总已写入: ${this.logFilePath}`);
-    } catch (e) {}
+      await write(Buffer.from(prefix));
+      await write(cipher.update(`${canonical({ protocol: 'hydro-journal/1', binding: this.binding })}\n`));
+      let seq = 0;
+      let previousHash = '';
+      for await (const line of lines) {
+        const decoded = decodeRecord(line, this.key, this.binding, ++seq, previousHash);
+        previousHash = decoded.hash;
+        await write(cipher.update(`${canonical(decoded.record)}\n`));
+      }
+      if (seq !== this.seq || previousHash !== this.previousHash) throw new Error('Journal changed while finalizing');
+      await write(cipher.final());
+      output.end();
+      await outputDone;
+      header.tag = cipher.getAuthTag().toString('base64url');
+      const fd = fs.openSync(temp, 'r+');
+      try { fs.writeSync(fd, Buffer.from(`${LOG_MAGIC}\n${JSON.stringify(header)}\n`), 0, Buffer.byteLength(prefix), 0); fs.fsyncSync(fd); }
+      finally { fs.closeSync(fd); }
+      fs.renameSync(temp, filename);
+      Object.assign(this.state, { phase: 'pending-upload', finalFile: 'final.hplog', keyId: this.keyId, clean: true });
+      this.saveState();
+      return filename;
+    } catch (error) { output.destroy(); throw error; }
+    finally { lines.close(); aesKey.fill(0); this.sealing = false; }
+  }
+
+  uploaded(receipt) {
+    if (!/^[a-f0-9]{24}$/.test(receipt || '')) throw new Error('Invalid upload receipt');
+    Object.assign(this.state, { phase: 'uploaded', receipt, clean: true });
+    delete this.state.uploadError;
+    this.saveState();
+    // Retain encrypted evidence to recover qualification after an admin deletion.
   }
 }
 

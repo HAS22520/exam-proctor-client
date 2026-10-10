@@ -1,13 +1,14 @@
 {
   "name": "exam-proctor-client",
   "version": "1.0.0",
-  "description": "专用于在线评测系统的安全监考客户端 (具备全屏锁屏、全局硬断网保护、仅允许访问考试网站)",
+  "description": "Hydro 监考客户端：设备认证、加密日志与跨平台考试环境",
   "main": "app/main/index.js",
   "scripts": {
-    "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder",
-    "release:hot": "node scripts/build-hot-update.js"
+    "start": "node scripts/prepare-build.js && electron .",
+    "pack": "node scripts/build.js --dir",
+    "dist": "node scripts/build.js",
+    "release:hot": "node scripts/build-hot-update.js",
+    "test": "node --test tests/*.spec.js"
   },
   "keywords": [
     "proctor",
@@ -19,8 +20,9 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "@electron/asar": "3.4.1"
   },
   "build": {
     "appId": "com.exam.proctor",
@@ -34,16 +36,18 @@
     ],
     "extraResources": [
       {
-        "from": "config",
-        "to": "config"
-      },
-      {
         "from": "scripts",
-        "to": "scripts"
+        "to": "scripts",
+        "filter": [
+          "lock-firewall.ps1",
+          "unlock-firewall.ps1",
+          "watch-network.ps1",
+          "restore-network.bat"
+        ]
       }
     ],
     "win": {
-      "requestedExecutionLevel": "requireAdministrator",
+      "requestedExecutionLevel": "asInvoker",
       "target": [
         {
           "target": "portable",
@@ -61,8 +65,24 @@
     },
     "nsis": {
       "oneClick": true,
-      "perMachine": true,
-      "allowToChangeInstallationDirectory": false
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "artifactName": "HydroProctor-${version}-win-${arch}-setup.${ext}"
+    },
+    "artifactName": "HydroProctor-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.education",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "entitlements": "config/entitlements.mac.plist",
+      "entitlementsInherit": "config/entitlements.mac.plist"
+    },
+    "beforePack": "./scripts/before-pack.js",
+    "portable": {
+      "artifactName": "HydroProctor-${version}-win-${arch}-portable.${ext}"
     }
   }
 }

@@ -21,3 +21,12 @@ build/
 .env
 .DS_Store
 Thumbs.db
+
+# Generated build trust and releases
+app/generated/
+updates/
+app.asar
+*.dmg
+*.exe
+*.zip
+.env.*

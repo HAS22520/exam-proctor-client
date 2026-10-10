@@ -1,0 +1,80 @@
+name: Build Hydro proctor client
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Client version (must match OJ proctor settings)
+        required: true
+        default: '1.0.0'
+      target_url:
+        description: OJ start URL
+        required: true
+      allowed_origins:
+        description: Allowed exam origins as a JSON array
+        required: true
+      update_origins:
+        description: Allowed update origins as a JSON array
+        required: true
+      version_url:
+        description: OJ version.json URL
+        required: true
+      allow_root_debug:
+        description: Allow signed Hydro root login to enable debug mode
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: win
+            arch: x64
+            csc_link: WIN_CSC_LINK
+            csc_password: WIN_CSC_KEY_PASSWORD
+          - runner: macos-15-intel
+            platform: mac
+            arch: x64
+            csc_link: MAC_CSC_LINK
+            csc_password: MAC_CSC_KEY_PASSWORD
+          - runner: macos-15
+            platform: mac
+            arch: arm64
+            csc_link: MAC_CSC_LINK
+            csc_password: MAC_CSC_KEY_PASSWORD
+    runs-on: ${{ matrix.runner }}
+    env:
+      PROCTOR_CLIENT_VERSION: ${{ inputs.version }}
+      PROCTOR_AUTH_PUBLIC_KEY: ${{ secrets.PROCTOR_AUTH_PUBLIC_KEY }}
+      PROCTOR_LOG_PUBLIC_KEY: ${{ secrets.PROCTOR_LOG_PUBLIC_KEY }}
+      PROCTOR_KEY_ID: ${{ vars.PROCTOR_KEY_ID }}
+      PROCTOR_ALLOWED_ORIGINS: ${{ inputs.allowed_origins }}
+      PROCTOR_UPDATE_ORIGINS: ${{ inputs.update_origins }}
+      PROCTOR_TARGET_URL: ${{ inputs.target_url }}
+      PROCTOR_VERSION_URL: ${{ inputs.version_url }}
+      PROCTOR_ALLOW_ROOT_DEBUG: ${{ inputs.allow_root_debug && 'true' || 'false' }}
+      CSC_LINK: ${{ secrets[matrix.csc_link] }}
+      CSC_KEY_PASSWORD: ${{ secrets[matrix.csc_password] }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish=never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HydroProctor-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
