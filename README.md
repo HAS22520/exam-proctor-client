@@ -38,6 +38,16 @@ npm run build -- --config config/build.local.json --mac --arm64
 
 输出位于 `dist/`。`--check` 只验证并生成包内配置，不下载打包工具或生成安装包；`--dir` 生成解包目录，`--help` 查看用法。也可从任意工作目录运行 `node /完整路径/exam-proctor-client/scripts/build.js --config /完整路径/build.local.json --win --x64`。`PROCTOR_*` 环境变量优先于 JSON 配置，原有 `npm run dist`、`npm run pack` 和 GitHub Actions 入口继续可用。构建不会自动发布。
 
+客户端的 `package.json` 显式声明 npm 和空的 `workspaces`，用于建立独立的依赖扫描边界。即使放在 Hydro 的 Yarn 仓库内、同时存在其它包管理器的锁文件，electron-builder 也应只扫描客户端。请保留这两项；无需删除或重装 Hydro 的 `node_modules`。
+
+在 WSL/Linux x64 上，可用以下命令只生成便携版 EXE；本客户端固定的 electron-builder 26.15.3 已在 WSL 验证此目标不需要 Wine：
+
+```bash
+npm run build -- --config config/build.local.json --win --x64 --portable
+```
+
+默认的 `--win --x64` 同时生成便携版与 NSIS 安装版。WSL/Linux 上生成 NSIS 安装版需要可正常执行 Windows 程序的系统 Wine，并能下载 Electron、NSIS 等工具；NSIS 不需要 Mono。未安装或 Wine 无法运行时，可先使用便携版，或使用已有 GitHub Actions 的 Windows 构建任务。macOS 签名与公证在 macOS 构建机完成。参见 [electron-builder v26 跨平台构建说明](https://www.electron.build/v26/docs/features/multi-platform-build/)。
+
 以下 Bash 示例引用管理员导出的**公钥**文件；文件应位于仓库外：
 
 ```bash

@@ -2,11 +2,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { prepare } = require('./prepare-build');
 const root = path.resolve(__dirname, '..');
-const help = `Usage: npm run build -- [--config FILE] [--win | --mac] [--x64 | --arm64] [--dir | --check]
+const help = `Usage: npm run build -- [--config FILE] [--win | --mac] [--x64 | --arm64] [--dir | --portable | --check]
 
 --config FILE  Read build JSON; public key paths are relative to this file.
 --check        Validate and generate embedded configuration without packaging.
 --dir          Produce an unpacked application instead of installers.
+--portable     Build only the Windows portable EXE (requires --win).
 --help         Show this help without requiring keys or downloading tools.
 
 PROCTOR_* environment variables override JSON settings. Outputs go to dist/.
@@ -19,12 +20,14 @@ function parseArgs(args) {
     if (arg === '--config') {
       if (options.config || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('--config requires exactly one file');
       options.config = args[++i];
-    } else if (['--dir', '--check', '--win', '--mac', '--x64', '--arm64', '--help', '--publish=never'].includes(arg)) {
+    } else if (['--dir', '--portable', '--check', '--win', '--mac', '--x64', '--arm64', '--help', '--publish=never'].includes(arg)) {
       options[arg.slice(2)] = true;
     } else throw new Error(`Unsupported build option: ${arg}`);
   }
   if (options.win && options.mac) throw new Error('Choose one platform per build: --win or --mac');
   if (options.x64 && options.arm64) throw new Error('Choose one architecture per build: --x64 or --arm64');
+  if (options.portable && !options.win) throw new Error('--portable requires --win');
+  if (options.portable && options.dir) throw new Error('Choose --portable or --dir');
   return options;
 }
 
@@ -75,7 +78,8 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
   const { build, Platform, Arch } = require('electron-builder');
   const platform = options.win ? Platform.WINDOWS : options.mac ? Platform.MAC : Platform.current();
   const arch = options.arm64 ? Arch.arm64 : Arch.x64;
-  await (dependencies.build || build)({ projectDir, targets: platform.createTarget(options.dir ? 'dir' : undefined, arch), publish: 'never',
+  const target = options.dir ? 'dir' : options.portable ? 'portable' : undefined;
+  await (dependencies.build || build)({ projectDir, targets: platform.createTarget(target, arch), publish: 'never',
     config: { extraMetadata: { version }, beforePack: async (context) => {
       const prepared = prepare(env, projectDir);
       if (context.packager.appInfo.version !== prepared.version) throw new Error('Build metadata does not match configured client version');

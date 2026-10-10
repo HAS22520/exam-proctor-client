@@ -28,3 +28,5 @@ app.asar
 .env.*
 config/build.local.json
 config/pem
+
+bun.lock

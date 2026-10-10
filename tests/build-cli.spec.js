@@ -74,7 +74,8 @@ test('check validates keys and origins before packaging; rejects conflicting tar
   fs.writeFileSync(file, JSON.stringify({ ...config, targetUrl: 'https://evil.example' }));
   await assert.rejects(run(['--config', file, '--win'], dependencies));
   assert.equal(builds, 0);
-  for (const args of [['--win', '--mac'], ['--x64', '--arm64'], ['--config'], ['--config', '--win'], ['--unknown']]) {
+  for (const args of [['--win', '--mac'], ['--x64', '--arm64'], ['--config'], ['--config', '--win'], ['--unknown'],
+    ['--portable'], ['--mac', '--portable'], ['--win', '--portable', '--dir']]) {
     assert.throws(() => parseArgs(args));
   }
   await assert.rejects(run(['--win', '--arm64'], dependencies), /x64 only/);
@@ -82,22 +83,51 @@ test('check validates keys and origins before packaging; rejects conflicting tar
 
 test('native build uses project root and dynamic version; beforePack keeps file-supplied trust', async (t) => {
   const { root, file } = fixture(t);
-  for (const args of [['--win', '--x64'], ['--mac', '--arm64', '--dir']]) {
+  for (const args of [['--win', '--x64'], ['--mac', '--arm64', '--dir'], ['--win', '--x64', '--portable']]) {
     let called = false;
     await run(['--config', file, ...args], { root, env: { PROCTOR_CLIENT_VERSION: '2.3.4' }, build: async (options) => {
       called = true;
       assert.equal(options.projectDir, root);
       assert.equal(options.publish, 'never');
       assert.equal(options.config.extraMetadata.version, '2.3.4');
+      const { validateConfiguration } = require('app-builder-lib/out/util/config/config');
+      const { DebugLogger } = require('builder-util');
+      await validateConfiguration({ ...require('../package.json').build, ...options.config }, new DebugLogger());
       const targets = [...options.targets.entries()];
       assert.equal(targets[0][0].name, args[0] === '--win' ? 'windows' : 'mac');
       const architectures = [...targets[0][1].entries()];
       assert.equal(architectures[0][0], args[0] === '--win' ? 1 : 3);
       if (args.includes('--dir')) assert.deepEqual(architectures[0][1], ['dir']);
+      if (args.includes('--portable')) assert.deepEqual(architectures[0][1], ['portable']);
       await options.config.beforePack({ packager: { appInfo: { version: '2.3.4' } } });
       assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'app/generated/trust.json'))).authPublicKey, trust.authPublicKey);
       await assert.rejects(options.config.beforePack({ packager: { appInfo: { version: '1.0.0' } } }), /metadata/);
     } });
     assert.ok(called);
   }
+});
+
+test('electron-builder keeps the npm client isolated inside a Yarn workspace even with a Bun lock file', async (t) => {
+  const parent = workspace(t), root = path.join(parent, 'client');
+  fs.mkdirSync(root);
+  fs.writeFileSync(path.join(parent, 'package.json'), JSON.stringify({
+    name: 'unrelated-yarn-parent', version: '1.0.0', workspaces: ['packages/*'], packageManager: 'yarn@4.17.0',
+    dependencies: { 'parent-only-module': '1.0.0' },
+  }));
+  fs.writeFileSync(path.join(parent, 'yarn.lock'), '__metadata:\n  version: 8\n');
+  const pkg = require('../package.json');
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(pkg));
+  fs.writeFileSync(path.join(root, 'package-lock.json'), JSON.stringify({
+    name: pkg.name, version: pkg.version, lockfileVersion: 3, packages: { '': pkg },
+  }));
+  fs.writeFileSync(path.join(root, 'bun.lock'), '{}');
+  const { Packager } = require('app-builder-lib/out/packager');
+  const { getCollectorByPackageManager } = require('app-builder-lib/out/node-module-collector');
+  const packager = new Packager({ projectDir: root });
+  t.after(() => packager.tempDirManager.cleanup());
+  assert.equal(await packager.getWorkspaceRoot(), root);
+  assert.equal(await packager.getPackageManager(), 'npm');
+  const collector = getCollectorByPackageManager(await packager.getPackageManager(), root, packager.tempDirManager);
+  const dependencies = await collector.getNodeModules({ packageName: pkg.name });
+  assert.deepEqual(dependencies.nodeModules, []);
 });
