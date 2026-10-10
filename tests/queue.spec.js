@@ -110,6 +110,27 @@ test('completed handshake is a terminal state, avoids repeat handshakes, and ano
   assert.equal(restarted.current.login.uid, 8);
   assert.equal(hasUnfinishedJournals(path.dirname(f.options.directory)), true);
 });
+test('simultaneous identity requests for the same account and route share one handshake and activity', async (t) => {
+  const ActivityProgress = require('../app/main/activity-progress');
+  const f = fixture(t), events = [], progress = new ActivityProgress({ onChange: (value) => events.push(value) });
+  const controller = new ProctorController({ ...f.options, activity: progress.run.bind(progress) });
+  const requests = Array.from({ length: 8 }, () => controller.sync(url));
+  assert.ok(requests.every((request) => request === requests[0]));
+  const records = await Promise.all(requests);
+  assert.equal(new Set(records).size, 1); assert.equal(controller.records.size, 1);
+  assert.equal(f.requests.filter((request) => request.url.endsWith('/proctor/identity')).length, 1);
+  assert.equal(f.requests.filter((request) => request.operation === 'handshake').length, 1);
+  assert.equal(controller.pendingIdentities.size, 0); assert.equal(progress.snapshot(), null);
+  assert.equal(events.filter((value) => value?.busy).length, 1);
+  const cached = controller.sync(url);
+  const forced = Array.from({ length: 4 }, () => controller.sync(url, { force: true }));
+  assert.notEqual(cached, forced[0]); assert.ok(forced.every((request) => request === forced[0]));
+  await Promise.all([cached, ...forced]);
+  assert.equal(f.requests.filter((request) => request.url.endsWith('/proctor/identity')).length, 2);
+  // A login change must always get a new identity/session, never the shared old one.
+  f.uid = 8; controller.invalidateIdentity();
+  assert.equal((await controller.sync(url)).login.uid, 8);
+});
 test('a cookie change during a signed identity response discards the old identity before handshake', async (t) => {
   const f = fixture(t), identities = [];
   let enter, release;
@@ -126,11 +147,14 @@ test('a cookie change during a signed identity response discards the old identit
     return transport;
   } });
   const first = controller.sync(url);
-  await waiting; f.uid = 8; controller.invalidateIdentity(); release();
+  const duplicate = controller.sync(url); assert.equal(duplicate, first);
+  await waiting; f.uid = 8; controller.invalidateIdentity();
+  const fresh = controller.sync(url); assert.notEqual(fresh, first);
+  release();
   await assert.rejects(first, /登录状态已变化/);
   assert.equal(identities.length, 0); assert.equal(controller.records.size, 0);
   assert.equal(f.requests.some((request) => request.operation === 'challenge'), false);
-  assert.equal((await controller.sync(url)).login.uid, 8);
+  assert.equal((await fresh).login.uid, 8);
 });
 test('offline finish persists immutable evidence; restart retries only as original account and saves receipt', async (t) => {
   const f = fixture(t), first = new ProctorController(f.options); await first.sync(url); f.offline = true;

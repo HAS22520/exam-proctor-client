@@ -12,12 +12,23 @@ const Updater = require('./updater');
 const ProctorRequestGuard = require('./proctor-request-guard');
 const { Diagnostics } = require('./diagnostics');
 const DebugConsole = require('./debug-console');
+const ActivityProgress = require('./activity-progress');
+const WaitingWindow = require('./waiting-window');
 const { resetLogin, observeLogin } = require('./login-session');
 const { runtime } = require('./runtime');
 const { hasUnfinishedJournals } = require('./update-cache');
 const running = runtime(app);
 const diagnostics = new Diagnostics();
-const trace = diagnostics.log.bind(diagnostics);
+const activity = new ActivityProgress({ onChange: publishActivity });
+const waitingWindow = new WaitingWindow(BrowserWindow);
+const trace = (level, event, details = {}) => {
+  diagnostics.log(level, event, details);
+  if (event === 'firewall.stage') activity.stage('network', details.phase);
+  if (event === 'protocol.request') {
+    const stage = details.url?.endsWith('/proctor/identity') ? 'identity' : details.operation;
+    if (['identity', 'challenge', 'handshake', 'refresh'].includes(stage)) activity.stage('auth', stage);
+  }
+};
 const debugConsole = new DebugConsole(BrowserWindow);
 
 app.setName('HydroProctorClient');
@@ -29,6 +40,7 @@ let dialogDepth = 0, protectedFocus = false;
 let recoveryReady = false;
 let debugExpiry = 0, syncing = false, syncRequested = false, lastUploadStage, identityRevision = 0;
 let lastTick = Date.now();
+let preparationTimer;
 diagnostics.log('info', 'startup.process', { platform: process.platform, arch: process.arch });
 process.on('uncaughtExceptionMonitor', (error) => diagnostics.error('process.uncaught-exception', error));
 const directory = app.getPath('userData');
@@ -36,7 +48,7 @@ if (!running.singleInstanceLocked && !app.requestSingleInstanceLock()) app.exit(
 app.on('second-instance', () => {
   // A native message box owns focus until it resolves. Never refocus its parent.
   if (dialogDepth) return;
-  const target = uploadWindow && !uploadWindow.isDestroyed() ? uploadWindow : window;
+  const target = uploadWindow && !uploadWindow.isDestroyed() ? uploadWindow : window || waitingWindow.window;
   if (target && !target.isDestroyed()) { target.restore(); target.show(); target.focus(); }
 });
 
@@ -130,7 +142,7 @@ function uploadContext(event) {
 }
 
 function publishStatus(status) {
-  latestStatus = { ...status, update: updates?.snapshot(), debug, root, exitReady, networkMode: process.platform === 'win32' ? 'windows-firewall' : 'application-allowlist' };
+  latestStatus = { ...status, activity: activity.snapshot(), update: updates?.snapshot(), debug, root, exitReady, networkMode: process.platform === 'win32' ? 'windows-firewall' : 'application-allowlist' };
   if (uploadWindow && !uploadWindow.isDestroyed()) uploadWindow.webContents.send('exam:upload-status', latestStatus);
   if (status.upload) {
     const { phase, percent, sent, total } = status.upload;
@@ -139,9 +151,16 @@ function publishStatus(status) {
   }
 }
 
+function publishActivity(status) {
+  latestStatus.activity = status;
+  waitingWindow.publish(status);
+  if (window && !window.isDestroyed()) window.webContents.send('exam:activity-status', status);
+  if (uploadWindow && !uploadWindow.isDestroyed()) uploadWindow.webContents.send('exam:upload-status', { ...latestStatus, activity: status });
+}
+
 async function showUploadWindow() {
   exitReady = false;
-  uploadWindow = new BrowserWindow({ width: 560, height: 490, minWidth: 430, minHeight: 440, title: '结束监考 · 上传日志',
+  uploadWindow = new BrowserWindow({ width: 560, height: 600, useContentSize: true, minWidth: 430, minHeight: 560, title: '结束监考 · 上传日志',
     parent: window, modal: true, show: false, minimizable: false, fullscreenable: false, autoHideMenuBar: true, resizable: false,
     webPreferences: { preload: path.join(__dirname, '../status/upload-preload.js'), nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: false } });
   uploadWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -165,7 +184,7 @@ async function syncLogin(force = false) {
   try {
     await diagnostics.span('identity.sync', () => controller.sync(trustedUrl, { force }));
     for (const record of controller.records.values()) {
-      if (record.login.uid === controller.current?.login.uid && record.journal?.state.phase === 'open') await record.auth.ensure();
+      if (record.login.uid === controller.current?.login.uid && record.journal?.state.phase === 'open') await activity.run('auth', 'refresh', () => record.auth.ensure());
     }
     controller.logViolation({ source: 'CLIENT', type: 'MONITOR_HEARTBEAT', target: '', detail: debug ? 'root-debug' : 'exam' });
     await controller.retryUploads();
@@ -197,7 +216,7 @@ async function requestExit() {
   window.setKiosk(false); window.setAlwaysOnTop(false);
   if (response === 1) {
     try {
-      await diagnostics.span('exit.pause', () => controller.pause());
+      await diagnostics.span('exit.pause', () => activity.run('exit', 'pause', () => controller.pause()));
       try { await diagnostics.span('exit.restore-network', () => firewall.unlock()); }
       catch (error) { diagnostics.error('exit.network-recovery-deferred', error);
         await showExamDialog({ type: 'warning', message: '日志已保留，系统网络尚未确认恢复',
@@ -246,15 +265,19 @@ async function requestExit() {
 
 app.whenReady().then(async () => {
   config = loadConfig();
+  ipcMain.handle('exam:waiting-status', (event) => { waitingWindow.context(event); return activity.snapshot(); });
+  // Show a native status window only when preparation takes long enough to be
+  // noticeable. Network recovery still finishes before any OJ page is loaded.
+  preparationTimer = setTimeout(() => waitingWindow.show().catch((error) => diagnostics.error('startup.progress-failed', error)), 350);
   if (config.debug.allowRoot) await diagnostics.enable(directory);
   trace('info', 'startup.config-loaded', { ...running.identity, source: running.source, debug: config.debug.allowRoot });
   const logger = { logViolation: (item) => {
     trace('warn', 'guard.event', { source: item.source, type: item.type, url: item.target });
     controller?.logViolation(item);
   } };
-  firewall = new FirewallGuard(config, logger, directory, { trace });
+  firewall = new FirewallGuard(config, logger, directory, { trace, activity: activity.run.bind(activity) });
   await diagnostics.span('startup.restore-network', () => firewall.recover());
-  const bootId = await diagnostics.span('startup.boot-identity', () => prepareBootIdentity());
+  const bootId = await diagnostics.span('startup.boot-identity', () => activity.run('startup', 'boot-identity', () => prepareBootIdentity()));
   if (!bootId) trace('warn', 'startup.boot-identity-unavailable');
   recoveryReady = true;
   const store = new ProtectedStore(path.join(directory, 'secrets'), safeStorage);
@@ -271,7 +294,7 @@ app.whenReady().then(async () => {
   antiCheat = new AntiCheatGuard(window, config, logger);
   controller = new ProctorController({ config, directory: journals, protectedStore: store,
     session: window.webContents.session, version: running.identity.version, onIdentity: applyIdentity,
-    onStatus: publishStatus, trace });
+    onStatus: publishStatus, trace, activity: activity.run.bind(activity) });
   let loginTimer;
   observeLogin(window.webContents.session, config.exam.allowedOrigins, () => {
     trace('info', 'identity.login-cookie-changed');
@@ -280,7 +303,7 @@ app.whenReady().then(async () => {
     clearTimeout(loginTimer);
     loginTimer = setTimeout(() => syncLogin(true), 200);
   });
-  ipcMain.handle('exam:status', (event) => { ipcContext(event); return { ...latestStatus, update: updates.snapshot(), debug, root, allowRootDebug: config.debug.allowRoot }; });
+  ipcMain.handle('exam:status', (event) => { ipcContext(event); return { ...latestStatus, activity: activity.snapshot(), update: updates.snapshot(), debug, root, allowRootDebug: config.debug.allowRoot }; });
   ipcMain.handle('exam:update-check', async (event) => {
     ipcContext(event); if (!config.updater.enabled) throw new Error('更新功能未启用');
     await updates.check({ force: true }); return updates.snapshot();
@@ -308,7 +331,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('exam:request-quit', async (event) => { ipcContext(event); await requestExit(); });
   ipcMain.handle('exam:retry', async (event) => { await controller.retryManually(ipcContext(event)); });
-  ipcMain.handle('exam:upload-status', (event) => { uploadContext(event); return latestStatus; });
+  ipcMain.handle('exam:upload-status', (event) => { uploadContext(event); return { ...latestStatus, activity: activity.snapshot() }; });
   ipcMain.handle('exam:upload-exit', (event) => { uploadContext(event); if (!exitReady) throw new Error('日志仍在处理中'); completeExit(); });
   ipcMain.handle('exam:debug', async (event) => {
     await controller.sync(ipcContext(event), { force: true });
@@ -361,8 +384,9 @@ app.whenReady().then(async () => {
     controller.logViolation({ source: 'CLIENT', type: 'RENDERER_CRASH', target: '', detail: '' });
   });
   window.on('close', (event) => { if (!quitting) { event.preventDefault(); requestExit(); } });
-  await diagnostics.span('startup.load-exam', () => window.loadURL(config.exam.targetUrl));
+  await diagnostics.span('startup.load-exam', () => activity.run('startup', 'load-exam', () => window.loadURL(config.exam.targetUrl)));
   trace('info', 'startup.ready');
+  clearTimeout(preparationTimer); waitingWindow.close();
   running.markReady();
   if (running.failure) trace('warn', 'update.rollback', running.failure);
   // Fetching a manifest must never delay login/contest authentication.
@@ -376,6 +400,7 @@ app.whenReady().then(async () => {
   }, 1000);
   timer = setInterval(() => syncLogin(true), 15000);
 }).catch(async (error) => {
+  clearTimeout(preparationTimer); waitingWindow.close();
   diagnostics.error('startup.failed', error);
   dialog.showErrorBox('客户端启动失败', error.message);
   try { if (recoveryReady) await firewall?.unlock(); } catch (restoreError) { diagnostics.error('startup.restore-failed', restoreError); }

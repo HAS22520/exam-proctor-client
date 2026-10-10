@@ -37,8 +37,8 @@ function requireOpenAttempt(record) {
 
 class ProctorController {
   constructor({ config, directory, protectedStore, session, version, onIdentity = async () => {}, onStatus = () => {},
-    trace = () => {}, createTransport = (origin, timeout) => new Transport(session, origin, timeout, trace) }) {
-    Object.assign(this, { config, directory, protectedStore, electronSession: session, version, onIdentity, onStatus, trace });
+    trace = () => {}, activity = (_kind, _stage, action) => action(), createTransport = (origin, timeout) => new Transport(session, origin, timeout, trace) }) {
+    Object.assign(this, { config, directory, protectedStore, electronSession: session, version, onIdentity, onStatus, trace, activity });
     this.createTransport = createTransport;
     this.device = protectedStore.device();
     this.current = null;
@@ -52,11 +52,13 @@ class ProctorController {
     this.identityCache = new Map();
     this.identityEpoch = 0;
     this.identityWork = Promise.resolve();
+    this.pendingIdentities = new Map();
   }
 
   invalidateIdentity() {
     this.identityEpoch++;
     this.identityCache.clear();
+    this.pendingIdentities.clear();
     this.current = null;
     this.lastUrl = null;
     for (const record of this.records.values()) if (record.auth) record.auth.session = null;
@@ -100,10 +102,18 @@ class ProctorController {
   }
 
   sync(url, options = {}) {
-    const work = this.identityWork.catch(() => {}).then(() => this.syncSerial(url, options));
+    let key;
+    try { key = `${this.identityEpoch}:${!!options.force}:${this.identityKey(url)}`; }
+    catch (error) { return Promise.reject(error); }
+    if (this.pendingIdentities.has(key)) return this.pendingIdentities.get(key);
+    const work = this.identityWork.catch(() => {}).then(() => this.activity('auth', 'identity', () => this.syncSerial(url, options)));
+    this.pendingIdentities.set(key, work);
     this.identityWork = work.then(() => {}, () => {});
     this.syncPending = work;
-    work.finally(() => { if (this.syncPending === work) this.syncPending = null; }).catch(() => {});
+    work.finally(() => {
+      if (this.syncPending === work) this.syncPending = null;
+      if (this.pendingIdentities.get(key) === work) this.pendingIdentities.delete(key);
+    }).catch(() => {});
     return work;
   }
 

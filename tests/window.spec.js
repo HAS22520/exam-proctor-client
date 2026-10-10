@@ -41,7 +41,10 @@ async function fixture(t, options = {}) {
     async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     isDestroyed() { return !!this.destroyed; }
     destroy() { this.destroyed = true; this.emit('closed'); }
-    show() { this.showCount = (this.showCount || 0) + 1; }
+    show() {
+      this.showCount = (this.showCount || 0) + 1;
+      if (this.webContents.mainFrame.url.endsWith('/waiting.html')) options.onWaitingShow?.(this, handlers, startupSteps);
+    }
     focus() { this.focusCount = (this.focusCount || 0) + 1; }
     restore() { this.restoreCount = (this.restoreCount || 0) + 1; }
     setKiosk(value) { if (this.kiosk && !value) this.emit('blur'); this.kiosk = value; }
@@ -62,14 +65,22 @@ async function fixture(t, options = {}) {
     shutdown() { shutdownCount++; }
   }
   class Guard {
-    constructor() { this.running = false; this.refocus = () => windows[0].focus(); }
-    recover() { recoverCount++; if (options.recoveryError) throw options.recoveryError; }
+    constructor(_config, _logger, _directory, runtime = {}) {
+      this.running = false; this.refocus = () => windows[0].focus();
+      this.activity = runtime.activity || ((_kind, _stage, action) => action());
+    }
+    recover() {
+      return this.activity('network', 'restore', async () => {
+        recoverCount++; if (options.recoveryGate) await options.recoveryGate;
+        if (options.recoveryError) throw options.recoveryError;
+      });
+    }
     snapshot() { return { version: '1.0.0', buildVersion: '2026101001' }; }
     check() { return options.updateGate; } install() {}
     start() { if (!this.running) { antiCheatStarts++; this.running = true; windows[0].on('blur', this.refocus); } }
     stop() { this.running = false; windows[0]?.removeListener('blur', this.refocus); }
-    lock() { lockCalled(); return locked; }
-    unlock() { if (options.exitRecoveryError) throw options.exitRecoveryError; this.recover(); }
+    lock() { return this.activity('network', 'lock', () => { lockCalled(); return locked; }); }
+    unlock() { if (options.exitRecoveryError) throw options.exitRecoveryError; return this.recover(); }
   }
   const mocks = {
     electron: { app, BrowserWindow, ipcMain: { handle: (name, callback) => handlers.set(name, callback) },
@@ -86,6 +97,7 @@ async function fixture(t, options = {}) {
     './update-cache': require('../app/main/update-cache'),
     './login-session': require('../app/main/login-session'),
     './diagnostics': require('../app/main/diagnostics'), './debug-console': require('../app/main/debug-console'),
+    './activity-progress': require('../app/main/activity-progress'), './waiting-window': require('../app/main/waiting-window'),
   };
   const source = path.resolve(__dirname, '../app/main/index.js');
   runInNewContext(fs.readFileSync(source, 'utf8'), { URL, __dirname: path.dirname(source), require: (name) => mocks[name] || require(name),
@@ -119,6 +131,27 @@ test('ending requires explicit log reminder and only the native main frame can e
 test('every startup clears login and flushes cookies before navigating to the OJ', async (t) => {
   const f = await fixture(t);
   assert.deepEqual(f.startupSteps, ['clear-storage', 'clear-auth', 'flush-cookies', 'load-page']);
+});
+test('slow startup recovery exposes native progress before the exam loads and closes it after recovery', async (t) => {
+  let release, show;
+  const recoveryGate = new Promise((resolve) => { release = resolve; });
+  const shown = new Promise((resolve) => { show = resolve; });
+  const preparing = fixture(t, { recoveryGate, onWaitingShow: (window, handlers, startupSteps) => show({ window, handlers, startupSteps }) });
+  let native;
+  try {
+    native = await shown;
+    assert.equal(native.window.options.webPreferences.sandbox, true);
+    assert.equal(native.startupSteps.includes('load-page'), false);
+    const read = native.handlers.get('exam:waiting-status');
+    const event = { sender: native.window.webContents, senderFrame: native.window.webContents.mainFrame };
+    assert.equal(read(event).kind, 'network'); assert.equal(read(event).stage, 'restore');
+    assert.equal(read(event).busy, true);
+    assert.throws(() => read({ ...event, senderFrame: { url: event.senderFrame.url } }), /native progress window/);
+  } finally { release(); }
+  const f = await preparing;
+  assert.equal(native.window.destroyed, true);
+  const main = f.windows.find((window) => window.webContents.mainFrame.url.startsWith('https://'));
+  assert.equal(f.handlers.get('exam:status')(f.event(main)).activity, null);
 });
 
 test('failed exit recovery still processes logs and displays a network warning after upload', async (t) => {

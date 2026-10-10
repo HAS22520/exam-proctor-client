@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'">
+  <title>正在准备监考客户端</title>
+  <link rel="stylesheet" href="upload.css">
+</head>
+<body>
+  <main>
+    <span class="badge">HYDRONEXT · 监考客户端</span>
+    <h1>正在准备，请稍候</h1>
+    <section class="card" aria-live="polite">
+      <strong id="phase">正在检查考试环境</strong>
+      <progress aria-label="准备状态"></progress>
+      <p id="timing" class="detail" aria-live="off">即将显示当前步骤和参考耗时</p>
+    </section>
+    <p id="hint" class="message">准备完成后会自动打开考试页面。</p>
+  </main>
+  <script src="waiting.js"></script>
+</body>
+</html>

@@ -13,6 +13,7 @@ progress { display: block; appearance: none; border: 0; border-radius: 8px; widt
 progress::-webkit-progress-bar { background: #edf1f8; border-radius: 8px; }
 progress::-webkit-progress-value { background: #5275d6; border-radius: 8px; transition: width .2s; }
 progress:not([value]) { background: linear-gradient(90deg, #edf1f8, #93acee, #edf1f8); background-size: 200%; animation: pending 1.6s linear infinite; }
+progress:indeterminate::-webkit-progress-bar { background: linear-gradient(90deg, #edf1f8, #93acee, #edf1f8); background-size: 200%; animation: pending 1.6s linear infinite; }
 @keyframes pending { to { background-position: -200% 0; } }
 .detail { color: #7c889e; font-size: 11px; }
 #contest { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -24,3 +25,4 @@ button:focus-visible { outline: 3px solid #adbef0; outline-offset: 3px; }
 body[data-phase="complete"] #phase, body[data-phase="complete"] #percent { color: #21845b; }
 body[data-phase="deferred"] #phase { color: #af7229; }
 @media (max-width: 460px) { main { padding: 22px; } h1 { font-size: 22px; } }
+@media (prefers-reduced-motion: reduce) { progress:not([value]), progress:indeterminate::-webkit-progress-bar { animation: none; } }

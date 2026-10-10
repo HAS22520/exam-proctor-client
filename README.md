@@ -14,6 +14,8 @@ Electron 客户端，连接 HydroNext 的 `HydroNext-proctor/1` 协议。支持 
 
 每次启动，在加载 OJ 页面前清空客户端会话的 Cookie、HTTP 登录缓存、Service Worker 和 Cache Storage，要求重新登录。保留本地草稿、设备密钥和加密日志，原账号登录后仍可恢复未结束的监考或补传日志。登录 Cookie 变化会立即撤销旧身份与调试权限，并触发重新认证。
 
+启动准备超过 350 毫秒时先显示本地准备窗口，说明网络恢复、系统重启检查或考试页面连接的当前步骤，完成后自动关闭。认证与网络操作期间，监考浮窗显示等待动画、阶段、已等待秒数和参考耗时；退出上传窗口也显示网络恢复的具体阶段。参考耗时不是服务端承诺的剩余时间，超过范围时会继续显示实际等待时间，并提示仍在等待系统或网络响应。Windows 出现管理员授权窗口时需要确认。同一登录状态、同一路由、同一刷新要求的并发认证共用一次握手；强制刷新仍会重新验证身份，换账号立即撤销旧身份，已应用的网络策略不会重复启动设置流程。
+
 设备密钥和日志 AES 密钥使用 Electron safeStorage 加密：Windows 的 DPAPI / macOS 的 Keychain。密钥不能加密时客户端拒绝启动，不回退明文。跨系统用户、迁移用户数据或删除密钥可能使原考试无法恢复。当前固定 Electron 44；升级到 46 前需迁移其异步 safeStorage API。参见 [Electron 官方说明](https://github.com/electron/electron/blob/main/docs/api/safe-storage.md)。
 
 ## 本地构建

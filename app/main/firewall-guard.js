@@ -42,6 +42,7 @@ class FirewallGuard {
     this.platform = runtime.platform || process.platform;
     this.exec = runtime.exec || execute;
     this.trace = runtime.trace || (() => {});
+    this.activity = runtime.activity || ((_kind, _stage, action) => action());
     this.pending = Promise.resolve();
     this.restorePending = null;
     this.restoreFailure = null;
@@ -105,8 +106,8 @@ class FirewallGuard {
     } catch { /* No policy/snapshot has been written yet. */ }
   }
 
-  enqueue(action) {
-    const result = this.pending.then(action);
+  enqueue(action, stage) {
+    const result = this.pending.then(() => this.activity('network', stage, action));
     this.pending = result.catch(() => {});
     return result;
   }
@@ -167,7 +168,12 @@ class FirewallGuard {
 
   recover() {
     if (this.restorePending) return this.restorePending;
-    const pending = this.enqueue(() => this.restore());
+    // A queued lock may not have written its snapshot yet. Only skip recovery
+    // when there is no lock in flight and no saved network state to restore.
+    if (!this.lockPending && (this.platform !== 'win32' || !fs.existsSync(this.statePath))) {
+      this.isLocked = false; this.restoreFailure = null; return Promise.resolve();
+    }
+    const pending = this.enqueue(() => this.restore(), 'restore');
     this.restorePending = pending;
     pending.finally(() => { if (this.restorePending === pending) this.restorePending = null; }).catch(() => {});
     return pending;
@@ -175,8 +181,9 @@ class FirewallGuard {
 
   lock() {
     if (this.lockPending) return this.lockPending;
+    if (this.isLocked && !this.restorePending) return Promise.resolve(true);
     this.cancelLock = false;
-    const pending = this.enqueue(() => this.applyLock());
+    const pending = this.enqueue(() => this.applyLock(), 'lock');
     this.lockPending = pending;
     pending.finally(() => { if (this.lockPending === pending) this.lockPending = null; }).catch(() => {});
     return pending;
