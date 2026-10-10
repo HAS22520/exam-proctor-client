@@ -10,8 +10,15 @@ function redact(value) {
       try { const parsed = new URL(url); return `${parsed.origin}${parsed.pathname}`; } catch { return '[URL]'; }
     })
     .replace(/\b(?:Bearer\s+\S+|(?:token|password|cookie|authorization|signature|proof)\s*[:=]\s*[^\s,;]+)/gi, '[REDACTED]')
-    .replace(/[A-Za-z0-9_+\/-]{40,}={0,2}/g, '[REDACTED]')
+    .replace(/[A-Za-z0-9_+-]{40,}={0,2}/g, '[REDACTED]')
     .replace(/[\r\n\u0000-\u001f]+/g, ' ').slice(0, 800);
+}
+
+function localTimestamp(date) {
+  const offset = -date.getTimezoneOffset();
+  const wall = new Date(date.getTime() + offset * 60000).toISOString().slice(0, -1);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${wall}${offset >= 0 ? '+' : '-'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`;
 }
 
 class Diagnostics {
@@ -35,7 +42,9 @@ class Diagnostics {
       if (!fields.has(key) || value == null) continue;
       data[key] = typeof value === 'number' || typeof value === 'boolean' ? value : redact(value);
     }
-    const entry = { id: ++this.sequence, time: new Date().toISOString(), level, event: redact(event), data };
+    const now = new Date();
+    const entry = { id: ++this.sequence, time: localTimestamp(now), utc: now.toISOString(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, level, event: redact(event), data };
     this.entries.push(entry);
     if (this.entries.length > 1000) this.entries.shift();
     this.persist(entry);
@@ -70,4 +79,4 @@ class Diagnostics {
   }
 }
 
-module.exports = { Diagnostics, redact };
+module.exports = { Diagnostics, redact, localTimestamp };

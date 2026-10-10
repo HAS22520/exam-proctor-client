@@ -37,6 +37,33 @@ class ProctorController {
     this.retryPending = null;
     this.proofPending = Promise.resolve();
     this.uploadProgress = null;
+    this.identityCache = new Map();
+    this.identityEpoch = 0;
+    this.identityWork = Promise.resolve();
+  }
+
+  invalidateIdentity() {
+    this.identityEpoch++;
+    this.identityCache.clear();
+    this.current = null;
+    this.lastUrl = null;
+    for (const record of this.records.values()) if (record.auth) record.auth.session = null;
+  }
+
+  identityKey(url) {
+    const { origin, prefix, tid, problem } = contextFromUrl(url);
+    if (!this.config.exam.allowedOrigins.includes(origin)) throw new Error('Untrusted exam origin');
+    return canonical({ origin, prefix, tid, problem });
+  }
+
+  async cachedIdentity(url, key) {
+    const entry = this.identityCache.get(key);
+    if (!entry || entry.validUntil <= Date.now() || Date.parse(entry.login.expiresAt) <= Date.now() + 5000) return null;
+    const current = { ...entry.record, context: contextFromUrl(url), login: entry.login };
+    if (current.auth && (!current.auth.session || current.completed)) return null;
+    this.current = current; this.lastUrl = url;
+    await this.onIdentity(current.login);
+    return current;
   }
 
   status(message = '') {
@@ -55,33 +82,48 @@ class ProctorController {
       finishing: this.finishing, upload: this.uploadProgress });
   }
 
-  async sync(url) {
-    if (this.finishing) throw new Error('监考正在结束，请等待日志处理完成');
-    if (this.syncPending) {
-      await this.syncPending;
-      if (this.finishing) throw new Error('监考正在结束，请等待日志处理完成');
-      if (this.lastUrl === url) return this.current;
-    }
-    this.syncPending = this.syncNow(url);
-    try { return await this.syncPending; } finally { this.syncPending = null; }
+  sync(url, options = {}) {
+    const work = this.identityWork.catch(() => {}).then(() => this.syncSerial(url, options));
+    this.identityWork = work.then(() => {}, () => {});
+    this.syncPending = work;
+    work.finally(() => { if (this.syncPending === work) this.syncPending = null; }).catch(() => {});
+    return work;
   }
 
-  async syncNow(url) {
+  async syncSerial(url, { force = false } = {}) {
+    if (this.finishing) throw new Error('监考正在结束，请等待日志处理完成');
+    const key = this.identityKey(url), epoch = this.identityEpoch;
+    if (!force) {
+      const cached = await this.cachedIdentity(url, key);
+      if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
+      if (cached) return cached;
+    }
+    const record = await this.syncNow(url, epoch);
+    if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
+    this.identityCache.set(key, { record, login: record.login, validUntil: Date.now() + 20000 });
+    if (this.identityCache.size > 64) this.identityCache.delete(this.identityCache.keys().next().value);
+    return record;
+  }
+
+  async syncNow(url, epoch) {
     const context = contextFromUrl(url);
     if (!this.config.exam.allowedOrigins.includes(context.origin)) throw new Error('Untrusted exam origin');
     const transport = this.createTransport(context.origin);
     let login;
     try { login = await identity(transport, context, this.config.trust); }
     catch (error) {
+      this.identityCache.clear();
       await this.onIdentity(null);
       this.status('无法验证登录身份，请确认 OJ 认证密钥和连接');
       throw error;
     }
+    if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
     if (login.root || !login.uid || !login.proctorEnabled) await this.onIdentity(login);
     this.lastUrl = url;
     if (!login.uid || !login.proctorEnabled || !context.tid) {
       this.current = { login, context, transport };
       if (login.uid) await this.resumeOpen();
+      if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
       await this.onIdentity(login);
       this.status(login.root ? '已验证 root 身份' : '请登录并进入启用监考的比赛');
       return this.current;
@@ -93,6 +135,7 @@ class ProctorController {
       record.auth = new ProctorAuth({ transport, context, identity: login, trust: this.config.trust, device: this.device, version: this.version,
         log: (event) => record.journal?.append(event) });
       const session = await record.auth.ensure();
+      if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
       if (session.completed) {
         record.completed = true;
         this.records.set(recordKey, record);
@@ -112,6 +155,8 @@ class ProctorController {
     Object.assign(record, { login, context });
     record.auth.login = login;
     record.auth.context = context;
+    await record.auth.ensure();
+    if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
     this.current = record;
     await this.onIdentity(login);
     this.status();
@@ -121,7 +166,9 @@ class ProctorController {
   async resumeOpen() {
     if (!fs.existsSync(this.directory)) return;
     const current = this.current;
+    const epoch = this.identityEpoch;
     for (const entry of fs.readdirSync(this.directory)) {
+      if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
       if (!/^[a-f0-9]{64}$/.test(entry) || this.records.has(entry)) continue;
       const directory = path.join(this.directory, entry);
       const state = JSON.parse(fs.readFileSync(path.join(directory, 'state.json'), 'utf8'));
@@ -148,13 +195,16 @@ class ProctorController {
   }
 
   headers(url, request) {
+    const epoch = this.identityEpoch;
     const work = this.proofPending.catch(() => {}).then(async () => {
+      if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
       if (this.finishing) throw new Error('监考正在结束，禁止新提交');
       if (['problem_view', 'contest_view'].includes(request?.action)) return this.accessHeaders(url, request);
       const record = await this.sync(url);
       const payload = submission(request, record.context, record.login);
       if (!record.journal || record.journal.state.phase !== 'open' || record.completed) throw new Error('本场监考已结束');
       const session = await record.auth.ensure();
+      if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
       if (session.completed || this.finishing) throw new Error('本场监考已结束');
       record.journal.append(payload.pretest ? 'SELF_TEST_REQUESTED' : 'SUBMISSION_REQUESTED', { pid: payload.pid });
       return record.auth.proof('submit', request.path, payload);
@@ -166,19 +216,19 @@ class ProctorController {
   async accessHeaders(url, request) {
     const source = contextFromUrl(url);
     const target = accessRequest(request, source);
-    const current = this.lastUrl === url && Date.parse(this.current?.login.expiresAt) > Date.now() + 5000
-      ? this.current : await this.sync(url);
+    const epoch = this.identityEpoch;
+    const current = await this.sync(url);
     if (!current.login.uid) throw new Error('请登录后验证监考客户端');
     const uid = current.login.uid, domainId = current.login.domainId;
-    const record = this.lastUrl === target.identityUrl && Date.parse(this.current?.login.expiresAt) > Date.now() + 5000
-      ? this.current : await this.sync(target.identityUrl);
+    const record = this.identityKey(url) === this.identityKey(target.identityUrl) ? current : await this.sync(target.identityUrl);
     if (record.login.uid !== uid || record.login.domainId !== domainId) throw new Error('登录身份已变更，请重新验证');
     if (!record.login.proctorEnabled) return {};
     if (this.finishing || !record.journal || record.journal.state.phase !== 'open' || record.completed) throw new Error('本场监考已结束，不能继续做题');
     const session = await record.auth.ensure();
+    if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
     if (session.completed || this.finishing) throw new Error('本场监考已结束');
-    const remote = await record.transport.request(record.context.proctorPath, { method: 'GET' });
-    if (remote.state !== 'open') { record.journal.close(); throw new Error('服务端监考已结束，不能继续做题'); }
+    // The actual protected GET validates the live attempt on the OJ. A second
+    // status round trip per resource adds latency without authorizing anything.
     record.journal.append(request.action === 'problem_view' ? 'PROBLEM_VIEW' : 'CONTEST_VIEW', target.payload);
     return record.auth.proof(request.action, request.path, target.payload, 'GET');
   }

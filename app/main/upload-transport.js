@@ -35,7 +35,9 @@ async function uploadFile({ session, origin, path, filename, uploadName, headers
     const fail = (error) => { if (ended) return; finish(error); request.abort(); };
     request.on('error', (error) => fail(new ProctorError(error.message)));
     request.on('abort', () => finish(new ProctorError('Log upload aborted')));
-    request.on('close', () => { if (!ended) finish(new ProctorError('Log upload response lost')); });
+    // Electron 44 uses a Writable: its body stream can close before the HTTP
+    // response arrives. Only premature body closure means the upload was lost.
+    request.on('close', () => { if (!ended && !request.writableFinished) finish(new ProctorError('Log upload response lost')); });
     request.on('redirect', () => fail(new ProctorError('Log upload redirects are forbidden', 403)));
     request.on('response', (response) => {
       if (ended) return;
@@ -52,13 +54,15 @@ async function uploadFile({ session, origin, path, filename, uploadName, headers
       });
       response.on('end', () => {
         if (ended) return;
+        const type = response.headers['content-type'];
         try { finish(null, parseReply(Buffer.concat(chunks).toString('utf8'), response.statusCode,
-          (response.headers['content-type'] || []).join(';'))); }
+          Array.isArray(type) ? type.join(';') : String(type || ''))); }
         catch (error) { finish(error); }
       });
     });
     (async () => {
-      const write = (chunk) => new Promise((done) => request.write(chunk, 'utf8', done));
+      const write = (chunk) => new Promise((done, rejectWrite) => request.write(chunk, 'utf8',
+        (error) => error ? rejectWrite(error) : done()));
       await write(prefix);
       if (ended) return;
       input = fs.createReadStream(filename);

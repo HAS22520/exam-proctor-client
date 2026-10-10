@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
 const { once } = require('node:events');
+const { setImmediate: yieldToLoop } = require('node:timers/promises');
 const { atomicWrite, bootIdentity } = require('./device-store');
 const { canonical, digest, LOG_MAGIC } = require('./proctor-crypto');
 
@@ -157,6 +158,7 @@ class AuditLogger {
         const decoded = decodeRecord(line, this.key, this.binding, ++seq, previousHash);
         previousHash = decoded.hash;
         await write(cipher.update(`${canonical(decoded.record)}\n`));
+        if (seq % 128 === 0) await yieldToLoop();
       }
       if (seq !== this.seq || previousHash !== this.previousHash) throw new Error('Journal changed while finalizing');
       await write(cipher.final());

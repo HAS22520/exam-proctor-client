@@ -8,7 +8,7 @@
     "allowedOrigins": "填考试页面及其必需资源、登录跳转允许访问的 origin 数组。例如 [\"https://oj.example.com\", \"https://assets.example.com\"]。每项只含协议、主机和可选端口，不含页面路径、查询参数或通配符；不同子域和端口需分别列出。必须包含 targetUrl 的 origin。使用 HTTPS，只有 localhost/127.0.0.1/[::1] 可使用 HTTP 调试。",
     "updateOrigins": "填更新清单、远端配置、安装包下载及下载重定向涉及的 origin 数组，格式同 allowedOrigins。必须包含 versionUrl 的 origin；如更新包放在独立 CDN，还需加入实际下载和重定向的源站。此列表不会自动扩大考试页面的访问白名单。",
     "versionUrl": "填 OJ 管理后台「更新设置」显示的更新清单 URL，例如 https://oj.example.com/client-updates/version.json。使用完整 HTTPS URL，其 origin 必须列入 updateOrigins；这是 OJ 发布的远端 JSON 地址，不是客户端仓库中的本地文件路径。",
-    "allowRootDebug": "填布尔值 false 或 true，不加引号。正式考试建议 false；true 允许经 OJ 签名认证、具有 PRIV_ALL 超级管理员权限的账号自动打开实时调试控制台并放开客户端网络限制，同时保存脱敏启动诊断文件。普通用户名 root、操作系统 root 或 Windows 管理员身份均不能单独开启该模式。修改后需重新打包。"
+    "allowRootDebug": "填布尔值 false 或 true，不加引号。正式考试建议 false；true 允许经 OJ 签名认证、具有 PRIV_ALL 超级管理员权限的账号自动打开实时调试控制台并放开客户端网络限制，同时保存脱敏启动诊断文件（本地时间带时区偏移，并保留 UTC 对照）。每次启动仍要求重新登录。普通用户名 root、操作系统 root 或 Windows 管理员身份均不能单独开启该模式。修改后需重新打包。"
   },
   "keyId": "替换为后台显示的32位小写十六进制keyId",
   "version": "1.2.3",

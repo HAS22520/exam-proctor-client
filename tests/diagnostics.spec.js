@@ -1,9 +1,22 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { test } = require('node:test');
-const { Diagnostics } = require('../app/main/diagnostics');
+const { Diagnostics, localTimestamp, redact } = require('../app/main/diagnostics');
 const { Transport } = require('../app/main/proctor-auth');
 const { workspace } = require('./helpers');
+
+test('diagnostic time includes the local UTC offset and preserves readable localhost routes', () => {
+  const previous = process.env.TZ;
+  process.env.TZ = 'Asia/Hong_Kong';
+  try {
+    assert.equal(localTimestamp(new Date('2026-10-10T10:50:45.841Z')), '2026-10-10T18:50:45.841+08:00');
+    const entry = new Diagnostics().log('info', 'time');
+    assert.equal(entry.timeZone, 'Asia/Hong_Kong'); assert.match(entry.time, /\+08:00$/);
+    assert.equal(Date.parse(entry.time), Date.parse(entry.utc));
+  } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
+  const url = 'http://localhost:8282/d/exam/contest/1234567890abcdef12345678/problems';
+  assert.equal(redact(url), url);
+});
 
 test('diagnostics redact credentials, queries, keys and unapproved fields in memory and on disk', async (t) => {
   const logger = new Diagnostics(), directory = workspace(t), token = 'T'.repeat(43);

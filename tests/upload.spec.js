@@ -13,10 +13,14 @@ function fixture(t, mode = 'ok') {
   let uploaded = 0, target;
   request.setHeader = (name, value) => { headers[name] = value; };
   request.getUploadProgress = () => ({ active: true, started: true, current: uploaded });
-  request.write = (chunk, encoding, callback) => { chunks.push(Buffer.from(chunk)); callback(); };
+  request.write = (chunk, encoding, callback) => {
+    if (mode === 'write-error') { callback(new Error('Body write failed')); return; }
+    chunks.push(Buffer.from(chunk)); callback();
+  };
   request.abort = () => { request.aborted = true; request.emit('abort'); };
   request.end = (chunk) => {
     chunks.push(chunk);
+    if (mode === 'electron44') { request.writableFinished = true; request.emit('close'); }
     if (mode === 'redirect') { request.emit('redirect'); return; }
     if (mode === 'lost') { request.emit('close'); return; }
     if (mode === 'timeout') return;
@@ -24,7 +28,7 @@ function fixture(t, mode = 'ok') {
     uploaded = Math.floor(Buffer.concat(chunks).length / 2);
     setTimeout(() => {
       const response = new EventEmitter();
-      response.statusCode = 200; response.headers = { 'content-type': ['application/json'] };
+      response.statusCode = 200; response.headers = { 'content-type': mode === 'electron44' ? 'application/json' : ['application/json'] };
       request.emit('response', response);
       response.emit('data', Buffer.from(mode === 'large' ? 'x'.repeat(1024 * 1024 + 1) : JSON.stringify({ ok: true, receipt: 'd'.repeat(24) })));
       response.emit('end'); request.emit('close');
@@ -51,12 +55,18 @@ test('streaming multipart uses exam cookies and native network progress, then wa
 });
 
 test('upload never follows redirects or reports lost/timed-out/oversized responses as success', async (t) => {
-  for (const mode of ['redirect', 'lost', 'timeout', 'large']) {
+  for (const mode of ['redirect', 'lost', 'timeout', 'large', 'write-error']) {
     const f = fixture(t, mode);
     await assert.rejects(uploadFile({ ...f.options, timeoutMs: mode === 'timeout' ? 10 : 2000 }));
     assert.ok(!f.statuses.some((value) => value.phase === 'complete'));
     if (mode !== 'lost') assert.equal(f.request.aborted, true);
   }
+});
+
+test('Electron 44 body close before response and string headers still produce a confirmed receipt', async (t) => {
+  const f = fixture(t, 'electron44');
+  assert.equal((await uploadFile(f.options)).receipt, 'd'.repeat(24));
+  assert.equal(f.request.aborted, undefined);
 });
 
 test('upload target refuses foreign origins, protocol-relative paths and unsafe filenames', async (t) => {

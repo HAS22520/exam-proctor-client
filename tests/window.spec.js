@@ -11,7 +11,7 @@ async function fixture(t, options = {}) {
   const directory = workspace(t), handlers = new Map(), windows = [], choices = [];
   let quitCount = 0, shutdownCount = 0, finishCalled, releaseFinish;
   let recoverCount = 0, exitCount = 0, controller, antiCheatStarts = 0, lockCalled, releaseLock;
-  const errors = [], exitHooks = [];
+  const errors = [], exitHooks = [], startupSteps = [], requestEvents = new Map();
   let ready;
   const initialized = new Promise((resolve) => { ready = resolve; });
   const locking = new Promise((resolve) => { lockCalled = resolve; });
@@ -28,12 +28,15 @@ async function fixture(t, options = {}) {
     constructor(options) {
       super(); this.options = options; this.webContents = new EventEmitter(); this.sent = [];
       Object.assign(this.webContents, { id: windows.length + 1, mainFrame: { url: '' },
-        session: { webRequest: { onBeforeSendHeaders: () => {}, onCompleted: () => {}, onErrorOccurred: () => {}, onBeforeRequest: () => {} } },
+        session: { clearStorageData: async () => { startupSteps.push('clear-storage'); }, clearAuthCache: async () => { startupSteps.push('clear-auth'); },
+          cookies: Object.assign(new EventEmitter(), { flushStore: async () => { startupSteps.push('flush-cookies'); } }),
+          webRequest: { onBeforeSendHeaders: () => {}, onCompleted: (callback) => requestEvents.set('completed', callback),
+            onErrorOccurred: (callback) => requestEvents.set('error', callback), onBeforeRequest: () => {} } },
         setWindowOpenHandler: () => {}, send: (channel, value) => this.sent.push({ channel, value }),
         isDevToolsOpened: () => false, closeDevTools: () => {}, openDevTools: () => {}, getURL: () => this.webContents.mainFrame.url });
       windows.push(this);
     }
-    async loadURL(url) { this.webContents.mainFrame.url = url; ready(); }
+    async loadURL(url) { startupSteps.push('load-page'); this.webContents.mainFrame.url = url; ready(); }
     async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     isDestroyed() { return !!this.destroyed; }
     destroy() { this.destroyed = true; this.emit('closed'); }
@@ -44,7 +47,8 @@ async function fixture(t, options = {}) {
   const config = { exam: { targetUrl: 'https://oj.example.com/d/exam/', allowedOrigins: ['https://oj.example.com'] },
     updater: { enabled: false }, debug: { allowRoot: !!options.debug }, globalFirewallLock: { enabled: !!options.delayLock } };
   class Controller {
-    constructor(options) { controller = this; this.options = options; this.records = new Map(); this.finishing = false; }
+    constructor(options) { controller = this; this.options = options; this.records = new Map(); this.inFlight = new Set(); this.finishing = false; }
+    logViolation() {}
     async finish(beforeFinish = async () => {}) {
       this.finishing = true;
       await beforeFinish();
@@ -57,7 +61,7 @@ async function fixture(t, options = {}) {
     recover() { recoverCount++; if (options.recoveryError) throw options.recoveryError; }
     check() {} install() {} start() { antiCheatStarts++; } stop() {}
     lock() { lockCalled(); return locked; }
-    unlock() { this.recover(); }
+    unlock() { if (options.exitRecoveryError) throw options.exitRecoveryError; this.recover(); }
   }
   const mocks = {
     electron: { app, BrowserWindow, ipcMain: { handle: (name, callback) => handlers.set(name, callback) },
@@ -70,15 +74,16 @@ async function fixture(t, options = {}) {
     './config-policy': { validateConfig: (value) => value }, './device-store': { ProtectedStore: Guard, prepareBootIdentity: async () => 'boot-id' },
     './proctor-controller': { ProctorController: Controller }, './network-guard': Guard, './anti-cheat': Guard,
     './firewall-guard': Guard, './updater': Guard, './proctor-request-guard': Guard,
+    './login-session': require('../app/main/login-session'),
     './diagnostics': require('../app/main/diagnostics'), './debug-console': require('../app/main/debug-console'),
   };
   const source = path.resolve(__dirname, '../app/main/index.js');
   runInNewContext(fs.readFileSync(source, 'utf8'), { URL, __dirname: path.dirname(source), require: (name) => mocks[name] || require(name),
-    process: { platform: 'darwin', on: (name, callback) => { if (name === 'exit') exitHooks.push(callback); } }, setInterval: () => 1, clearInterval: () => {} });
+    process: { platform: 'darwin', on: (name, callback) => { if (name === 'exit') exitHooks.push(callback); } }, setInterval: () => 1, clearInterval: () => {}, setTimeout, clearTimeout });
   await initialized;
   await new Promise((resolve) => setImmediate(resolve));
   const event = (owner) => ({ sender: owner.webContents, senderFrame: owner.webContents.mainFrame });
-  return { handlers, windows, choices, controller, errors, exitHooks, started, releaseFinish, locking, releaseLock, event,
+  return { handlers, windows, choices, controller, errors, exitHooks, startupSteps, requestEvents, started, releaseFinish, locking, releaseLock, event,
     get antiCheatStarts() { return antiCheatStarts; }, get quitCount() { return quitCount; },
     get shutdownCount() { return shutdownCount; }, get recoverCount() { return recoverCount; }, get exitCount() { return exitCount; } };
 }
@@ -99,6 +104,35 @@ test('ending requires explicit log reminder and only the native main frame can e
   assert.equal(read(f.event(upload)).exitReady, true); assert.equal(read(f.event(upload)).upload.phase, 'complete');
   assert.equal(f.quitCount, 0); // Keep the completion visible until the user's confirmation.
   exit(f.event(upload)); assert.equal(f.quitCount, 1); assert.equal(f.shutdownCount, 1);
+});
+
+test('every startup clears login and flushes cookies before navigating to the OJ', async (t) => {
+  const f = await fixture(t);
+  assert.deepEqual(f.startupSteps, ['clear-storage', 'clear-auth', 'flush-cookies', 'load-page']);
+});
+
+test('failed exit recovery still processes logs and displays a network warning after upload', async (t) => {
+  const f = await fixture(t, { exitRecoveryError: new Error('Firewall service stopped') });
+  const ending = f.handlers.get('exam:request-quit')(f.event(f.windows[0]));
+  await f.started;
+  assert.equal(f.controller.finishing, true);
+  f.releaseFinish(true); await ending;
+  const status = f.handlers.get('exam:upload-status')(f.event(f.windows[1]));
+  assert.equal(status.exitReady, true); assert.equal(status.upload.phase, 'complete');
+  assert.match(status.networkWarning, /网络尚未确认恢复/);
+  assert.equal(f.choices.length, 1);
+  f.handlers.get('exam:upload-exit')(f.event(f.windows[1])); assert.equal(f.quitCount, 1);
+});
+
+test('successful net::OK responses do not become errors, while HTTP rejection remains visible', async (t) => {
+  const f = await fixture(t, { debug: true });
+  const settled = f.requestEvents.get('completed');
+  settled({ id: 1, url: 'https://oj.example.com/assets/page.js', statusCode: 200, error: 'net::OK' });
+  settled({ id: 2, url: 'https://oj.example.com/contest/blocked', statusCode: 403, error: 'net::OK' });
+  await f.controller.options.onIdentity({ uid: 1, root: true, expiresAt: new Date(Date.now() + 60000).toISOString() });
+  const console = f.windows[1];
+  const entries = f.handlers.get('exam:debug-logs')(f.event(console), 0).entries.filter((entry) => entry.event === 'request.response');
+  assert.equal(entries.length, 1); assert.equal(entries[0].level, 'warn'); assert.equal(entries[0].data.status, 403);
 });
 
 test('offline finish displays retained logs and allows native exit without claiming upload success', async (t) => {

@@ -10,10 +10,12 @@ const url = 'https://oj.example.com/d/exam/contest/1234567890abcdef12345678';
 function fixture(t) {
   const directory = workspace(t), protectedStore = store(path.join(directory, 'secrets'));
   let offline = false, uid = 7, state = 'open', receipt, challenge, attempts = 0, loseResponse = false;
+  const requests = [];
   const envelope = (payload) => ({ payload, signature: sign(payload, auth.privateKey) });
   const session = { fetch: async (url, request) => {
     if (offline) throw new Error('Network offline');
     const body = typeof request.body === 'string' ? JSON.parse(request.body) : request.body;
+    requests.push({ url: String(url), method: request.method, operation: body?.operation });
     let response;
     if (String(url).endsWith('/proctor/identity')) response = envelope({ protocol: 'hydro-proctor/1', action: 'identity', keyId: trust.keyId, origin: 'https://oj.example.com',
       clientNonce: body.clientNonce, uid, domainId: 'exam', root: false, tid: body.tid || '', routePid: body.problem || '', pid: 100, proctorEnabled: true, expiresAt: new Date(Date.now() + 60000).toISOString() });
@@ -54,8 +56,30 @@ function fixture(t) {
       };
       return transport;
     } };
-  return { options, statuses, get attempts() { return attempts; }, set offline(value) { offline = value; }, set uid(value) { uid = value; }, set loseResponse(value) { loseResponse = value; } };
+  return { options, statuses, requests, get attempts() { return attempts; }, set offline(value) { offline = value; }, set uid(value) { uid = value; }, set loseResponse(value) { loseResponse = value; } };
 }
+test('a cookie change during a signed identity response discards the old identity before handshake', async (t) => {
+  const f = fixture(t), identities = [];
+  let enter, release;
+  const waiting = new Promise((resolve) => { enter = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  let pause = true;
+  const controller = new ProctorController({ ...f.options, onIdentity: async (login) => identities.push(login), createTransport: (...args) => {
+    const transport = f.options.createTransport(...args), json = transport.json.bind(transport);
+    transport.json = async (target, ...rest) => {
+      const result = await json(target, ...rest);
+      if (pause && target.endsWith('/proctor/identity')) { pause = false; enter(); await gate; }
+      return result;
+    };
+    return transport;
+  } });
+  const first = controller.sync(url);
+  await waiting; f.uid = 8; controller.invalidateIdentity(); release();
+  await assert.rejects(first, /登录状态已变化/);
+  assert.equal(identities.length, 0); assert.equal(controller.records.size, 0);
+  assert.equal(f.requests.some((request) => request.operation === 'challenge'), false);
+  assert.equal((await controller.sync(url)).login.uid, 8);
+});
 test('offline finish persists immutable evidence; restart retries only as original account and saves receipt', async (t) => {
   const f = fixture(t), first = new ProctorController(f.options); await first.sync(url); f.offline = true;
   assert.equal(await first.finish(), false); const record = first.current;
@@ -64,7 +88,7 @@ test('offline finish persists immutable evidence; restart retries only as origin
   assert.ok(decryptLog(filename).some((entry) => entry.type === 'LOG_UPLOAD_DEFERRED'));
   first.shutdown(); f.offline = false; f.uid = 8;
   const restarted = new ProctorController(f.options); await restarted.sync('https://oj.example.com/d/exam/'); await restarted.retryUploads(); assert.equal(f.attempts, 0);
-  f.uid = 7; await restarted.sync('https://oj.example.com/d/exam/'); record.journal.state.retryAfter = 0; record.journal.saveState();
+  f.uid = 7; restarted.invalidateIdentity(); await restarted.sync('https://oj.example.com/d/exam/'); record.journal.state.retryAfter = 0; record.journal.saveState();
   await restarted.retryUploads(); assert.equal(f.attempts, 1); assert.deepEqual(fs.readFileSync(filename), bytes);
   assert.ok(f.statuses.some((status) => status.upload?.percent === 50));
   assert.equal(f.statuses.at(-1).upload.phase, 'complete');
@@ -91,7 +115,7 @@ test('open exam resumes on home-page login and continues audit during offline id
   const f = fixture(t), first = new ProctorController(f.options); await first.sync(url);
   const resumed = new ProctorController(f.options); await resumed.sync('https://oj.example.com/d/exam/');
   assert.equal(resumed.records.size, 1); resumed.logViolation({ source: 'CLIENT', type: 'HOME_PAGE_AUDIT', target: '', detail: '' });
-  f.offline = true; await assert.rejects(resumed.sync('https://oj.example.com/d/exam/'));
+  f.offline = true; await assert.rejects(resumed.sync('https://oj.example.com/d/exam/', { force: true }));
   resumed.logViolation({ source: 'CLIENT', type: 'OFFLINE_AUDIT', target: '', detail: '' });
   assert.equal(await resumed.finish(), false);
   const journal = [...resumed.records.values()][0].journal;
@@ -120,7 +144,7 @@ test('protected problem reads require a matching client and open attempt, with f
   const contest = await controller.headers(url, { action: 'contest_view', method: 'GET',
     path: '/d/exam/contest/1234567890abcdef12345678/problems', payload: { tid: request.payload.tid } });
   assert.equal(JSON.parse(Buffer.from(contest['x-proctor-proof'], 'base64url')).payload.action, 'contest_view');
-  f.offline = true;
+  f.offline = true; controller.invalidateIdentity();
   await assert.rejects(controller.headers(url, request));
   f.offline = false; await controller.finish();
   await assert.rejects(controller.headers(url, request));
@@ -135,4 +159,28 @@ test('exit before starting an exam reports no pending logs rather than inventing
   assert.equal(await controller.finish(), true);
   assert.equal(f.statuses.at(-1).upload.empty, true); assert.equal(f.attempts, 0);
   assert.equal(controller.records.size, 0);
+});
+
+test('concurrent navigation shares one handshake and repeated protected reads reuse signed context with fresh proofs', async (t) => {
+  const f = fixture(t), controller = new ProctorController(f.options);
+  await Promise.all([controller.sync(url), controller.sync(`${url}/problems`), controller.sync(url)]);
+  assert.equal(f.requests.filter((request) => request.url.endsWith('/proctor/identity')).length, 1);
+  assert.equal(f.requests.filter((request) => request.operation === 'challenge').length, 1);
+  const request = { action: 'contest_view', method: 'GET', path: '/d/exam/contest/1234567890abcdef12345678/problems',
+    payload: { tid: '1234567890abcdef12345678' } };
+  const before = f.requests.length;
+  const first = await controller.headers(url, request), second = await controller.headers(`${url}/problems`, request);
+  assert.equal(f.requests.length, before); assert.notEqual(first['x-proctor-proof'], second['x-proctor-proof']);
+  f.uid = 8; controller.invalidateIdentity();
+  assert.equal((await controller.sync(url)).login.uid, 8);
+  assert.equal(f.requests.filter((request) => request.operation === 'challenge').length, 2);
+});
+
+test('expired signed contexts and forced checks contact the server instead of extending cached identity', async (t) => {
+  const f = fixture(t), controller = new ProctorController(f.options);
+  await controller.sync(url);
+  for (const entry of controller.identityCache.values()) entry.validUntil = 0;
+  await controller.sync(url); await controller.sync(url, { force: true });
+  assert.equal(f.requests.filter((request) => request.url.endsWith('/proctor/identity')).length, 3);
+  assert.equal(f.requests.filter((request) => request.operation === 'handshake').length, 1);
 });

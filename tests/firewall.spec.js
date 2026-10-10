@@ -37,7 +37,7 @@ test('policy paths containing spaces, apostrophes and shell characters stay lite
   assert.equal(calls.length, 1); assert.equal(calls[0][0], 'powershell.exe');
   const { script } = decode(calls[0][1]);
   assert.equal(script, "& 'C:\\试卷 & $test\\O''Brien\\lock-firewall.ps1' -StatePath 'C:\\用户 O''Brien\\network-state.json' -PolicyPath 'C:\\用户 O''Brien\\network-policy.json' -ClientProcessId 1234");
-  assert.equal(calls[0][2].windowsHide, true); assert.equal(calls[0][2].timeout, 90000);
+  assert.equal(calls[0][2].windowsHide, true); assert.equal(calls[0][2].timeout, 45000);
 });
 
 test('new launches do not elevate without recovery state; saved policy is restored and retained if restoration fails', async (t) => {
@@ -64,7 +64,8 @@ test('successful lock is idempotent and failed application restores partial poli
   assert.equal(await guard.lock(), true); assert.equal(await guard.lock(), true); assert.equal(calls.length, 1);
   assert.equal(guard.isLocked, true);
   assert.equal(events[0].type, 'NETWORK_POLICY_APPLIED');
-  const policy = JSON.parse(fs.readFileSync(path.join(directory, 'network-policy.json')));
+  const policyName = fs.readdirSync(directory).find((name) => /^network-policy-[a-f0-9-]+\.json$/.test(name));
+  const policy = JSON.parse(fs.readFileSync(path.join(directory, policyName)));
   assert.deepEqual(policy.origins, ['https://oj.example.com']); assert.match(policy.group, /^HydroProctor-/);
   guard.isLocked = false;
   guard.exec = (command, args, options, callback) => {
@@ -81,14 +82,17 @@ test('successful lock is idempotent and failed application restores partial poli
   assert.equal(fs.existsSync(guard.statePath), false);
 });
 
-test('watchdog waits for policy completion before client exit; nested rollback cannot exit its caller', () => {
+test('watchdog caches recovery, stops stalled policy before rollback and accepts explicit restore requests', () => {
   const watch = fs.readFileSync(path.resolve(__dirname, '../scripts/watch-network.ps1'), 'utf8');
   const lock = fs.readFileSync(path.resolve(__dirname, '../scripts/lock-firewall.ps1'), 'utf8');
   const unlock = fs.readFileSync(path.resolve(__dirname, '../scripts/unlock-firewall.ps1'), 'utf8');
-  assert.ok(lock.includes('-PolicyProcessId $PID')); assert.ok(lock.includes('-NonInteractive -WindowStyle Hidden'));
-  assert.ok(watch.indexOf('Wait-Process -Id $PolicyProcessId') < watch.indexOf('Wait-Process -Id $ClientProcessId'));
-  assert.ok(watch.indexOf('$restore =') < watch.indexOf('Wait-Process -Id $PolicyProcessId'));
-  assert.ok(watch.indexOf('Wait-Process -Id $ClientProcessId') < watch.indexOf('& $restore -StatePath'));
+  assert.ok(lock.includes("'-PolicyProcessId',$PID"));
+  assert.ok(watch.indexOf('$restore =') < watch.indexOf('while (Test-Path'));
+  assert.ok(watch.indexOf('Stop-Process') < watch.indexOf('& $restore -StatePath'));
+  assert.ok(watch.includes('.restore-request.json')); assert.ok(watch.includes('$client.HasExited'));
+  assert.ok(lock.includes('Disable-NetFirewallRule -PolicyStore PersistentStore -Name $rules'));
+  assert.ok(unlock.includes('Enable-NetFirewallRule -PolicyStore PersistentStore -Name $existing'));
+  assert.ok(unlock.indexOf('Set-NetFirewallProfile') < unlock.indexOf('Enable-NetFirewallRule'));
   assert.doesNotMatch(unlock, /\bexit\s+0\b/);
 });
 
@@ -108,4 +112,36 @@ test('pending elevation leaves the event loop responsive and serializes lock and
   assert.equal(await locking, true); await unlocking;
   assert.equal(calls.length, 2); assert.match(calls[1], /unlock-firewall/);
   assert.equal(guard.isLocked, false); assert.equal(fs.existsSync(guard.statePath), false);
+});
+
+test('concurrent recovery uses the elevated watchdog once, ignores stale replies and avoids a new elevation', async (t) => {
+  const directory = workspace(t), group = `HydroProctor-${'a'.repeat(8)}`;
+  const guard = new FirewallGuard({}, null, directory, { platform: 'win32', exec: () => assert.fail('must reuse the watchdog') });
+  fs.writeFileSync(guard.statePath, JSON.stringify({ group }));
+  fs.writeFileSync(`${guard.statePath}.watch.json`, JSON.stringify({ group, pid: 123 }));
+  const first = guard.unlock(), second = guard.unlock();
+  assert.equal(first, second);
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = JSON.parse(fs.readFileSync(`${guard.statePath}.restore-request.json`));
+  assert.equal(request.group, group); assert.match(request.id, /^[a-f0-9]{32}$/);
+  fs.writeFileSync(`${guard.statePath}.restore-result.json`, JSON.stringify({ id: 'stale', ok: false, message: 'old error' }));
+  fs.unlinkSync(guard.statePath);
+  await first; assert.equal(guard.isLocked, false);
+});
+
+test('failed watchdog restoration retains state and suppresses immediate repeated recovery requests', async (t) => {
+  const directory = workspace(t), group = 'HydroProctor-aaaa';
+  const guard = new FirewallGuard({}, null, directory, { platform: 'win32', exec: () => assert.fail('must not elevate again') });
+  fs.writeFileSync(guard.statePath, JSON.stringify({ group }));
+  fs.writeFileSync(`${guard.statePath}.watch.json`, JSON.stringify({ group, pid: 123 }));
+  const recovery = guard.unlock();
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = JSON.parse(fs.readFileSync(`${guard.statePath}.restore-request.json`));
+  fs.writeFileSync(`${guard.statePath}.restore-result.json`, JSON.stringify({ id: request.id, ok: false, message: 'Firewall service stopped' }));
+  await assert.rejects(recovery, /Firewall service stopped/);
+  assert.equal(fs.existsSync(guard.statePath), true);
+  await assert.rejects(guard.unlock(), /Firewall service stopped/);
+  await assert.rejects(guard.lock(), /Firewall service stopped/);
+  assert.equal(fs.readdirSync(directory).some((name) => name.startsWith('network-policy-')), false);
+  assert.equal(JSON.parse(fs.readFileSync(`${guard.statePath}.restore-request.json`)).id, request.id);
 });

@@ -12,6 +12,7 @@ const Updater = require('./updater');
 const ProctorRequestGuard = require('./proctor-request-guard');
 const { Diagnostics } = require('./diagnostics');
 const DebugConsole = require('./debug-console');
+const { resetLogin, observeLogin } = require('./login-session');
 const diagnostics = new Diagnostics();
 const trace = diagnostics.log.bind(diagnostics);
 const debugConsole = new DebugConsole(BrowserWindow);
@@ -22,7 +23,7 @@ let quitting = false, exiting = false, root = false, debug = false, timer, trust
 let latestStatus = { phase: 'idle', message: '正在连接 OJ' };
 let exitReady = false;
 let recoveryReady = false;
-let debugExpiry = 0, syncing = false, lastUploadStage, identityRevision = 0;
+let debugExpiry = 0, syncing = false, syncRequested = false, lastUploadStage, identityRevision = 0;
 let lastTick = Date.now();
 diagnostics.log('info', 'startup.process', { platform: process.platform, arch: process.arch });
 process.on('uncaughtExceptionMonitor', (error) => diagnostics.error('process.uncaught-exception', error));
@@ -121,14 +122,15 @@ function completeExit() {
   controller.shutdown(); quitting = true; app.quit();
 }
 
-async function syncLogin() {
-  if (exiting || syncing || window.isDestroyed()) return;
+async function syncLogin(force = false) {
+  if (exiting || window.isDestroyed()) return;
+  if (syncing) { if (force) syncRequested = true; return; }
   const url = window.webContents.getURL();
   if (config.exam.allowedOrigins.includes(new URL(url).origin)) trustedUrl = url;
   if (!trustedUrl) return;
   syncing = true;
   try {
-    await diagnostics.span('identity.sync', () => controller.sync(trustedUrl));
+    await diagnostics.span('identity.sync', () => controller.sync(trustedUrl, { force }));
     for (const record of controller.records.values()) {
       if (record.login.uid === controller.current?.login.uid && record.journal?.state.phase === 'open') await record.auth.ensure();
     }
@@ -137,7 +139,10 @@ async function syncLogin() {
   } catch (error) {
     diagnostics.error('monitor.failed', error);
     latestStatus.message = '认证失败，请检查登录账号、客户端版本及认证密钥';
-  } finally { syncing = false; }
+  } finally {
+    syncing = false;
+    if (syncRequested) { syncRequested = false; setTimeout(() => syncLogin(true), 0); }
+  }
 }
 
 async function requestExit() {
@@ -151,16 +156,25 @@ async function requestExit() {
   antiCheat.stop();
   window.setKiosk(false); window.setAlwaysOnTop(false);
   let restored = false;
+  let networkWarning = '';
   try {
     const uploaded = await diagnostics.span('exit.finish-and-upload', () => controller.finish(async () => {
       await showUploadWindow();
-      await diagnostics.span('exit.restore-network', () => firewall.unlock()); restored = true;
+      publishStatus({ ...latestStatus, upload: { phase: 'restoring-network', percent: null }, message: '正在恢复系统网络，请稍候；日志随后会自动上传。' });
+      try { await diagnostics.span('exit.restore-network', () => firewall.unlock()); restored = true; }
+      catch (error) {
+        networkWarning = '系统网络尚未确认恢复。守护进程会继续恢复；必要时请以管理员身份运行随包 restore-network.bat。';
+        diagnostics.error('exit.network-recovery-deferred', error);
+        // Seal evidence and attempt the allowlisted OJ upload even if Windows
+        // recovery fails. Do not resume the exam or trigger another UAC loop.
+        publishStatus({ ...latestStatus, message: networkWarning });
+      }
     }));
     exitReady = true;
     publishStatus({ ...latestStatus, upload: uploaded ? { ...latestStatus.upload, phase: 'complete', percent: 100 }
       : { phase: 'deferred', sent: 0, total: 0, percent: null },
       message: uploaded ? (latestStatus.upload?.empty ? '本次没有需要上传的监考日志，可以退出客户端。' : '日志上传完成，服务端已确认接收。')
-        : '日志已加密保存，成绩待确认。联网后请使用原考试账号补传。' });
+        : '日志已加密保存，成绩待确认。联网后请使用原考试账号补传。', networkWarning });
   } catch (error) {
     diagnostics.error('exit.failed', error);
     await dialog.showMessageBox(window, { type: 'error', message: '结束监考失败，请保留客户端数据',
@@ -169,7 +183,7 @@ async function requestExit() {
     // Closing attempts stay closed; retry sealing/upload instead of resuming access.
     controller.finishing = false;
     if (uploadWindow && !uploadWindow.isDestroyed()) { uploadWindow.destroy(); uploadWindow = null; }
-    timer = setInterval(syncLogin, 15000);
+    timer = setInterval(() => syncLogin(true), 15000);
     await syncLogin();
   }
 }
@@ -208,12 +222,21 @@ app.whenReady().then(async () => {
   window = new BrowserWindow({ width: 1280, height: 800, title: config.exam.title, autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, '../preload/preload.js'), partition: 'persist:hydro-exam',
       nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: true, webSecurity: true } });
+  await diagnostics.span('startup.clear-login', () => resetLogin(window.webContents.session));
   network = new NetworkGuard(config, logger);
   network.install(window);
   antiCheat = new AntiCheatGuard(window, config, logger);
   controller = new ProctorController({ config, directory: journals, protectedStore: store,
     session: window.webContents.session, version: app.getVersion(), onIdentity: applyIdentity,
     onStatus: publishStatus, trace });
+  let loginTimer;
+  observeLogin(window.webContents.session, config.exam.allowedOrigins, () => {
+    trace('info', 'identity.login-cookie-changed');
+    controller.invalidateIdentity();
+    applyIdentity(null).catch((error) => diagnostics.error('identity.revoke-failed', error));
+    clearTimeout(loginTimer);
+    loginTimer = setTimeout(() => syncLogin(true), 200);
+  });
   ipcMain.handle('exam:status', (event) => { ipcContext(event); return { ...latestStatus, debug, root, allowRootDebug: config.debug.allowRoot }; });
   ipcMain.handle('exam:proctor-headers', async (event, request) => {
     const url = ipcContext(event);
@@ -225,7 +248,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('exam:upload-status', (event) => { uploadContext(event); return latestStatus; });
   ipcMain.handle('exam:upload-exit', (event) => { uploadContext(event); if (!exitReady) throw new Error('日志仍在处理中'); completeExit(); });
   ipcMain.handle('exam:debug', async (event) => {
-    await controller.sync(ipcContext(event));
+    await controller.sync(ipcContext(event), { force: true });
     if (!root || !config.debug.allowRoot) throw new Error('只有已验证的 root 账号可以使用调试模式');
     requireDebug();
     await debugConsole.show();
@@ -256,8 +279,9 @@ app.whenReady().then(async () => {
   });
   const settled = (details) => {
     const read = requestMethods.get(details.id) === 'GET'; requestMethods.delete(details.id);
-    if (details.error || details.statusCode >= 400) trace(details.error ? 'error' : 'warn', 'request.response',
-      { url: details.url, status: details.statusCode, message: details.error });
+    const failure = details.error && details.error !== 'net::OK' ? details.error : undefined;
+    if (failure || details.statusCode >= 400) trace(failure ? 'error' : 'warn', 'request.response',
+      { url: details.url, status: details.statusCode, message: failure });
     if (controller.inFlight.delete(details.id)) controller.logViolation({ source: read ? 'ACCESS' : 'SUBMISSION', type: read ? 'ACCESS_RESPONSE' : 'SUBMISSION_RESPONSE',
       target: details.url, detail: String(details.statusCode || details.error || '') });
   };
@@ -282,7 +306,7 @@ app.whenReady().then(async () => {
     if (delay > 2000) trace('warn', 'main.event-loop-delayed', { durationMs: delay });
     if (debug && now >= debugExpiry) applyIdentity(null).catch((error) => diagnostics.error('identity.revoke-failed', error));
   }, 1000);
-  timer = setInterval(syncLogin, 15000);
+  timer = setInterval(() => syncLogin(true), 15000);
 }).catch(async (error) => {
   diagnostics.error('startup.failed', error);
   dialog.showErrorBox('客户端启动失败', error.message);
