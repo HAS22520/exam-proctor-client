@@ -7,7 +7,7 @@ const { buildVersion } = require('../app/main/build-version');
 const { prepare } = require('../scripts/prepare-build');
 const { buildArchive } = require('../scripts/build-hot-update');
 const { verifyArchive, readArchive } = require('../app/main/signed-archive');
-const { UpdateCache, hasUnfinishedJournals } = require('../app/main/update-cache');
+const { UpdateCache, hasUnfinishedJournals, journalUpdateState } = require('../app/main/update-cache');
 const { validateConfig } = require('../app/main/config-policy');
 const Updater = require('../app/main/updater');
 const { trust, workspace } = require('./helpers');
@@ -112,6 +112,52 @@ test('unfinished journals block staging and boot activation; an already active a
   assert.equal((await cache.select()).buildVersion, '2026101002'); cache.ready();
   fs.writeFileSync(path.join(journal, 'state.json'), JSON.stringify({ phase: 'open' }));
   assert.equal((await cache.select()).buildVersion, '2026101002');
+});
+test('update blockers distinguish unfinished logs across accounts from Finder metadata and uploaded evidence', (t) => {
+  const directory = workspace(t), journals = path.join(directory, 'journals');
+  assert.equal(journalUpdateState(directory).blocked, false);
+  fs.mkdirSync(journals);
+  fs.writeFileSync(path.join(journals, '.DS_Store'), 'Finder metadata');
+  fs.writeFileSync(path.join(journals, 'notes.txt'), 'not an attempt');
+  fs.mkdirSync(path.join(journals, 'metadata'));
+  assert.equal(hasUnfinishedJournals(directory), false);
+  const save = (id, state) => {
+    const folder = path.join(journals, id.repeat(64)); fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'state.json'), JSON.stringify(state));
+  };
+  save('a', { phase: 'open', binding: { uid: 7 } });
+  save('b', { phase: 'closing', binding: { uid: 8 } });
+  save('c', { phase: 'pending-upload', binding: { uid: 8 } });
+  save('d', { phase: 'uploaded', binding: { uid: 9 } });
+  fs.mkdirSync(path.join(journals, 'e'.repeat(64))); // Damaged real attempt lacks state.
+  save('f', { phase: 'unknown' });
+  const status = journalUpdateState(directory);
+  assert.equal(status.open, 1); assert.equal(status.pending, 2); assert.equal(status.unreadable, 2);
+  assert.equal(status.blocked, true);
+  assert.match(status.message, /1 份未结束、2 份待上传、2 份需恢复/);
+  assert.match(status.message, /本机所有账号/); assert.match(status.message, /补传日志/);
+  assert.match(status.message, /退出但不上传/);
+  fs.writeFileSync(path.join(journals, 'e'.repeat(64), 'state.json'), '{broken');
+  assert.equal(journalUpdateState(directory).unreadable, 2);
+});
+test('update availability stays separate from journal blocking and clears immediately after upload', (t) => {
+  const directory = workspace(t), config = validateConfig(base, trust);
+  const updater = new Updater(config, { directory, trust, version: '1.0.0', buildVersion: '2026101001', cache: {} });
+  updater.manifest = { hotUpdate: { asarUrl: 'https://oj.example.com/update.asar' } };
+  updater.state = { phase: 'available', available: true, message: '发现新版本' };
+  const journal = unfinished({ directory });
+  const blocked = updater.snapshot();
+  assert.equal(blocked.phase, 'available'); assert.equal(blocked.canHotUpdate, true);
+  assert.equal(blocked.blocked, true); assert.equal(blocked.journalCounts.open, 1);
+  assert.match(blocked.blockedReason, /上传并结束/);
+  fs.writeFileSync(path.join(journal, 'state.json'), JSON.stringify({ phase: 'pending-upload' }));
+  assert.equal(updater.snapshot().journalCounts.pending, 1);
+  assert.match(updater.snapshot().blockedReason, /补传日志/);
+  fs.writeFileSync(path.join(journal, 'state.json'), JSON.stringify({ phase: 'uploaded' }));
+  const ready = updater.snapshot();
+  assert.equal(ready.blocked, false); assert.equal(ready.blockedReason, '');
+  assert.deepEqual(ready.journalCounts, { open: 0, pending: 0, unreadable: 0 });
+  assert.equal(ready.phase, 'available'); assert.equal(ready.canHotUpdate, true);
 });
 test('updater downloads and stages signed ASAR, reports progress, keeps running version, and rechecks journal state', async (t) => {
   const f = fixture(t), result = await release(f), cache = new UpdateCache(f.directory, f.anchor), states = [];

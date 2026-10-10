@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const { secureUrl, validateConfig } = require('./config-policy');
 const { atomicWrite } = require('./device-store');
 const { buildVersion: validateBuildVersion } = require('./build-version');
-const { hasUnfinishedJournals } = require('./update-cache');
+const { hasUnfinishedJournals, journalUpdateState } = require('./update-cache');
 
 function compare(a, b) {
   if (![a, b].every((value) => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value))) throw new Error('Invalid update version');
@@ -27,7 +27,9 @@ class Updater {
   }
 
   snapshot() {
-    return { ...this.state, enabled: this.config.updater.enabled, source: this.source, rollback: this.failure?.message || '', blocked: hasUnfinishedJournals(this.directory), version: this.version, buildVersion: this.buildVersion, minimumBlocked: this.minimumBlocked,
+    const journals = journalUpdateState(this.directory);
+    return { ...this.state, enabled: this.config.updater.enabled, source: this.source, rollback: this.failure?.message || '', blocked: journals.blocked, blockedReason: journals.message,
+      journalCounts: { open: journals.open, pending: journals.pending, unreadable: journals.unreadable }, version: this.version, buildVersion: this.buildVersion, minimumBlocked: this.minimumBlocked,
       installerUrl: this.installerUrl || '', canHotUpdate: !!this.cache && !!this.manifest?.hotUpdate?.asarUrl && this.state.available };
   }
   publish(state) { Object.assign(this.state, state); this.onStatus(this.snapshot()); }

@@ -4,6 +4,7 @@ const path = require('node:path');
 const { test } = require('node:test');
 const { ProctorController } = require('../app/main/proctor-controller');
 const { Transport } = require('../app/main/proctor-auth');
+const { hasUnfinishedJournals } = require('../app/main/update-cache');
 const { canonical, sign, digest, nonce, verify } = require('../app/main/proctor-crypto');
 const { auth, trust, workspace, store, decryptLog } = require('./helpers');
 const url = 'https://oj.example.com/d/exam/contest/1234567890abcdef12345678';
@@ -77,6 +78,7 @@ function fixture(t) {
 test('completed handshake is a terminal state, avoids repeat handshakes, and another account can read the same contest', async (t) => {
   const f = fixture(t), first = new ProctorController(f.options);
   await first.sync(url); assert.equal(await first.finish(), true); first.shutdown();
+  assert.equal(hasUnfinishedJournals(path.dirname(f.options.directory)), false);
   const oldFile = path.join(first.current.journal.directory, 'final.hplog'), oldBytes = fs.readFileSync(oldFile);
   const controller = new ProctorController(f.options);
   await controller.sync(url);
@@ -106,6 +108,7 @@ test('completed handshake is a terminal state, avoids repeat handshakes, and ano
   const headers = await restarted.headers(url, request);
   assert.equal((await f.options.session.fetch(`${url}/problems`, { method: 'GET', headers })).status, 200);
   assert.equal(restarted.current.login.uid, 8);
+  assert.equal(hasUnfinishedJournals(path.dirname(f.options.directory)), true);
 });
 test('a cookie change during a signed identity response discards the old identity before handshake', async (t) => {
   const f = fixture(t), identities = [];
@@ -133,6 +136,7 @@ test('offline finish persists immutable evidence; restart retries only as origin
   const f = fixture(t), first = new ProctorController(f.options); await first.sync(url); f.offline = true;
   assert.equal(await first.finish(), false); const record = first.current;
   assert.equal(record.journal.state.phase, 'pending-upload'); const filename = path.join(record.journal.directory, 'final.hplog'); const bytes = fs.readFileSync(filename);
+  assert.equal(hasUnfinishedJournals(path.dirname(f.options.directory)), true);
   assert.equal(f.statuses.at(-1).upload.phase, 'deferred');
   assert.ok(decryptLog(filename).some((entry) => entry.type === 'LOG_UPLOAD_DEFERRED'));
   first.shutdown(); f.offline = false; f.uid = 8;
@@ -142,6 +146,7 @@ test('offline finish persists immutable evidence; restart retries only as origin
   assert.ok(f.statuses.some((status) => status.upload?.percent === 50));
   assert.equal(f.statuses.at(-1).upload.phase, 'complete');
   const saved = JSON.parse(fs.readFileSync(record.journal.statePath)); assert.equal(saved.phase, 'uploaded'); assert.equal(saved.receipt, 'd'.repeat(24));
+  assert.equal(hasUnfinishedJournals(path.dirname(f.options.directory)), false);
 });
 
 test('finish disables new proofs while awaiting network restoration before sealing or uploading', async (t) => {
