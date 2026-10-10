@@ -70,6 +70,18 @@ test('offline finish persists immutable evidence; restart retries only as origin
   assert.equal(f.statuses.at(-1).upload.phase, 'complete');
   const saved = JSON.parse(fs.readFileSync(record.journal.statePath)); assert.equal(saved.phase, 'uploaded'); assert.equal(saved.receipt, 'd'.repeat(24));
 });
+
+test('finish disables new proofs while awaiting network restoration before sealing or uploading', async (t) => {
+  const f = fixture(t), controller = new ProctorController(f.options);
+  await controller.sync(url);
+  let restore;
+  const pending = controller.finish(() => new Promise((resolve) => { restore = resolve; }));
+  assert.equal(controller.finishing, true);
+  assert.equal(controller.current.journal.state.phase, 'open');
+  await assert.rejects(controller.headers(url, { action: 'contest_view' }), /禁止新提交/);
+  assert.equal(f.attempts, 0);
+  restore(); assert.equal(await pending, true); assert.equal(f.attempts, 1);
+});
 test('lost upload response is recovered by matching status hash and never uploads a replacement log', async (t) => {
   const f = fixture(t), controller = new ProctorController(f.options); await controller.sync(url); f.loseResponse = true;
   assert.equal(await controller.finish(), true); assert.equal(f.attempts, 1); assert.equal(controller.current.journal.state.phase, 'uploaded');

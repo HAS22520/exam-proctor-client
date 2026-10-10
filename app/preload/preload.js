@@ -40,7 +40,7 @@ window.addEventListener('DOMContentLoaded', () => {
   };
   end.onclick = () => action('exam:request-quit', end);
   const debug = document.createElement('button');
-  debug.textContent = 'root 调试'; debug.hidden = true;
+  debug.textContent = '调试控制台'; debug.hidden = true;
   debug.onclick = () => action('exam:debug', debug);
   const retry = document.createElement('button'); retry.textContent = '补传日志'; retry.hidden = true;
   retry.onclick = () => action('exam:retry', retry);

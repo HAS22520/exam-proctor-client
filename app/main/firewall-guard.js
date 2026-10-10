@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 const { atomicWrite } = require('./device-store');
 
 function powerShellArgs(script) {
@@ -28,11 +28,21 @@ try {
     '-EncodedCommand', Buffer.from(launcher, 'utf16le').toString('base64')];
 }
 
+function execute(command, args, options, callback) {
+  // Detached watchdogs must not inherit pipes whose EOF would delay completion.
+  const child = spawn(command, args, { ...options, stdio: 'ignore' });
+  child.once('error', callback);
+  child.once('exit', (code, signal) => callback(code === 0 ? null : Object.assign(new Error('Firewall process failed'),
+    { code: signal ? 'ETIMEDOUT' : 'FIREWALL_COMMAND_FAILED' })));
+}
+
 class FirewallGuard {
   constructor(config, logger, directory, runtime = {}) {
     Object.assign(this, { config, logger, directory, isLocked: false });
     this.platform = runtime.platform || process.platform;
-    this.exec = runtime.exec || execFileSync;
+    this.exec = runtime.exec || execute;
+    this.trace = runtime.trace || (() => {});
+    this.pending = Promise.resolve();
     this.clientPid = runtime.pid || process.pid;
     this.statePath = path.join(directory, 'network-state.json');
   }
@@ -42,26 +52,44 @@ class FirewallGuard {
     return fs.existsSync(packaged) ? packaged : path.resolve(__dirname, '../../scripts', name);
   }
 
-  run(name, policyPath = '') {
+  async run(name, policyPath = '') {
     const quote = (value) => `'${value.replace(/'/g, "''")}'`;
     const script = `& ${quote(this.script(name))} -StatePath ${quote(this.statePath)}${policyPath ? ` -PolicyPath ${quote(policyPath)} -ClientProcessId ${this.clientPid}` : ''}`;
+    const started = Date.now();
+    this.trace('info', 'firewall.start', { operation: name });
     try {
-      this.exec('powershell.exe', powerShellArgs(script), { stdio: 'ignore', windowsHide: true, timeout: 90000 });
+      await new Promise((resolve, reject) => {
+        this.exec('powershell.exe', powerShellArgs(script), { windowsHide: true, timeout: 90000, maxBuffer: 8192 },
+          (error) => error ? reject(error) : resolve());
+      });
+      this.trace('info', 'firewall.complete', { operation: name, durationMs: Date.now() - started });
     } catch (error) {
       const action = name === 'unlock-firewall.ps1' ? '恢复' : '应用';
-      const detail = error.code === 'ETIMEDOUT' ? '操作超时，请检查 Windows 防火墙服务。'
+      const detail = (error.code === 'ETIMEDOUT' || error.killed) ? '操作超时，请检查 Windows 防火墙服务。'
         : '请允许 Windows 管理员授权，并确认 Windows 防火墙服务正常运行。';
       const failure = new Error(`无法${action}监考网络设置。${detail}恢复失败时请以管理员身份运行随包 scripts/restore-network.bat；保留客户端数据。`);
-      failure.code = error.code || 'FIREWALL_COMMAND_FAILED';
+      failure.code = error.killed ? 'ETIMEDOUT' : error.code || 'FIREWALL_COMMAND_FAILED';
+      this.trace('error', 'firewall.failed', { operation: name, code: failure.code, message: failure.message, durationMs: Date.now() - started });
       throw failure;
     }
   }
 
-  recover() {
-    if (this.platform === 'win32' && fs.existsSync(this.statePath)) this.run('unlock-firewall.ps1');
+  enqueue(action) {
+    const result = this.pending.then(action);
+    this.pending = result.catch(() => {});
+    return result;
   }
 
-  lock() {
+  async restore() {
+    if (this.platform === 'win32' && fs.existsSync(this.statePath)) await this.run('unlock-firewall.ps1');
+    this.isLocked = false;
+  }
+
+  recover() { return this.enqueue(() => this.restore()); }
+
+  lock() { return this.enqueue(() => this.applyLock()); }
+
+  async applyLock() {
     if (this.platform !== 'win32') {
       this.logger?.logViolation({ source: 'FIREWALL', type: 'SYSTEM_NETWORK_FILTER_UNAVAILABLE', target: this.platform, detail: '应用内白名单仍生效' });
       return false;
@@ -69,17 +97,13 @@ class FirewallGuard {
     if (this.isLocked) return true;
     const policyPath = path.join(this.directory, 'network-policy.json');
     atomicWrite(policyPath, JSON.stringify({ origins: this.config.exam.allowedOrigins, group: `HydroProctor-${crypto.randomUUID()}` }));
-    try { this.run('lock-firewall.ps1', policyPath); this.isLocked = true; }
-    catch (error) { this.recover(); throw error; }
+    try { await this.run('lock-firewall.ps1', policyPath); this.isLocked = true; }
+    catch (error) { await this.restore(); throw error; }
     this.logger?.logViolation({ source: 'FIREWALL', type: 'NETWORK_POLICY_APPLIED', target: 'win32', detail: '' });
     return true;
   }
 
-  unlock() {
-    if (this.platform !== 'win32') return;
-    this.recover();
-    this.isLocked = false;
-  }
+  unlock() { return this.recover(); }
 }
 
 module.exports = FirewallGuard;

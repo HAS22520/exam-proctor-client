@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'">
+  <title>管理员调试控制台</title>
+  <link rel="stylesheet" href="console.css">
+</head>
+<body>
+  <header><div><h1>调试控制台</h1><p>主进程运行记录 · 最近 1,000 条 · 仅已验证的 root 管理员可用</p></div><button id="devtools">打开页面开发工具</button></header>
+  <nav><input id="filter" placeholder="筛选阶段或错误" aria-label="筛选日志"><select id="level" aria-label="日志级别"><option value="">所有级别</option><option value="error">错误</option><option value="warn">警告与错误</option></select><label><input type="checkbox" id="follow" checked>自动滚动</label><button id="copy">复制当前日志</button></nav>
+  <p id="status" role="status">正在读取启动记录…</p>
+  <pre id="logs" aria-label="运行日志"></pre>
+  <footer id="file"></footer>
+  <script src="console.js"></script>
+</body>
+</html>

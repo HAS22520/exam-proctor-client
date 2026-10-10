@@ -7,7 +7,12 @@ const { prepare } = require('./prepare-build');
 const root = path.resolve(__dirname, '..');
 
 function stageProject(projectDir, destination) {
-  fs.cpSync(path.join(projectDir, 'app'), path.join(destination, 'app'), { recursive: true });
+  const generated = path.join(projectDir, 'app/generated');
+  // Recreate build outputs from this invocation's public configuration. Old
+  // container-owned files may be unreadable and must not carry stale trust.
+  fs.cpSync(path.join(projectDir, 'app'), path.join(destination, 'app'), {
+    recursive: true, filter: (source) => source !== generated,
+  });
   fs.mkdirSync(path.join(destination, 'scripts'));
   for (const name of ['build.js', 'prepare-build.js', 'before-pack.js', 'docker-build-entry.js',
     'lock-firewall.ps1', 'unlock-firewall.ps1', 'watch-network.ps1', 'restore-network.bat']) {

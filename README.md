@@ -153,9 +153,15 @@ python3 -m unittest discover -s tools/tests -v
 
 只有构建配置 `debug.allowRoot=true` 且 OJ **签名响应**确认 具有 `PRIV_ALL` 超级管理员权限时，才自动进入 root 调试：恢复 Windows 防火墙、停止防作弊快捷键/进程扫描、退出 kiosk、允许网络访问所有 HTTP(S) 地址，并可打开开发工具。用户名为 root 的普通账号不能开启。切换账号或验签失败立即取消调试；前端无法请求任意签名或自行声明 root。调试不豁免服务端版本、令牌、提交证明及日志要求。
 
+在 `config/build.local.json` 设置 `"allowRootDebug": true`（或构建时传入 `PROCTOR_ALLOW_ROOT_DEBUG=true`），重新打包后用 OJ 超级管理员账号登录。签名身份验证成功时会自动打开独立“调试控制台”，关闭后可通过监考面板的“调试控制台”按钮重新打开。控制台显示启动步骤、防火墙操作、身份请求、challenge/handshake/refresh 阶段、HTTP 错误、网络拦截、日志上传进度与耗时、页面无响应/崩溃及主进程事件循环延迟；可筛选、复制日志，也可打开考试页面开发工具查看页面问题。控制台使用独立会话，不提供执行命令或任意签名功能。退出登录、验签失败或签名身份到期时关闭控制台并撤销调试权限。
+
+启用 root 调试的构建在每次启动时保存脱敏诊断记录，Windows 路径为 `%APPDATA%\HydroProctorClient\diagnostics\debug-<时间戳>.log`，macOS 路径为 `~/Library/Application Support/HydroProctorClient/diagnostics/debug-<时间戳>.log`。即使尚未登录或启动失败，也可查看文件最后的 `*.start` / `*.failed` 定位停在哪一步。控制台保留最近 1,000 条；文件每次启动最多 4 MiB、保留最近 3 次。诊断文件与考试用的加密 `.hplog` 分开，不作为监考证据上传；不记录请求体、代码、Cookie、令牌、密钥或完整证明，URL 移除查询参数与片段。普通构建不创建诊断文件。修改配置后必须重新构建，旧 EXE 不会自动获得控制台。
+
 Windows：普通考试用户握手后按配置应用系统防火墙规则，保存原出站策略和本地允许规则，退出/异常重启恢复。独立提升权限的看守进程会在客户端被强杀后恢复策略。恢复失败会保留状态；可用管理员终端运行随包 `scripts/restore-network.bat`，默认读取 `%APPDATA%\HydroProctorClient\network-state.json`。不会重置整机防火墙、清空代理或禁用所有网卡。网络权限提升仅在需要修改防火墙时请求，不强制客户端全程以管理员身份运行。
 
 提权只显示 Windows UAC 授权提示，PowerShell 执行窗口隐藏且禁止交互输入。通过当前 Windows 访问令牌判断管理员权限，不依赖 `net session` 或 Server 服务。执行器仅等待防火墙命令进程退出，保留看守进程独立运行；不能改回 `Start-Process -Wait`，它会等待包括看守进程在内的整个进程树，导致看守进程等待客户端退出、客户端又等待看守进程的死锁。看守进程先等待策略命令结束，再等待客户端退出，避免客户端在应用规则途中退出时提前恢复。
+
+防火墙操作与 OS 启动标识查询均采用异步子进程，等待 UAC/系统服务期间不阻塞 Electron 主进程。防火墙应用与恢复串行执行，正常退出会等待恢复完成；强制退出由独立看守进程恢复。Docker 构建会跳过旧的 `app/generated`，在临时项目内按本次配置重新生成，避免沿用旧公钥或读取容器遗留的不可读文件。
 
 macOS：支持应用内精确 origin 白名单、全屏、失焦、多屏、进程检测和加密日志。**本版本没有系统级 macOS 网络过滤器**，其它应用的网络不能因此被阻断；需要另行实现有相应签名与授权的原生 Network Extension。Windows 的 IP/端口规则也不能证明其它应用绝对无法通过共享 CDN、DNS、代理、GPO 或管理员操作访问外网；日志与服务端认证都不能视为不可绕过的设备证明。
 

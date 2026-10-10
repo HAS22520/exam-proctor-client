@@ -19,27 +19,49 @@ function parseReply(raw, status, type) {
 }
 
 class Transport {
-  constructor(session, origin, timeoutMs = 15000) { this.session = session; this.origin = origin; this.timeoutMs = timeoutMs; }
+  constructor(session, origin, timeoutMs = 15000, trace = () => {}) {
+    Object.assign(this, { session, origin, timeoutMs, trace });
+  }
 
-  async request(path, { method = 'POST', body, headers = {}, timeoutMs = this.timeoutMs } = {}) {
+  async request(path, { method = 'POST', body, headers = {}, timeoutMs = this.timeoutMs, operation } = {}) {
     const url = new URL(path, this.origin);
     if (url.origin !== this.origin || !path.startsWith('/') || path.startsWith('//')) throw new Error('Invalid protocol target');
-    const signal = AbortSignal.timeout(timeoutMs);
-    const response = await this.session.fetch(url.href, { method, redirect: 'manual', credentials: 'include', cache: 'no-store', signal,
-      headers: { Accept: 'application/json', Origin: this.origin, ...headers }, body });
-    const type = response.headers.get('content-type') || '';
-    if (response.status >= 300 && response.status < 400) throw new ProctorError('Login or redirect requires attention', response.status);
-    if (!type.includes('application/json')) throw new ProctorError('Server did not return protocol JSON', response.status);
-    const raw = await response.text();
-    return parseReply(raw, response.status, type);
+    const started = Date.now();
+    const details = { url: url.href, method, operation };
+    this.trace('info', 'protocol.request', details);
+    try {
+      const signal = AbortSignal.timeout(timeoutMs);
+      const response = await this.session.fetch(url.href, { method, redirect: 'manual', credentials: 'include', cache: 'no-store', signal,
+        headers: { Accept: 'application/json', Origin: this.origin, ...headers }, body });
+      const type = response.headers.get('content-type') || '';
+      if (response.status >= 300 && response.status < 400) throw new ProctorError('Login or redirect requires attention', response.status);
+      if (!type.includes('application/json')) throw new ProctorError('Server did not return protocol JSON', response.status);
+      const raw = await response.text();
+      const result = parseReply(raw, response.status, type);
+      this.trace('info', 'protocol.response', { ...details, status: response.status, durationMs: Date.now() - started });
+      return result;
+    } catch (error) {
+      this.trace('error', 'protocol.failed', { ...details, status: error.status, name: error.name, message: error.message, durationMs: Date.now() - started });
+      throw error;
+    }
   }
 
   json(path, body, headers) {
-    return this.request(path, { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json', ...headers } });
+    const operation = ['challenge', 'handshake', 'refresh', 'finish'].includes(body?.operation) ? body.operation : undefined;
+    return this.request(path, { operation, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json', ...headers } });
   }
 
-  upload(path, options) {
-    return require('./upload-transport').uploadFile({ session: this.session, origin: this.origin, path, ...options });
+  async upload(path, options) {
+    const started = Date.now();
+    this.trace('info', 'protocol.upload-start');
+    try {
+      const result = await require('./upload-transport').uploadFile({ session: this.session, origin: this.origin, path, ...options });
+      this.trace('info', 'protocol.upload-complete', { durationMs: Date.now() - started });
+      return result;
+    } catch (error) {
+      this.trace('error', 'protocol.upload-failed', { name: error.name, status: error.status, message: error.message, durationMs: Date.now() - started });
+      throw error;
+    }
   }
 }
 

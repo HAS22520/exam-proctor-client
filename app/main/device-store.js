@@ -2,7 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
 const { canonical, digest } = require('./proctor-crypto');
 
 function atomicWrite(filename, data) {
@@ -53,21 +53,27 @@ class ProtectedStore {
 const deviceInfo = () => ({ platform: process.platform, osVersion: os.release().slice(0, 128), arch: process.arch });
 // Read OS boot identity rather than subtracting wall time and uptime: clock
 // correction must not manufacture a SYSTEM_RESTART event.
-let cachedBootId;
-function bootIdentity() {
-  if (cachedBootId !== undefined) return cachedBootId;
-  try {
-    const options = { encoding: 'utf8', windowsHide: true, timeout: 10000, maxBuffer: 4096 };
-    const value = process.platform === 'darwin'
-      ? execFileSync('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], options).trim()
-      : process.platform === 'win32'
-        ? execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-          "(Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().ToString('o')"], options).trim()
-        : fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
-    if (!value || value.length > 128 || /[\r\n]/.test(value)) throw new Error('Invalid boot identity');
-    cachedBootId = digest(`${process.platform}:${value}`);
-  } catch { cachedBootId = null; }
-  return cachedBootId;
+let cachedBootId = null;
+let bootPending;
+function bootIdentity() { return cachedBootId; }
+function prepareBootIdentity({ platform = process.platform, exec = execFile, read = fs.promises.readFile } = {}) {
+  if (bootPending) return bootPending;
+  bootPending = (async () => {
+    try {
+      const options = { encoding: 'utf8', windowsHide: true, timeout: 10000, maxBuffer: 4096 };
+      const command = platform === 'darwin' ? ['/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid']]
+        : ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+          "(Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime.ToUniversalTime().ToString('o')"]];
+      const raw = ['darwin', 'win32'].includes(platform)
+        ? await new Promise((resolve, reject) => exec(...command, options, (error, stdout) => error ? reject(error) : resolve(stdout)))
+        : await read('/proc/sys/kernel/random/boot_id', 'utf8');
+      const value = raw.trim();
+      if (!value || value.length > 128 || /[\r\n]/.test(value)) throw new Error('Invalid boot identity');
+      cachedBootId = digest(`${platform}:${value}`);
+    } catch { cachedBootId = null; }
+    return cachedBootId;
+  })();
+  return bootPending;
 }
 
-module.exports = { ProtectedStore, atomicWrite, deviceInfo, bootIdentity };
+module.exports = { ProtectedStore, atomicWrite, deviceInfo, bootIdentity, prepareBootIdentity };

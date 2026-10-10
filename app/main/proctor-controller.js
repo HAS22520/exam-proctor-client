@@ -25,8 +25,8 @@ function submission(request, context, login) {
 
 class ProctorController {
   constructor({ config, directory, protectedStore, session, version, onIdentity = async () => {}, onStatus = () => {},
-    createTransport = (origin, timeout) => new Transport(session, origin, timeout) }) {
-    Object.assign(this, { config, directory, protectedStore, electronSession: session, version, onIdentity, onStatus });
+    trace = () => {}, createTransport = (origin, timeout) => new Transport(session, origin, timeout, trace) }) {
+    Object.assign(this, { config, directory, protectedStore, electronSession: session, version, onIdentity, onStatus, trace });
     this.createTransport = createTransport;
     this.device = protectedStore.device();
     this.current = null;
@@ -226,10 +226,12 @@ class ProctorController {
     }
   }
 
-  async finish() {
+  async finish(beforeFinish = async () => {}) {
     if (this.finishing) return false;
     this.finishing = true;
     this.progress('closing');
+    // Disable new proofs before awaiting asynchronous network restoration.
+    await beforeFinish();
     await this.proofPending;
     if (this.syncPending) await this.syncPending.catch(() => {});
     if (this.retryPending) await this.retryPending;
@@ -254,7 +256,8 @@ class ProctorController {
           catch (error) { record.journal.append('SERVER_FINISH_DEFERRED'); throw error; }
         }
         await this.upload(record);
-      } catch {
+      } catch (error) {
+        this.trace('error', 'logs.upload-deferred', { name: error.name, status: error.status, message: error.message });
         allUploaded = false;
         record.journal.append('LOG_UPLOAD_DEFERRED');
         await record.journal.finalize();
@@ -317,6 +320,7 @@ class ProctorController {
         this.records.set(entry, record);
         await this.upload(record);
       } catch (error) {
+        this.trace('error', 'logs.retry-failed', { name: error.name, status: error.status, message: error.message });
         if (record?.journal) {
           const count = (record.journal.state.retryCount || 0) + 1;
           Object.assign(record.journal.state, { uploadError: '日志补传失败，请检查账号、版本及服务端策略', retryCount: count,

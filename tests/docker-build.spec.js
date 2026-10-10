@@ -30,8 +30,9 @@ test('Docker stages only build sources, injects public configuration and isolate
     assert.deepEqual(fs.readdirSync(stage).sort(), ['app', 'config', 'package-lock.json', 'package.json', 'scripts']);
     assert.deepEqual(fs.readdirSync(path.join(stage, 'config')).sort(), ['entitlements.mac.plist', 'exam-config.json']);
     assert.ok(!fs.existsSync(path.join(stage, 'node_modules')));
-    const generated = JSON.parse(fs.readFileSync(path.join(stage, 'app/generated/trust.json')));
-    assert.equal(generated.authPublicKey, trust.authPublicKey);
+    assert.ok(fs.existsSync(path.join(stage, 'app/debug/console.html')));
+    assert.equal(fs.existsSync(path.join(stage, 'app/generated')), false);
+    assert.equal(options.env.PROCTOR_AUTH_PUBLIC_KEY, trust.authPublicKey);
     assert.equal(options.env.PROCTOR_CLIENT_VERSION, '2.3.4');
     assert.equal(options.env.PROCTOR_ALLOW_ROOT_DEBUG, 'true');
     assert.ok(args.includes('PROCTOR_AUTH_PUBLIC_KEY')); assert.ok(!args.some((arg) => arg.includes('BEGIN PUBLIC KEY')));
@@ -40,6 +41,15 @@ test('Docker stages only build sources, injects public configuration and isolate
     return { status: 0 };
   } });
   assert.equal(calls, 1); assert.equal(fs.existsSync(stage), false);
+});
+
+test('Docker staging omits generated configuration from previous builds', (t) => {
+  const f = fixture(t), destination = path.join(workspace(t), 'stage');
+  fs.mkdirSync(path.join(f.root, 'app/generated'), { recursive: true });
+  fs.writeFileSync(path.join(f.root, 'app/generated/trust.json'), 'stale trust');
+  stageProject(f.root, destination);
+  assert.equal(fs.existsSync(path.join(destination, 'app/generated')), false);
+  assert.ok(fs.existsSync(path.join(destination, 'app/debug/preload.js')));
 });
 
 test('Docker validates before launching, supports pinned images and cleans staging on failure', (t) => {
