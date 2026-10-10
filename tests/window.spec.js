@@ -8,7 +8,7 @@ const { pathToFileURL } = require('node:url');
 const { workspace } = require('./helpers');
 
 async function fixture(t, options = {}) {
-  const exitChoice = options.exitChoice ?? 2;
+  const exitChoice = options.exitChoice ?? 2, onDialog = options.onDialog;
   const directory = workspace(t), handlers = new Map(), windows = [], choices = [];
   let quitCount = 0, shutdownCount = 0, finishCalled, releaseFinish, pauseCount = 0;
   let recoverCount = 0, exitCount = 0, controller, antiCheatStarts = 0, lockCalled, releaseLock;
@@ -41,9 +41,11 @@ async function fixture(t, options = {}) {
     async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     isDestroyed() { return !!this.destroyed; }
     destroy() { this.destroyed = true; this.emit('closed'); }
-    show() {} focus() {}
-    setKiosk(value) { this.kiosk = value; }
-    setAlwaysOnTop() {}
+    show() { this.showCount = (this.showCount || 0) + 1; }
+    focus() { this.focusCount = (this.focusCount || 0) + 1; }
+    restore() { this.restoreCount = (this.restoreCount || 0) + 1; }
+    setKiosk(value) { if (this.kiosk && !value) this.emit('blur'); this.kiosk = value; }
+    setAlwaysOnTop(value) { this.alwaysOnTop = value; }
   }
   const config = { exam: { targetUrl: 'https://oj.example.com/d/exam/', allowedOrigins: ['https://oj.example.com'] },
     updater: { enabled: !!options.updateGate }, debug: { allowRoot: !!options.debug }, globalFirewallLock: { enabled: !!options.delayLock } };
@@ -60,15 +62,18 @@ async function fixture(t, options = {}) {
     shutdown() { shutdownCount++; }
   }
   class Guard {
+    constructor() { this.running = false; this.refocus = () => windows[0].focus(); }
     recover() { recoverCount++; if (options.recoveryError) throw options.recoveryError; }
     snapshot() { return { version: '1.0.0', buildVersion: '2026101001' }; }
-    check() { return options.updateGate; } install() {} start() { antiCheatStarts++; } stop() {}
+    check() { return options.updateGate; } install() {}
+    start() { if (!this.running) { antiCheatStarts++; this.running = true; windows[0].on('blur', this.refocus); } }
+    stop() { this.running = false; windows[0]?.removeListener('blur', this.refocus); }
     lock() { lockCalled(); return locked; }
     unlock() { if (options.exitRecoveryError) throw options.exitRecoveryError; this.recover(); }
   }
   const mocks = {
     electron: { app, BrowserWindow, ipcMain: { handle: (name, callback) => handlers.set(name, callback) },
-      dialog: { showMessageBox: async (owner, options) => { choices.push(options); return { response: options.buttons?.length === 3 ? exitChoice : 1 }; }, showErrorBox: (title, message) => {
+      dialog: { showMessageBox: async (owner, options) => { choices.push(options); if (onDialog) await onDialog(owner, options); return { response: options.buttons?.length === 3 ? exitChoice : 1 }; }, showErrorBox: (title, message) => {
         if (!options.recoveryError) assert.fail('startup error');
         errors.push({ title, message });
       } } },
@@ -88,7 +93,7 @@ async function fixture(t, options = {}) {
   await initialized;
   await new Promise((resolve) => setImmediate(resolve));
   const event = (owner) => ({ sender: owner.webContents, senderFrame: owner.webContents.mainFrame });
-  return { handlers, windows, choices, controller, errors, exitHooks, startupSteps, requestEvents, started, releaseFinish, locking, releaseLock, event,
+  return { app, handlers, windows, choices, controller, errors, exitHooks, startupSteps, requestEvents, started, releaseFinish, locking, releaseLock, event,
     get antiCheatStarts() { return antiCheatStarts; }, get quitCount() { return quitCount; },
     get pauseCount() { return pauseCount; }, get shutdownCount() { return shutdownCount; }, get recoverCount() { return recoverCount; }, get exitCount() { return exitCount; } };
 }
@@ -230,4 +235,75 @@ test('a slow update server cannot delay the exam window or authentication IPC in
   const status = f.handlers.get('exam:status')(f.event(f.windows[0]));
   assert.equal(status.update.version, '1.0.0'); assert.equal(status.update.buildVersion, '2026101001');
   release();
+});
+
+
+test('exit prompt releases blur refocusing, kiosk and topmost before opening, cancellation restores exam protection', async (t) => {
+  let f;
+  f = await fixture(t, { exitChoice: 0, onDialog: (owner) => {
+    assert.equal(owner.kiosk, false); assert.equal(owner.alwaysOnTop, false);
+    const focused = owner.focusCount;
+    owner.emit('blur'); assert.equal(owner.focusCount, focused);
+    f.app.emit('second-instance'); assert.equal(owner.focusCount, focused);
+  } });
+  const main = f.windows[0];
+  await f.controller.options.onIdentity({ uid: 7, proctorEnabled: true });
+  assert.equal(main.kiosk, true); assert.equal(main.alwaysOnTop, true);
+  assert.equal(f.antiCheatStarts, 1);
+  await f.handlers.get('exam:request-quit')(f.event(main));
+  assert.equal(main.kiosk, true); assert.equal(main.alwaysOnTop, true);
+  assert.equal(f.antiCheatStarts, 2); assert.equal(f.quitCount, 0);
+  assert.equal(f.recoverCount, 1); // Prompt alone does not unlock or relock networking.
+});
+
+test('upload window is shown after load and owns focus when a second instance is launched', async (t) => {
+  const f = await fixture(t), main = f.windows[0];
+  await f.controller.options.onIdentity({ uid: 7, proctorEnabled: true });
+  const ending = f.handlers.get('exam:request-quit')(f.event(main));
+  await f.started;
+  const upload = f.windows[1];
+  assert.equal(upload.options.show, false); assert.equal(upload.options.modal, true);
+  assert.equal(upload.options.minimizable, false); assert.equal(upload.showCount, 1); assert.equal(upload.focusCount, 1);
+  const focused = main.focusCount;
+  main.emit('blur'); f.app.emit('second-instance');
+  assert.equal(main.focusCount, focused); assert.equal(upload.focusCount, 2);
+  f.releaseFinish(true); await ending;
+  f.handlers.get('exam:upload-exit')(f.event(upload)); assert.equal(f.quitCount, 1);
+});
+
+test('a firewall lock finishing while the exit prompt is open cannot restart focus capture', async (t) => {
+  let entered, dismiss;
+  const shown = new Promise((resolve) => { entered = resolve; });
+  const answered = new Promise((resolve) => { dismiss = resolve; });
+  const f = await fixture(t, { delayLock: true, exitChoice: 0, onDialog: () => { entered(); return answered; } });
+  const main = f.windows[0];
+  const applying = f.controller.options.onIdentity({ uid: 7, proctorEnabled: true }); await f.locking;
+  const ending = f.handlers.get('exam:request-quit')(f.event(main)); await shown;
+  f.releaseLock(); await applying;
+  assert.equal(main.kiosk, false); assert.equal(f.antiCheatStarts, 0);
+  const focused = main.focusCount; main.emit('blur'); assert.equal(main.focusCount, focused);
+  dismiss(); await ending;
+  assert.equal(main.kiosk, true); assert.equal(f.antiCheatStarts, 1);
+});
+
+test('failure to open a native prompt restores controls and permits retrying exit', async (t) => {
+  let prompts = 0;
+  const f = await fixture(t, { exitChoice: 1, onDialog: () => { if (++prompts === 1) throw new Error('native dialog failed'); } });
+  const main = f.windows[0];
+  await f.controller.options.onIdentity({ uid: 7, proctorEnabled: true });
+  await f.handlers.get('exam:request-quit')(f.event(main));
+  assert.equal(main.kiosk, true); assert.equal(f.quitCount, 0);
+  await f.handlers.get('exam:request-quit')(f.event(main));
+  assert.equal(f.pauseCount, 1); assert.equal(f.quitCount, 1);
+});
+
+
+test('build opt-in to root debugging does not exempt ordinary exam accounts from network and focus protection', async (t) => {
+  const f = await fixture(t, { debug: true, delayLock: true });
+  const applying = f.controller.options.onIdentity({ uid: 7, root: false, proctorEnabled: true,
+    expiresAt: new Date(Date.now() + 60000).toISOString() });
+  await f.locking; f.releaseLock(); await applying;
+  assert.equal(f.windows[0].kiosk, true); assert.equal(f.antiCheatStarts, 1);
+  const status = f.handlers.get('exam:status')(f.event(f.windows[0]));
+  assert.equal(status.debug, false); assert.equal(status.root, false); assert.equal(status.allowRootDebug, true);
 });

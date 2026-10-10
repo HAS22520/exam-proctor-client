@@ -25,6 +25,7 @@ let window, controller, network, antiCheat, firewall, config, trust, uploadWindo
 let quitting = false, exiting = false, root = false, debug = false, timer, trustedUrl;
 let latestStatus = { phase: 'idle', message: '正在连接 OJ' };
 let exitReady = false;
+let dialogDepth = 0, protectedFocus = false;
 let recoveryReady = false;
 let debugExpiry = 0, syncing = false, syncRequested = false, lastUploadStage, identityRevision = 0;
 let lastTick = Date.now();
@@ -32,7 +33,33 @@ diagnostics.log('info', 'startup.process', { platform: process.platform, arch: p
 process.on('uncaughtExceptionMonitor', (error) => diagnostics.error('process.uncaught-exception', error));
 const directory = app.getPath('userData');
 if (!running.singleInstanceLocked && !app.requestSingleInstanceLock()) app.exit(0);
-app.on('second-instance', () => { if (window) { window.restore(); window.focus(); } });
+app.on('second-instance', () => {
+  // A native message box owns focus until it resolves. Never refocus its parent.
+  if (dialogDepth) return;
+  const target = uploadWindow && !uploadWindow.isDestroyed() ? uploadWindow : window;
+  if (target && !target.isDestroyed()) { target.restore(); target.show(); target.focus(); }
+});
+
+function applyWindowFocus() {
+  if (!window || window.isDestroyed()) return;
+  const enabled = protectedFocus && !dialogDepth && !exiting;
+  if (enabled) antiCheat.start(); else antiCheat.stop();
+  window.setKiosk(enabled && config.window?.kiosk !== false);
+  window.setAlwaysOnTop(enabled && config.window?.alwaysOnTop !== false);
+}
+
+async function showExamDialog(options, owner = window) {
+  dialogDepth++;
+  try {
+    // Remove blur/refocus listeners before the native dialog can blur its parent.
+    applyWindowFocus();
+    owner.restore(); owner.show(); owner.focus();
+    return await dialog.showMessageBox(owner, options);
+  } finally {
+    dialogDepth--;
+    applyWindowFocus();
+  }
+}
 
 function loadConfig() {
   trust = JSON.parse(fs.readFileSync(path.join(__dirname, '../generated/trust.json'), 'utf8'));
@@ -60,7 +87,7 @@ async function applyIdentity(login) {
     trace('info', 'identity.debug-mode', { debug, root });
     if (debug) {
       antiCheat.stop(); window.setKiosk(false); window.setAlwaysOnTop(false);
-      await debugConsole.show();
+      if (!dialogDepth && !exiting) await debugConsole.show();
       if (revision !== identityRevision) return;
     } else {
       debugConsole.close();
@@ -72,15 +99,14 @@ async function applyIdentity(login) {
   const activeRecord = controller?.current;
   const closed = !!activeRecord && activeRecord.login.uid === uid && (activeRecord.completed
     || !!activeRecord.journal && activeRecord.journal.state.phase !== 'open');
-  const protectedExam = !!uid && ((!!login?.proctorEnabled && !closed) || ongoing) && !debug && !exiting;
+  protectedFocus = !!uid && ((!!login?.proctorEnabled && !closed) || ongoing) && !debug;
+  const protectedExam = protectedFocus && !exiting;
   if (protectedExam) {
     if (config.globalFirewallLock?.enabled) await firewall.lock();
     if (revision !== identityRevision || exiting) return;
-    antiCheat.start();
   } else { antiCheat.stop(); await firewall.unlock(); }
   if (revision !== identityRevision) return;
-  window.setKiosk(protectedExam && config.window?.kiosk !== false);
-  window.setAlwaysOnTop(protectedExam && config.window?.alwaysOnTop !== false);
+  applyWindowFocus();
   if (!debug && window.webContents.isDevToolsOpened()) window.webContents.closeDevTools();
 }
 
@@ -116,12 +142,13 @@ function publishStatus(status) {
 async function showUploadWindow() {
   exitReady = false;
   uploadWindow = new BrowserWindow({ width: 560, height: 490, minWidth: 430, minHeight: 440, title: '结束监考 · 上传日志',
-    parent: window, modal: true, autoHideMenuBar: true, resizable: false,
+    parent: window, modal: true, show: false, minimizable: false, fullscreenable: false, autoHideMenuBar: true, resizable: false,
     webPreferences: { preload: path.join(__dirname, '../status/upload-preload.js'), nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: false } });
   uploadWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   uploadWindow.webContents.on('will-navigate', (event) => event.preventDefault());
   uploadWindow.on('close', (event) => { if (!quitting) event.preventDefault(); });
   await uploadWindow.loadFile(path.join(__dirname, '../status/upload.html'));
+  uploadWindow.show(); uploadWindow.focus();
 }
 
 function completeExit() {
@@ -154,10 +181,17 @@ async function syncLogin(force = false) {
 async function requestExit() {
   if (exiting) return;
   exiting = true;
-  const { response } = await dialog.showMessageBox(window, { type: 'question', title: '结束监考',
-    message: '退出客户端还是结束监考？', detail: '此操作不会代你提交代码。保留日志退出可在下次登录原账号后续写、继续做题，不会结束监考。上传成功后成绩才能有效；选择结束监考后无法继续本场比赛，断网时可补传。',
-    buttons: ['继续考试', '保留日志退出', '上传日志并结束监考'], defaultId: 0, cancelId: 0 });
-  if (![1, 2].includes(response)) { exiting = false; return; }
+  let response;
+  try {
+    const choice = await showExamDialog({ type: 'question', title: '结束监考',
+      message: '退出客户端还是结束监考？', detail: '此操作不会代你提交代码。保留日志退出可在下次登录原账号后续写、继续做题，不会结束监考。上传成功后成绩才能有效；选择结束监考后无法继续本场比赛，断网时可补传。',
+      buttons: ['继续考试', '保留日志退出', '上传日志并结束监考'], defaultId: 0, cancelId: 0 });
+    response = choice.response;
+  } catch (error) {
+    diagnostics.error('exit.prompt-failed', error);
+    exiting = false; applyWindowFocus(); return;
+  }
+  if (![1, 2].includes(response)) { exiting = false; applyWindowFocus(); return; }
   clearInterval(timer);
   antiCheat.stop();
   window.setKiosk(false); window.setAlwaysOnTop(false);
@@ -166,12 +200,13 @@ async function requestExit() {
       await diagnostics.span('exit.pause', () => controller.pause());
       try { await diagnostics.span('exit.restore-network', () => firewall.unlock()); }
       catch (error) { diagnostics.error('exit.network-recovery-deferred', error);
-        await dialog.showMessageBox(window, { type: 'warning', message: '日志已保留，系统网络尚未确认恢复',
+        await showExamDialog({ type: 'warning', message: '日志已保留，系统网络尚未确认恢复',
           detail: '守护进程会继续恢复。必要时请以管理员身份运行随包 restore-network.bat；保留客户端数据。' }); }
       completeExit();
     } catch (error) {
       diagnostics.error('exit.pause-failed', error); exiting = false; controller.finishing = false;
-      timer = setInterval(() => syncLogin(true), 15000); await syncLogin();
+      timer = setInterval(() => syncLogin(true), 15000);
+      await syncLogin(); applyWindowFocus();
     }
     return;
   }
@@ -197,14 +232,15 @@ async function requestExit() {
         : '日志已加密保存，成绩待确认。联网后请使用原考试账号补传。', networkWarning });
   } catch (error) {
     diagnostics.error('exit.failed', error);
-    await dialog.showMessageBox(window, { type: 'error', message: '结束监考失败，请保留客户端数据',
-      detail: restored ? '本地日志仍保留，请重试结束监考。' : '系统网络尚未恢复，请重试，或使用随包提供的恢复脚本。' });
+    await showExamDialog({ type: 'error', message: '结束监考失败，请保留客户端数据',
+      detail: restored ? '本地日志仍保留，请重试结束监考。' : '系统网络尚未恢复，请重试，或使用随包提供的恢复脚本。' }, uploadWindow && !uploadWindow.isDestroyed() ? uploadWindow : window);
     exiting = false;
     // Closing attempts stay closed; retry sealing/upload instead of resuming access.
     controller.finishing = false;
     if (uploadWindow && !uploadWindow.isDestroyed()) { uploadWindow.destroy(); uploadWindow = null; }
     timer = setInterval(() => syncLogin(true), 15000);
     await syncLogin();
+    applyWindowFocus();
   }
 }
 
@@ -253,7 +289,7 @@ app.whenReady().then(async () => {
     ipcContext(event); if (!config.updater.enabled) throw new Error('更新功能未启用');
     if (exiting || hasUnfinishedJournals(directory)) throw new Error('请先上传日志并结束所有监考，再更新客户端');
     await updates.stage();
-    const choice = await dialog.showMessageBox(window, { type: 'question', message: 'ASAR 更新已通过验证',
+    const choice = await showExamDialog({ type: 'question', message: 'ASAR 更新已通过验证',
       detail: '现在重启以应用更新？重启后需要重新登录。', buttons: ['稍后重启', '立即重启'], defaultId: 0, cancelId: 0 });
     if (choice.response === 1) {
       if (exiting || hasUnfinishedJournals(directory)) throw new Error('监考已开始，更新将在结束监考后重启生效');
