@@ -1,6 +1,6 @@
-# Hydro 监考客户端
+# HydroNext 监考客户端
 
-Electron 客户端，连接 Hydro 的 `hydro-proctor/1` 协议。支持 Windows x64，以及 macOS Intel x64 / Apple Silicon arm64。源码修改可直接在本仓库查看；Hydro 父仓库把本目录作为独立 Git 仓库忽略。
+Electron 客户端，连接 HydroNext 的 `HydroNext-proctor/1` 协议。支持 Windows x64，以及 macOS Intel x64 / Apple Silicon arm64。源码修改可直接在本仓库查看；HydroNext 父仓库把本目录作为独立 Git 仓库忽略。
 
 ## 功能与部署顺序
 
@@ -10,7 +10,7 @@ Electron 客户端，连接 Hydro 的 `hydro-proctor/1` 协议。支持 Windows 
 4. ui-next 现有的 `window.examAPI.proctorHeaders` 桥会自动为代码提交、文件提交和自测生成设备签名证明；服务端决定是否接受。普通浏览器没有此桥，不能提交监考比赛。
 5. 结束监考会先停止新提交、等待在途请求，关闭服务端 attempt，生成固定加密日志并上传。此操作不会代交代码。日志上传前成绩待确认。断网可安全退出；再次打开客户端、登录原账号后自动补传，禁止删除本机数据。
 
-必须部署 Hydro 的 `/proctor/identity` 接口（域内为 `/d/<domainId>/proctor/identity`）。它使用已有认证私钥签署当前登录 UID、root 权限和比赛/题目上下文。接口是本次唯一新增的服务端协议入口，不读取前端显示的用户名来判断 root。
+必须部署 HydroNext 的 `/proctor/identity` 接口（域内为 `/d/<domainId>/proctor/identity`）。它使用已有认证私钥签署当前登录 UID、root 权限和比赛/题目上下文。接口是本次唯一新增的服务端协议入口，不读取前端显示的用户名来判断 root。
 
 设备密钥和日志 AES 密钥使用 Electron safeStorage 加密：Windows 的 DPAPI / macOS 的 Keychain。密钥不能加密时客户端拒绝启动，不回退明文。跨系统用户、迁移用户数据或删除密钥可能使原考试无法恢复。当前固定 Electron 44；升级到 46 前需迁移其异步 safeStorage API。参见 [Electron 官方说明](https://github.com/electron/electron/blob/main/docs/api/safe-storage.md)。
 
@@ -88,7 +88,7 @@ HTTPS 必需，只有 localhost 可使用 HTTP。`start`、`build`、`pack`、`d
 
 只有构建配置 `debug.allowRoot=true` 且 OJ **签名响应**确认 具有 `PRIV_ALL` 超级管理员权限时，才自动进入 root 调试：恢复 Windows 防火墙、停止防作弊快捷键/进程扫描、退出 kiosk、允许网络访问所有 HTTP(S) 地址，并可打开开发工具。用户名为 root 的普通账号不能开启。切换账号或验签失败立即取消调试；前端无法请求任意签名或自行声明 root。调试不豁免服务端版本、令牌、提交证明及日志要求。
 
-Windows：普通考试用户握手后按配置应用系统防火墙规则，保存原出站策略和本地允许规则，退出/异常重启恢复。独立提升权限的看守进程会在客户端被强杀后恢复策略。恢复失败会保留状态；可用管理员终端运行随包 `scripts/restore-network.bat`，默认读取 `%APPDATA%\HydroProctorClient\network-state.json`。不会重置整机防火墙、清空代理或禁用所有网卡。网络权限提升仅在需要修改防火墙时请求，不强制客户端全程以管理员身份运行。
+Windows：普通考试用户握手后按配置应用系统防火墙规则，保存原出站策略和本地允许规则，退出/异常重启恢复。独立提升权限的看守进程会在客户端被强杀后恢复策略。恢复失败会保留状态；可用管理员终端运行随包 `scripts/restore-network.bat`，默认读取 `%APPDATA%\HydroNextProctorClient\network-state.json`。不会重置整机防火墙、清空代理或禁用所有网卡。网络权限提升仅在需要修改防火墙时请求，不强制客户端全程以管理员身份运行。
 
 macOS：支持应用内精确 origin 白名单、全屏、失焦、多屏、进程检测和加密日志。**本版本没有系统级 macOS 网络过滤器**，其它应用的网络不能因此被阻断；需要另行实现有相应签名与授权的原生 Network Extension。Windows 的 IP/端口规则也不能证明其它应用绝对无法通过共享 CDN、DNS、代理、GPO 或管理员操作访问外网；日志与服务端认证都不能视为不可绕过的设备证明。
 
@@ -96,7 +96,7 @@ macOS：支持应用内精确 origin 白名单、全屏、失焦、多屏、进�
 
 ## 日志恢复与更新
 
-用户数据目录名固定为 `HydroProctorClient`。`journals/<上下文摘要>/journal.enc` 为逐条 AES-GCM 加密记录，附带序号、单调时间和摘要链。`state.json` 仅保留归属、阶段和重试元数据，`secrets/*.bin` 是 OS 保护的密钥，`final.hplog` 使用独立 RSA/AES 封装供 OJ 验证和管理员离线解密。日志不包含代码正文、令牌、私钥或完整请求证明。断电时损坏尾部另行保留并记录恢复事件；中段损坏拒绝续写，不重建空日志冒充完整。
+用户数据目录名固定为 `HydroNextProctorClient`。`journals/<上下文摘要>/journal.enc` 为逐条 AES-GCM 加密记录，附带序号、单调时间和摘要链。`state.json` 仅保留归属、阶段和重试元数据，`secrets/*.bin` 是 OS 保护的密钥，`final.hplog` 使用独立 RSA/AES 封装供 OJ 验证和管理员离线解密。日志不包含代码正文、令牌、私钥或完整请求证明。断电时损坏尾部另行保留并记录恢复事件；中段损坏拒绝续写，不重建空日志冒充完整。
 
 尚未结束的日志重启后自动续写，记录异常退出及客户端重启，只有 OS boot 标识改变才另记系统重启。已结束文件保持不变；上传响应丢失时通过服务端 SHA-256 回执确认。版本/密钥错误暂停该版本的补传，升级客户端后允许重新尝试；管理员修复策略后可点击“补传日志”手动重试。成功上传的加密证据目前保留在本机，便于管理员删除服务端日志后恢复；管理员应按考试留存期限安排本机数据清理。
 

@@ -27,3 +27,4 @@ app.asar
 *.zip
 .env.*
 config/build.local.json
+config/pem
