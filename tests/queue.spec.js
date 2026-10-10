@@ -233,3 +233,27 @@ test('expired signed contexts and forced checks contact the server instead of ex
   assert.equal(f.requests.filter((request) => request.url.endsWith('/proctor/identity')).length, 3);
   assert.equal(f.requests.filter((request) => request.operation === 'handshake').length, 1);
 });
+
+
+test('pause preserves the open server attempt and encrypted journal, restart resumes it before final upload', async (t) => {
+  const f = fixture(t), first = new ProctorController(f.options);
+  await first.sync(url);
+  const record = first.current, attemptId = record.auth.attemptId;
+  record.journal.append('BEFORE_PAUSE');
+  await first.pause(); first.shutdown();
+  assert.equal(f.attempts, 0); assert.equal(f.requests.some((item) => item.operation === 'finish'), false);
+  assert.equal(record.journal.state.phase, 'open'); assert.equal(record.journal.state.clean, true);
+  assert.equal(fs.existsSync(path.join(record.journal.directory, 'final.hplog')), false);
+  const restarted = new ProctorController(f.options);
+  const request = { action: 'contest_view', method: 'GET', path: '/d/exam/contest/1234567890abcdef12345678/problems',
+    payload: { tid: '1234567890abcdef12345678' } };
+  const headers = await restarted.headers(url, request);
+  assert.equal((await f.options.session.fetch(`${url}/problems`, { method: 'GET', headers })).status, 200);
+  assert.equal(restarted.current.auth.attemptId, attemptId);
+  assert.equal(restarted.current.journal.directory, record.journal.directory);
+  restarted.current.journal.append('AFTER_PAUSE');
+  assert.equal(await restarted.finish(), true); assert.equal(f.attempts, 1);
+  const records = decryptLog(path.join(record.journal.directory, 'final.hplog'));
+  for (const type of ['BEFORE_PAUSE', 'CLIENT_PAUSED', 'CLIENT_SHUTDOWN', 'CLIENT_RESTART', 'AFTER_PAUSE']) assert.ok(records.some((item) => item.type === type));
+  assert.equal(records.some((item) => item.type === 'ABNORMAL_EXIT_DETECTED'), false);
+});

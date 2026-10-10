@@ -38,6 +38,7 @@ function buildEnvironment(filename, env) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Build config must be a JSON object');
   const fields = {
     keyId: ['PROCTOR_KEY_ID', 'string'], version: ['PROCTOR_CLIENT_VERSION', 'string'],
+    buildVersion: ['PROCTOR_CLIENT_BUILD_VERSION', 'string'], updatePublicKeyFile: ['PROCTOR_UPDATE_PUBLIC_KEY', 'file'],
     authPublicKeyFile: ['PROCTOR_AUTH_PUBLIC_KEY', 'file'], logPublicKeyFile: ['PROCTOR_LOG_PUBLIC_KEY', 'file'],
     targetUrl: ['PROCTOR_TARGET_URL', 'string'], versionUrl: ['PROCTOR_VERSION_URL', 'string'],
     allowedOrigins: ['PROCTOR_ALLOWED_ORIGINS', 'origins'], updateOrigins: ['PROCTOR_UPDATE_ORIGINS', 'origins'],
@@ -73,14 +74,14 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
   const projectDir = dependencies.root || root;
   const nativePlatform = options.win ? 'win32' : options.mac ? 'darwin' : process.platform;
   if (nativePlatform === 'win32' && options.arm64) throw new Error('Windows packages currently support x64 only');
-  const { version } = prepare(env, projectDir);
+  const { version, buildVersion } = prepare(env, projectDir);
   if (options.check) { console.log(`Validated proctor build ${version}`); return; }
   const { build, Platform, Arch } = require('electron-builder');
   const platform = options.win ? Platform.WINDOWS : options.mac ? Platform.MAC : Platform.current();
   const arch = options.arm64 ? Arch.arm64 : Arch.x64;
   const target = options.dir ? 'dir' : options.portable ? 'portable' : undefined;
   await (dependencies.build || build)({ projectDir, targets: platform.createTarget(target, arch), publish: 'never',
-    config: { extraMetadata: { version }, beforePack: async (context) => {
+    config: { extraMetadata: { version, buildVersion }, beforePack: async (context) => {
       const prepared = prepare(env, projectDir);
       if (context.packager.appInfo.version !== prepared.version) throw new Error('Build metadata does not match configured client version');
     } } });

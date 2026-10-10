@@ -4,7 +4,7 @@
   "packageManager": "npm@12.0.2",
   "workspaces": [],
   "description": "Hydro 监考客户端：设备认证、加密日志与跨平台考试环境",
-  "main": "app/main/index.js",
+  "main": "app/main/bootstrap.js",
   "scripts": {
     "build": "node scripts/build.js",
     "build:docker": "node scripts/build-docker.js",
@@ -12,7 +12,8 @@
     "pack": "node scripts/build.js --dir",
     "dist": "node scripts/build.js",
     "release:hot": "node scripts/build-hot-update.js",
-    "test": "node --test tests/*.spec.js"
+    "test": "node --test tests/*.spec.js",
+    "keys:update": "node scripts/update-keys.js"
   },
   "keywords": [
     "proctor",
@@ -88,5 +89,6 @@
     "portable": {
       "artifactName": "HydroProctor-${version}-win-${arch}-portable.${ext}"
     }
-  }
+  },
+  "buildVersion": "2026101001"
 }

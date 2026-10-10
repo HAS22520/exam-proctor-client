@@ -8,7 +8,7 @@ const { trust, auth, workspace } = require('./helpers');
 function fixture(t) {
   const root = workspace(t);
   fs.mkdirSync(path.join(root, 'config'));
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.0.0' }));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.0.0', buildVersion: '2026101001' }));
   fs.writeFileSync(path.join(root, 'config/exam-config.json'), JSON.stringify({
     exam: { targetUrl: 'https://oj.example.com', allowedOrigins: ['https://oj.example.com'] },
     updater: { enabled: true, versionUrl: 'https://oj.example.com/version.json', allowedOrigins: ['https://oj.example.com'] },

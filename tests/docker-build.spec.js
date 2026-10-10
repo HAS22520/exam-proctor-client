@@ -12,7 +12,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(root, 'config/server-private.pem'), 'PRIVATE KEY');
   fs.mkdirSync(path.join(root, 'node_modules/parent-only'), { recursive: true });
   return { root, env: { PROCTOR_AUTH_PUBLIC_KEY: trust.authPublicKey, PROCTOR_LOG_PUBLIC_KEY: trust.logPublicKey,
-    PROCTOR_KEY_ID: trust.keyId, PROCTOR_CLIENT_VERSION: '2.3.4', PROCTOR_TARGET_URL: 'https://oj.example.com',
+    PROCTOR_KEY_ID: trust.keyId, PROCTOR_CLIENT_VERSION: '2.3.4', PROCTOR_CLIENT_BUILD_VERSION: '2026101007', PROCTOR_TARGET_URL: 'https://oj.example.com',
     PROCTOR_VERSION_URL: 'https://oj.example.com/version.json', PROCTOR_ALLOWED_ORIGINS: '["https://oj.example.com"]',
     PROCTOR_UPDATE_ORIGINS: '["https://oj.example.com"]', PROCTOR_ALLOW_ROOT_DEBUG: 'true' } };
 }
@@ -34,6 +34,7 @@ test('Docker stages only build sources, injects public configuration and isolate
     assert.equal(fs.existsSync(path.join(stage, 'app/generated')), false);
     assert.equal(options.env.PROCTOR_AUTH_PUBLIC_KEY, trust.authPublicKey);
     assert.equal(options.env.PROCTOR_CLIENT_VERSION, '2.3.4');
+    assert.equal(options.env.PROCTOR_CLIENT_BUILD_VERSION, '2026101007');
     assert.equal(options.env.PROCTOR_ALLOW_ROOT_DEBUG, 'true');
     assert.ok(args.includes('PROCTOR_AUTH_PUBLIC_KEY')); assert.ok(!args.some((arg) => arg.includes('BEGIN PUBLIC KEY')));
     assert.ok(!args.some((arg) => arg.includes('/home/magneto/code/Hydro/node_modules')));

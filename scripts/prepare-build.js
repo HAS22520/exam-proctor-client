@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { validateConfig } = require('../app/main/config-policy');
 const { atomicWrite } = require('../app/main/device-store');
+const { buildVersion: validateBuildVersion } = require('../app/main/build-version');
 const root = path.resolve(__dirname, '..');
 function prepare(env = process.env, buildRoot = root) {
   const raw = JSON.parse(fs.readFileSync(path.join(buildRoot, 'config/exam-config.json'), 'utf8'));
@@ -24,7 +25,9 @@ function prepare(env = process.env, buildRoot = root) {
   const pkg = JSON.parse(fs.readFileSync(path.join(buildRoot, 'package.json'), 'utf8'));
   const version = env.PROCTOR_CLIENT_VERSION || pkg.version;
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('PROCTOR_CLIENT_VERSION must be x.y.z');
-  return { config, trust: normalizedTrust, version };
+  const buildVersion = validateBuildVersion(env.PROCTOR_CLIENT_BUILD_VERSION || pkg.buildVersion);
+  atomicWrite(path.join(generated, 'build.json'), JSON.stringify({ version, buildVersion }));
+  return { config, trust: normalizedTrust, version, buildVersion };
 }
 if (require.main === module) {
   try { const result = prepare(); console.log(`Validated proctor build ${result.version}`); }

@@ -13,12 +13,15 @@ const ProctorRequestGuard = require('./proctor-request-guard');
 const { Diagnostics } = require('./diagnostics');
 const DebugConsole = require('./debug-console');
 const { resetLogin, observeLogin } = require('./login-session');
+const { runtime } = require('./runtime');
+const { hasUnfinishedJournals } = require('./update-cache');
+const running = runtime(app);
 const diagnostics = new Diagnostics();
 const trace = diagnostics.log.bind(diagnostics);
 const debugConsole = new DebugConsole(BrowserWindow);
 
 app.setName('HydroProctorClient');
-let window, controller, network, antiCheat, firewall, config, trust, uploadWindow;
+let window, controller, network, antiCheat, firewall, config, trust, uploadWindow, updates;
 let quitting = false, exiting = false, root = false, debug = false, timer, trustedUrl;
 let latestStatus = { phase: 'idle', message: '正在连接 OJ' };
 let exitReady = false;
@@ -28,7 +31,7 @@ let lastTick = Date.now();
 diagnostics.log('info', 'startup.process', { platform: process.platform, arch: process.arch });
 process.on('uncaughtExceptionMonitor', (error) => diagnostics.error('process.uncaught-exception', error));
 const directory = app.getPath('userData');
-if (!app.requestSingleInstanceLock()) app.exit(0);
+if (!running.singleInstanceLocked && !app.requestSingleInstanceLock()) app.exit(0);
 app.on('second-instance', () => { if (window) { window.restore(); window.focus(); } });
 
 function loadConfig() {
@@ -101,7 +104,7 @@ function uploadContext(event) {
 }
 
 function publishStatus(status) {
-  latestStatus = { ...status, debug, root, exitReady, networkMode: process.platform === 'win32' ? 'windows-firewall' : 'application-allowlist' };
+  latestStatus = { ...status, update: updates?.snapshot(), debug, root, exitReady, networkMode: process.platform === 'win32' ? 'windows-firewall' : 'application-allowlist' };
   if (uploadWindow && !uploadWindow.isDestroyed()) uploadWindow.webContents.send('exam:upload-status', latestStatus);
   if (status.upload) {
     const { phase, percent, sent, total } = status.upload;
@@ -152,12 +155,26 @@ async function requestExit() {
   if (exiting) return;
   exiting = true;
   const { response } = await dialog.showMessageBox(window, { type: 'question', title: '结束监考',
-    message: '结束监考并上传日志？', detail: '此操作不会代你提交代码。上传成功后成绩才能有效；断网时日志会保存并在下次登录原账号后补传。',
-    buttons: ['继续考试', '结束监考并退出'], defaultId: 0, cancelId: 0 });
-  if (response !== 1) { exiting = false; return; }
+    message: '退出客户端还是结束监考？', detail: '此操作不会代你提交代码。保留日志退出可在下次登录原账号后续写、继续做题，不会结束监考。上传成功后成绩才能有效；选择结束监考后无法继续本场比赛，断网时可补传。',
+    buttons: ['继续考试', '保留日志退出', '上传日志并结束监考'], defaultId: 0, cancelId: 0 });
+  if (![1, 2].includes(response)) { exiting = false; return; }
   clearInterval(timer);
   antiCheat.stop();
   window.setKiosk(false); window.setAlwaysOnTop(false);
+  if (response === 1) {
+    try {
+      await diagnostics.span('exit.pause', () => controller.pause());
+      try { await diagnostics.span('exit.restore-network', () => firewall.unlock()); }
+      catch (error) { diagnostics.error('exit.network-recovery-deferred', error);
+        await dialog.showMessageBox(window, { type: 'warning', message: '日志已保留，系统网络尚未确认恢复',
+          detail: '守护进程会继续恢复。必要时请以管理员身份运行随包 restore-network.bat；保留客户端数据。' }); }
+      completeExit();
+    } catch (error) {
+      diagnostics.error('exit.pause-failed', error); exiting = false; controller.finishing = false;
+      timer = setInterval(() => syncLogin(true), 15000); await syncLogin();
+    }
+    return;
+  }
   let restored = false;
   let networkWarning = '';
   try {
@@ -194,7 +211,7 @@ async function requestExit() {
 app.whenReady().then(async () => {
   config = loadConfig();
   if (config.debug.allowRoot) await diagnostics.enable(directory);
-  trace('info', 'startup.config-loaded', { version: app.getVersion(), debug: config.debug.allowRoot });
+  trace('info', 'startup.config-loaded', { ...running.identity, source: running.source, debug: config.debug.allowRoot });
   const logger = { logViolation: (item) => {
     trace('warn', 'guard.event', { source: item.source, type: item.type, url: item.target });
     controller?.logViolation(item);
@@ -206,22 +223,9 @@ app.whenReady().then(async () => {
   recoveryReady = true;
   const store = new ProtectedStore(path.join(directory, 'secrets'), safeStorage);
   store.check();
-  const updates = new Updater(config, { directory, trust, version: app.getVersion() });
+  updates = new Updater(config, { directory, trust, ...running.identity, source: running.source, failure: running.failure, cache: running.cache,
+    onStatus: (update) => { latestStatus.update = update; trace('info', 'update.status', { phase: update.phase, message: update.message }); } });
   const journals = path.join(directory, 'journals');
-  const hasExam = fs.existsSync(journals) && fs.readdirSync(journals).some((entry) => {
-    try { return ['open', 'closing', 'pending-upload'].includes(JSON.parse(fs.readFileSync(path.join(journals, entry, 'state.json'))).phase); }
-    catch { return true; }
-  });
-  if (!hasExam && config.updater.enabled) {
-    try { await diagnostics.span('startup.update-check', () => updates.check()); } catch { latestStatus.message = '更新检查失败，将由 OJ 握手检查客户端版本'; }
-    config = loadConfig();
-    if (updates.manifest && (updates.installerUrl || updates.minimumBlocked)) {
-      const choice = await dialog.showMessageBox({ message: updates.minimumBlocked ? '客户端版本过低，需要更新' : '发现新版监考客户端',
-        detail: '请安装与当前系统和架构匹配的完整安装包。当前服务器清单不支持签名 ASAR 自动替换。',
-        buttons: updates.installerUrl ? ['稍后', '打开安装包下载地址'] : ['知道了'] });
-      if (choice.response === 1) await shell.openExternal(updates.installerUrl);
-    }
-  }
   window = new BrowserWindow({ width: 1280, height: 800, title: config.exam.title, autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, '../preload/preload.js'), partition: 'persist:hydro-exam',
       nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: true, webSecurity: true } });
@@ -230,7 +234,7 @@ app.whenReady().then(async () => {
   network.install(window);
   antiCheat = new AntiCheatGuard(window, config, logger);
   controller = new ProctorController({ config, directory: journals, protectedStore: store,
-    session: window.webContents.session, version: app.getVersion(), onIdentity: applyIdentity,
+    session: window.webContents.session, version: running.identity.version, onIdentity: applyIdentity,
     onStatus: publishStatus, trace });
   let loginTimer;
   observeLogin(window.webContents.session, config.exam.allowedOrigins, () => {
@@ -240,7 +244,27 @@ app.whenReady().then(async () => {
     clearTimeout(loginTimer);
     loginTimer = setTimeout(() => syncLogin(true), 200);
   });
-  ipcMain.handle('exam:status', (event) => { ipcContext(event); return { ...latestStatus, debug, root, allowRootDebug: config.debug.allowRoot }; });
+  ipcMain.handle('exam:status', (event) => { ipcContext(event); return { ...latestStatus, update: updates.snapshot(), debug, root, allowRootDebug: config.debug.allowRoot }; });
+  ipcMain.handle('exam:update-check', async (event) => {
+    ipcContext(event); if (!config.updater.enabled) throw new Error('更新功能未启用');
+    await updates.check({ force: true }); return updates.snapshot();
+  });
+  ipcMain.handle('exam:update-install', async (event) => {
+    ipcContext(event); if (!config.updater.enabled) throw new Error('更新功能未启用');
+    if (exiting || hasUnfinishedJournals(directory)) throw new Error('请先上传日志并结束所有监考，再更新客户端');
+    await updates.stage();
+    const choice = await dialog.showMessageBox(window, { type: 'question', message: 'ASAR 更新已通过验证',
+      detail: '现在重启以应用更新？重启后需要重新登录。', buttons: ['稍后重启', '立即重启'], defaultId: 0, cancelId: 0 });
+    if (choice.response === 1) {
+      if (exiting || hasUnfinishedJournals(directory)) throw new Error('监考已开始，更新将在结束监考后重启生效');
+      await firewall.unlock(); controller.shutdown(); quitting = true; app.relaunch(); app.quit();
+    }
+    return updates.snapshot();
+  });
+  ipcMain.handle('exam:update-download', async (event) => {
+    ipcContext(event); if (!config.updater.enabled || !updates.installerUrl) throw new Error('清单没有当前平台的安装包地址');
+    await shell.openExternal(updates.installerUrl);
+  });
   ipcMain.handle('exam:proctor-headers', async (event, request) => {
     const url = ipcContext(event);
     if (updates.minimumBlocked) throw new Error('客户端低于更新清单指定的最低版本，请安装新版');
@@ -303,6 +327,11 @@ app.whenReady().then(async () => {
   window.on('close', (event) => { if (!quitting) { event.preventDefault(); requestExit(); } });
   await diagnostics.span('startup.load-exam', () => window.loadURL(config.exam.targetUrl));
   trace('info', 'startup.ready');
+  running.markReady();
+  if (running.failure) trace('warn', 'update.rollback', running.failure);
+  // Fetching a manifest must never delay login/contest authentication.
+  if (config.updater.enabled) setTimeout(() => diagnostics.span('startup.update-check', () => updates.check())
+    .catch((error) => diagnostics.error('update.check-failed', error)), 0);
   lastTick = Date.now();
   setInterval(() => {
     const now = Date.now(), delay = now - lastTick - 1000; lastTick = now;

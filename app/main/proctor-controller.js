@@ -303,6 +303,21 @@ class ProctorController {
     }
   }
 
+  async pause() {
+    if (this.finishing) throw new Error('日志仍在处理中');
+    this.finishing = true;
+    // Stop new proofs first, allow already queued authentication/submissions to settle.
+    await this.proofPending.catch(() => {});
+    if (this.syncPending) await this.syncPending.catch(() => {});
+    const deadline = Date.now() + 30000;
+    while (this.inFlight.size && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    for (const record of this.records.values()) {
+      if (record.journal?.state.phase === 'open') record.journal.append('CLIENT_PAUSED', { reason: 'exit-without-upload' });
+    }
+    // Keep open attempts open: no finish RPC, sealing, upload or new attempt ID.
+    this.status('日志已保留，重新登录原账号后可继续监考；上传成功才算结束');
+  }
+
   async finish(beforeFinish = async () => {}) {
     if (this.finishing) return false;
     this.finishing = true;

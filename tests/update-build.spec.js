@@ -10,11 +10,11 @@ const { buildArchive, run: buildHotUpdate } = require('../scripts/build-hot-upda
 const { trust, workspace } = require('./helpers');
 const base = { exam: { targetUrl: 'https://oj.example.com' }, updater: { versionUrl: 'https://oj.example.com/version.json', enabled: true }, debug: { allowRoot: false } };
 const environment = { PROCTOR_AUTH_PUBLIC_KEY: trust.authPublicKey, PROCTOR_LOG_PUBLIC_KEY: trust.logPublicKey, PROCTOR_KEY_ID: trust.keyId,
-  PROCTOR_ALLOWED_ORIGINS: '["https://oj.example.com"]', PROCTOR_UPDATE_ORIGINS: '["https://oj.example.com"]', PROCTOR_CLIENT_VERSION: '1.2.3' };
+  PROCTOR_ALLOWED_ORIGINS: '["https://oj.example.com"]', PROCTOR_UPDATE_ORIGINS: '["https://oj.example.com"]', PROCTOR_CLIENT_VERSION: '1.2.3', PROCTOR_CLIENT_BUILD_VERSION: '2026101001' };
 test('build fails without public trust, accepts dynamic version/origins, archive preserves root package and entry', async (t) => {
   const root = workspace(t); fs.mkdirSync(path.join(root, 'config')); fs.mkdirSync(path.join(root, 'app/main'), { recursive: true });
   fs.writeFileSync(path.join(root, 'config/exam-config.json'), JSON.stringify(base));
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', main: 'app/main/index.js' }));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', buildVersion: '2026101001', main: 'app/main/index.js' }));
   fs.writeFileSync(path.join(root, 'app/main/index.js'), 'module.exports = 1;'); fs.writeFileSync(path.join(root, '.env'), 'PRIVATE_BUILD_SECRET');
   assert.throws(() => prepare({}, root));
   for (const field of ['PROCTOR_AUTH_PUBLIC_KEY', 'PROCTOR_LOG_PUBLIC_KEY', 'PROCTOR_KEY_ID']) assert.throws(() => prepare({ ...environment, [field]: '' }, root));
@@ -41,7 +41,7 @@ test('ASAR CLI reads relative public keys from JSON and uses environment overrid
   const root = workspace(t), configDirectory = path.join(root, 'config');
   fs.mkdirSync(configDirectory); fs.mkdirSync(path.join(root, 'app/main'), { recursive: true });
   fs.writeFileSync(path.join(configDirectory, 'exam-config.json'), JSON.stringify(base));
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', main: 'app/main/index.js' }));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', buildVersion: '2026101001', main: 'app/main/index.js' }));
   fs.writeFileSync(path.join(root, 'app/main/index.js'), 'module.exports = 1;');
   fs.writeFileSync(path.join(configDirectory, 'auth.pem'), trust.authPublicKey);
   fs.writeFileSync(path.join(configDirectory, 'log.pem'), trust.logPublicKey);
@@ -53,8 +53,8 @@ test('ASAR CLI reads relative public keys from JSON and uses environment overrid
   const asar = require('@electron/asar');
   assert.equal(JSON.parse(asar.extractFile(result.filename, 'package.json')).version, '1.2.4');
   assert.equal(JSON.parse(asar.extractFile(result.filename, 'app/generated/config.json')).debug.allowRoot, true);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'updates/app-1.2.4.json'))),
-    { version: result.version, size: result.size, sha256: result.sha256 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'updates/app-1.2.4-2026101001.json'))),
+    { version: result.version, buildVersion: '2026101001', signed: false, size: result.size, sha256: result.sha256 });
   assert.ok(!asar.listPackage(result.filename).some((file) => /build\.local\.json|\.pem$/.test(file)));
   await assert.rejects(buildHotUpdate(['--win'], { env: {}, root }), /Unsupported ASAR build option/);
   await assert.rejects(buildHotUpdate(['--config'], { env: {}, root }), /requires exactly one file/);
@@ -75,7 +75,7 @@ test('unsigned ASAR never executes; manifest minimum version blocks proofs and r
   const directory = workspace(t), config = validateConfig(base, trust);
   const manifest = { version: '1.2.3', minClientVersion: '1.2.0', hotUpdate: { version: '1.2.3', asarUrl: 'https://evil.example/payload' }, config: { url: 'https://oj.example.com/config.json' } };
   const updater = new Updater(config, { directory, trust, version: '1.0.0', fetch: async (url) => new Response(JSON.stringify(String(url).endsWith('config.json') ? { ...base, debug: { allowRoot: true } } : manifest)) });
-  await updater.check(); assert.ok(updater.minimumBlocked); assert.ok(!updater.verifyHotUpdate(manifest.hotUpdate));
+  await updater.check(); assert.ok(updater.minimumBlocked); assert.equal(updater.snapshot().canHotUpdate, false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'config/exam-config.json'))).debug.allowRoot, false);
   assert.ok(!fs.existsSync(path.join(directory, 'app.asar')));
 });

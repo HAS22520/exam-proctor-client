@@ -8,8 +8,9 @@ const { pathToFileURL } = require('node:url');
 const { workspace } = require('./helpers');
 
 async function fixture(t, options = {}) {
+  const exitChoice = options.exitChoice ?? 2;
   const directory = workspace(t), handlers = new Map(), windows = [], choices = [];
-  let quitCount = 0, shutdownCount = 0, finishCalled, releaseFinish;
+  let quitCount = 0, shutdownCount = 0, finishCalled, releaseFinish, pauseCount = 0;
   let recoverCount = 0, exitCount = 0, controller, antiCheatStarts = 0, lockCalled, releaseLock;
   const errors = [], exitHooks = [], startupSteps = [], requestEvents = new Map();
   let ready;
@@ -45,7 +46,7 @@ async function fixture(t, options = {}) {
     setAlwaysOnTop() {}
   }
   const config = { exam: { targetUrl: 'https://oj.example.com/d/exam/', allowedOrigins: ['https://oj.example.com'] },
-    updater: { enabled: false }, debug: { allowRoot: !!options.debug }, globalFirewallLock: { enabled: !!options.delayLock } };
+    updater: { enabled: !!options.updateGate }, debug: { allowRoot: !!options.debug }, globalFirewallLock: { enabled: !!options.delayLock } };
   class Controller {
     constructor(options) { controller = this; this.options = options; this.records = new Map(); this.inFlight = new Set(); this.finishing = false; }
     logViolation() {}
@@ -55,17 +56,19 @@ async function fixture(t, options = {}) {
       this.options.onStatus({ finishing: true, upload: { phase: 'uploading', percent: 50, sent: 100, total: 200 } });
       finishCalled(); return finished;
     }
+    async pause() { pauseCount++; this.finishing = true; }
     shutdown() { shutdownCount++; }
   }
   class Guard {
     recover() { recoverCount++; if (options.recoveryError) throw options.recoveryError; }
-    check() {} install() {} start() { antiCheatStarts++; } stop() {}
+    snapshot() { return { version: '1.0.0', buildVersion: '2026101001' }; }
+    check() { return options.updateGate; } install() {} start() { antiCheatStarts++; } stop() {}
     lock() { lockCalled(); return locked; }
     unlock() { if (options.exitRecoveryError) throw options.exitRecoveryError; this.recover(); }
   }
   const mocks = {
     electron: { app, BrowserWindow, ipcMain: { handle: (name, callback) => handlers.set(name, callback) },
-      dialog: { showMessageBox: async (owner, options) => { choices.push(options); return { response: 1 }; }, showErrorBox: (title, message) => {
+      dialog: { showMessageBox: async (owner, options) => { choices.push(options); return { response: options.buttons?.length === 3 ? exitChoice : 1 }; }, showErrorBox: (title, message) => {
         if (!options.recoveryError) assert.fail('startup error');
         errors.push({ title, message });
       } } },
@@ -74,6 +77,8 @@ async function fixture(t, options = {}) {
     './config-policy': { validateConfig: (value) => value }, './device-store': { ProtectedStore: Guard, prepareBootIdentity: async () => 'boot-id' },
     './proctor-controller': { ProctorController: Controller }, './network-guard': Guard, './anti-cheat': Guard,
     './firewall-guard': Guard, './updater': Guard, './proctor-request-guard': Guard,
+    './runtime': { runtime: () => ({ identity: { version: '1.0.0', buildVersion: '2026101001' }, markReady: () => {}, source: 'installed' }) },
+    './update-cache': require('../app/main/update-cache'),
     './login-session': require('../app/main/login-session'),
     './diagnostics': require('../app/main/diagnostics'), './debug-console': require('../app/main/debug-console'),
   };
@@ -85,7 +90,7 @@ async function fixture(t, options = {}) {
   const event = (owner) => ({ sender: owner.webContents, senderFrame: owner.webContents.mainFrame });
   return { handlers, windows, choices, controller, errors, exitHooks, startupSteps, requestEvents, started, releaseFinish, locking, releaseLock, event,
     get antiCheatStarts() { return antiCheatStarts; }, get quitCount() { return quitCount; },
-    get shutdownCount() { return shutdownCount; }, get recoverCount() { return recoverCount; }, get exitCount() { return exitCount; } };
+    get pauseCount() { return pauseCount; }, get shutdownCount() { return shutdownCount; }, get recoverCount() { return recoverCount; }, get exitCount() { return exitCount; } };
 }
 
 test('ending requires explicit log reminder and only the native main frame can exit after receipt', async (t) => {
@@ -203,4 +208,26 @@ test('a completed contest does not relock the firewall while checking its signed
   f.controller.current = { login, completed: true };
   await f.controller.options.onIdentity(login);
   assert.equal(f.antiCheatStarts, 0); assert.equal(f.windows[0].kiosk, false);
+});
+
+
+test('exit without upload pauses, restores networking and never creates an upload window', async (t) => {
+  const f = await fixture(t, { exitChoice: 1 });
+  await f.handlers.get('exam:request-quit')(f.event(f.windows[0]));
+  assert.equal(f.pauseCount, 1); assert.equal(f.quitCount, 1); assert.equal(f.shutdownCount, 1);
+  assert.equal(f.recoverCount, 2); assert.equal(f.windows.length, 1);
+  assert.deepEqual(Array.from(f.choices[0].buttons), ['继续考试', '保留日志退出', '上传日志并结束监考']);
+  assert.match(f.choices[0].detail, /续写、继续做题/);
+});
+
+
+test('a slow update server cannot delay the exam window or authentication IPC initialization', async (t) => {
+  let release;
+  const updateGate = new Promise((resolve) => { release = resolve; });
+  const f = await fixture(t, { updateGate });
+  assert.equal(f.windows.length, 1); assert.ok(f.handlers.has('exam:proctor-headers'));
+  assert.ok(f.startupSteps.includes('load-page'));
+  const status = f.handlers.get('exam:status')(f.event(f.windows[0]));
+  assert.equal(status.update.version, '1.0.0'); assert.equal(status.update.buildVersion, '2026101001');
+  release();
 });

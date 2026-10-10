@@ -15,6 +15,10 @@ on:
         description: Client version (must match OJ proctor settings)
         required: true
         default: '1.0.0'
+      build_version:
+        description: Increasing YYYYMMDDNN build identifier (10 digits)
+        required: true
+        default: '2026101001'
       target_url:
         description: OJ start URL
         required: true
@@ -34,6 +38,8 @@ on:
 permissions:
   contents: read
 env:
+  PROCTOR_CLIENT_BUILD_VERSION: ${{ inputs.build_version }}
+  PROCTOR_UPDATE_PUBLIC_KEY: ${{ secrets.PROCTOR_UPDATE_PUBLIC_KEY }}
   PROCTOR_CLIENT_VERSION: ${{ inputs.version }}
   PROCTOR_AUTH_PUBLIC_KEY: ${{ secrets.PROCTOR_AUTH_PUBLIC_KEY }}
   PROCTOR_LOG_PUBLIC_KEY: ${{ secrets.PROCTOR_LOG_PUBLIC_KEY }}
@@ -83,7 +89,7 @@ jobs:
       - run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish=never
       - uses: actions/upload-artifact@v4
         with:
-          name: HydroProctor-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          name: HydroProctor-${{ inputs.version }}-${{ inputs.build_version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             dist/*.exe
             dist/*.dmg
@@ -92,6 +98,9 @@ jobs:
   asar:
     if: ${{ inputs.build_type != 'installers' }}
     runs-on: ubuntu-latest
+    env:
+      PROCTOR_REQUIRE_SIGNED_UPDATE: 'true'
+      PROCTOR_UPDATE_PRIVATE_KEY: ${{ secrets.PROCTOR_UPDATE_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -103,7 +112,7 @@ jobs:
       - run: npm run release:hot
       - uses: actions/upload-artifact@v4
         with:
-          name: HydroProctor-${{ inputs.version }}-asar
+          name: HydroProctor-${{ inputs.version }}-${{ inputs.build_version }}-asar
           path: |
             updates/*.asar
             updates/*.json

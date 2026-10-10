@@ -59,7 +59,7 @@ function run(args = process.argv.slice(2), dependencies = {}) {
     for (const name of ['.docker-cache', 'dist']) fs.mkdirSync(path.join(projectDir, name), { recursive: true });
     const publicEnv = { PROCTOR_KEY_ID: result.trust.keyId, PROCTOR_AUTH_PUBLIC_KEY: result.trust.authPublicKey,
       PROCTOR_LOG_PUBLIC_KEY: result.trust.logPublicKey, PROCTOR_UPDATE_PUBLIC_KEY: result.trust.updatePublicKey || '',
-      PROCTOR_CLIENT_VERSION: result.version, PROCTOR_ALLOWED_ORIGINS: JSON.stringify(result.trust.allowedOrigins),
+      PROCTOR_CLIENT_VERSION: result.version, PROCTOR_CLIENT_BUILD_VERSION: result.buildVersion, PROCTOR_ALLOWED_ORIGINS: JSON.stringify(result.trust.allowedOrigins),
       PROCTOR_UPDATE_ORIGINS: JSON.stringify(result.trust.updateOrigins), PROCTOR_TARGET_URL: result.config.exam.targetUrl,
       PROCTOR_VERSION_URL: result.config.updater.versionUrl || '', PROCTOR_ALLOW_ROOT_DEBUG: String(result.config.debug.allowRoot),
       ...(env.PROCTOR_BUILDER_IMAGE ? { PROCTOR_BUILDER_IMAGE: env.PROCTOR_BUILDER_IMAGE } : {}) };
