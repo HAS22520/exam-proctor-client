@@ -30,3 +30,4 @@ app.asar
 *.exe
 *.zip
 .env.*
+config/build.local.json

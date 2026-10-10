@@ -18,6 +18,24 @@ Electron 客户端，连接 Hydro 的 `hydro-proctor/1` 协议。支持 Windows 
 
 需要 Node.js 22.12 或更新版本。先 `npm ci`，运行 `npm test`。本地配置位于 `config/exam-config.json`，远端地址使用完整 origin（协议、主机、端口），不能只填写域名。
 
+推荐使用跨平台构建脚本 `scripts/build.js`：复制 `config/build.example.json` 为 `config/build.local.json`，填写后台的 keyId、版本、两组公钥文件路径、考试地址、允许访问的 origin 和更新地址。公钥文件路径相对于这份 JSON 文件解析，支持绝对路径；Windows 路径可写成 `C:/proctor-keys/auth-public.pem`。本地配置文件已被 Git 忽略。
+
+在 `exam-proctor-client` 目录运行（Bash 和 PowerShell 均适用）：
+
+```text
+npm ci
+npm run build -- --config config/build.local.json --check
+
+# 在 Windows 构建机，生成安装版和便携版 EXE：
+npm run build -- --config config/build.local.json --win --x64
+
+# 在 macOS 构建机，分别生成 Intel / Apple Silicon 的 DMG 和 ZIP：
+npm run build -- --config config/build.local.json --mac --x64
+npm run build -- --config config/build.local.json --mac --arm64
+```
+
+输出位于 `dist/`。`--check` 只验证并生成包内配置，不下载打包工具或生成安装包；`--dir` 生成解包目录，`--help` 查看用法。也可从任意工作目录运行 `node /完整路径/exam-proctor-client/scripts/build.js --config /完整路径/build.local.json --win --x64`。`PROCTOR_*` 环境变量优先于 JSON 配置，原有 `npm run dist`、`npm run pack` 和 GitHub Actions 入口继续可用。构建不会自动发布。
+
 以下 Bash 示例引用管理员导出的**公钥**文件；文件应位于仓库外：
 
 ```bash
@@ -50,9 +68,11 @@ PowerShell 设置公钥时使用 `$env:PROCTOR_AUTH_PUBLIC_KEY = Get-Content -Ra
 | `PROCTOR_VERSION_URL` | 覆盖 OJ 更新清单 URL，同时替换备用清单地址 |
 | `PROCTOR_ALLOW_ROOT_DEBUG` | true/false；覆盖 debug.allowRoot，默认关闭 |
 
-HTTPS 必需，只有 localhost 可使用 HTTP。`start`、`pack`、`dist`、`release:hot` 和 electron-builder 的 beforePack 都验证公钥，缺失或类型错误会失败。生成的 `app/generated/` 已被忽略；正式包内有公钥和配置，没有服务端私钥。正式版本从 Electron 安装包元数据读取，不从网页读取。
+HTTPS 必需，只有 localhost 可使用 HTTP。`start`、`build`、`pack`、`dist`、`release:hot` 和 electron-builder 的 beforePack 都验证公钥，缺失或类型错误会失败。生成的 `app/generated/` 已被忽略；正式包内有公钥和配置，没有服务端私钥。正式版本从 Electron 安装包元数据读取，不从网页读取。
 
 `npm start` 用于开发；`npm run pack` 生成解包目录。`npm run release:hot` 使用同样变量生成 `updates/app-<version>.asar` 和大小/哈希元数据，根目录包含正确的 package.json 和 app/main 入口，不自动递增版本、不上传文件、不打包仓库 .env。当前客户端不会自动执行 ASAR，见下方更新限制。
+
+`updates/` 是上述可选热更新命令的产物目录，不是运行所需源码，也不参与正常安装包构建。历史遗留的 `updates/app.asar` 已清理；整目录可删除，需要时 `release:hot` 会重新创建。ASAR 是 Electron 的应用文件归档，并不是考试日志；正式安装包自身也可能含有 `resources/app.asar`，那份属于安装包运行文件，应保留。
 
 ## GitHub Actions
 

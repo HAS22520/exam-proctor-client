@@ -1,0 +1,11 @@
+{
+  "keyId": "替换为后台显示的32位小写十六进制keyId",
+  "version": "1.2.3",
+  "authPublicKeyFile": "../../../proctor-keys/auth-public.pem",
+  "logPublicKeyFile": "../../../proctor-keys/log-public.pem",
+  "targetUrl": "https://oj.example.com/",
+  "allowedOrigins": ["https://oj.example.com"],
+  "updateOrigins": ["https://oj.example.com"],
+  "versionUrl": "https://oj.example.com/client-updates/version.json",
+  "allowRootDebug": false
+}
