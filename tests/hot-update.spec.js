@@ -187,3 +187,13 @@ test('update key helper produces independent signing keys outside the repository
   assert.equal(fs.readFileSync(result.privateFile, 'utf8'), privateKey);
   assert.throws(() => run(['--out-dir', path.resolve(__dirname, '../app/generated')]), /outside/);
 });
+
+
+test('ASAR signing rejects public keys, malformed PEM and RSA before creating release outputs', async (t) => {
+  const f = fixture(t);
+  await assert.rejects(release(f, { PROCTOR_UPDATE_PRIVATE_KEY: updatePublicKey }), /需要更新签名私钥.*传入了公钥/);
+  await assert.rejects(release(f, { PROCTOR_UPDATE_PRIVATE_KEY: 'broken private PEM' }), /完整、未加密.*PKCS#8/);
+  const { logs } = require('./helpers');
+  await assert.rejects(release(f, { PROCTOR_UPDATE_PRIVATE_KEY: logs.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() }), /Ed25519.*RSA/);
+  assert.equal(fs.existsSync(path.join(f.root, 'updates')), false);
+});

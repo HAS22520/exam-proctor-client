@@ -104,6 +104,8 @@ npm run keys:update -- --out-dir "$HOME/proctor-update-keys"
 npm run release:hot -- --config config/build.local.json --sign-key "$HOME/proctor-update-keys/update-private.pem"
 ```
 
+`--sign-key` 指定的是与 `updatePublicKeyFile` 配对的 **update-private.pem 私钥**；不能传 update-public.pem 公钥，也不能使用 OJ 的认证或日志解密私钥。
+
 生成 `updates/app-<version>-<buildVersion>.asar` 和同名 `.json`（包含 `version`、`buildVersion`、`signed`、`size` 字节数、`sha256`）。把 **ASAR 本身**上传至 OJ「更新设置」的热更新包，填写与产物完全一致的 `version` 和 `buildVersion`，发布清单。元数据 JSON 是构建信息，不是完整 OJ 清单；签名位于 ASAR 内的 `release.json`，OJ 不需要增加签名接口或保留外部签名字段。不传签名私钥时仍可生成归档供检查，但 `signed=false`，客户端会拒绝安装。
 
 公钥与地址配置随包生成，`PROCTOR_*` 环境变量优先于 JSON。ASAR 不需要 Docker、Wine、`--win` 或 `--mac`，同一份纯 JS/HTML 归档用于 Windows x64 和 macOS x64/arm64。它不包含 Electron 运行时，也不包含安装包独立的防火墙脚本。升级 Electron、更改外部脚本、密钥、白名单或 root 调试权限时，需要完整安装包。根目录保留 package.json、启动入口和生成配置，私钥、本地构建 JSON、仓库 `.env` 不会进入归档。

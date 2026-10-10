@@ -9,14 +9,26 @@ const { ENTRY } = require('../app/main/signed-archive');
 const help = `Usage: npm run release:hot -- [--config FILE] [--sign-key FILE] [--help]
 
 --config FILE  Read build JSON; public key paths are relative to this file.
---sign-key FILE Ed25519 update signing private key (never embedded).
+--sign-key FILE Ed25519 update signing PRIVATE key, e.g. update-private.pem (never embedded).
 --help         Show this help without requiring keys.
 
 PROCTOR_* environment variables override JSON settings.
 Outputs: updates/app-<version>-<buildVersion>.asar and matching JSON.
 Signed archives can be applied by clients with the same embedded update public key.
 Electron, native scripts and trust changes require full installers.`;
+function readSigningKey(pem) {
+  if (/-----BEGIN (?:RSA )?PUBLIC KEY-----/.test(pem)) {
+    throw new Error('--sign-key / PROCTOR_UPDATE_PRIVATE_KEY 需要更新签名私钥（update-private.pem），你传入了公钥。update-public.pem 应用于 build 配置的 updatePublicKeyFile。');
+  }
+  let key;
+  try { key = crypto.createPrivateKey(pem); }
+  catch { throw new Error('无法读取更新签名私钥：请提供完整、未加密的 Ed25519 PKCS#8 PEM（BEGIN PRIVATE KEY），不要传入公钥。'); }
+  if (key.asymmetricKeyType !== 'ed25519') throw new Error('更新签名私钥必须是 Ed25519，不能使用日志解密的 RSA 私钥。');
+  return key;
+}
 async function buildArchive(env = process.env, root = path.resolve(__dirname, '..')) {
+  // Validate before generating config, staging source or creating output files.
+  const key = env.PROCTOR_UPDATE_PRIVATE_KEY ? readSigningKey(env.PROCTOR_UPDATE_PRIVATE_KEY) : null;
   const { version, buildVersion, trust } = prepare(env, root);
   if (env.PROCTOR_REQUIRE_SIGNED_UPDATE === 'true' && !env.PROCTOR_UPDATE_PRIVATE_KEY) throw new Error('Signed ASAR requires PROCTOR_UPDATE_PRIVATE_KEY');
   if (env.PROCTOR_UPDATE_PRIVATE_KEY && !trust.updatePublicKey) throw new Error('Signed ASAR requires an independent PROCTOR_UPDATE_PUBLIC_KEY');
@@ -42,8 +54,6 @@ async function buildArchive(env = process.env, root = path.resolve(__dirname, '.
       collect(staging);
       const payload = { action: 'hydro-proctor-update/2', version, buildVersion, entry: ENTRY,
         electronVersion: original.devDependencies?.electron || '', files };
-      const key = crypto.createPrivateKey(env.PROCTOR_UPDATE_PRIVATE_KEY);
-      if (key.asymmetricKeyType !== 'ed25519') throw new Error('Update signing key must be Ed25519');
       const signature = sign(payload, key);
       if (!verify(payload, signature, trust.updatePublicKey)) throw new Error('Update signing key does not match embedded public key');
       fs.writeFileSync(path.join(staging, 'release.json'), JSON.stringify({ payload, signature }));
