@@ -84,7 +84,13 @@ PowerShell 设置公钥时使用 `$env:PROCTOR_AUTH_PUBLIC_KEY = Get-Content -Ra
 
 HTTPS 必需，只有 localhost 可使用 HTTP。`start`、`build`、`pack`、`dist`、`release:hot` 和 electron-builder 的 beforePack 都验证公钥，缺失或类型错误会失败。生成的 `app/generated/` 已被忽略；正式包内有公钥和配置，没有服务端私钥。正式版本从 Electron 安装包元数据读取，不从网页读取。
 
-`npm start` 用于开发；`npm run pack` 生成解包目录。`npm run release:hot` 使用同样变量生成 `updates/app-<version>.asar` 和大小/哈希元数据，根目录包含正确的 package.json 和 app/main 入口，不自动递增版本、不上传文件、不打包仓库 .env。当前客户端不会自动执行 ASAR，见下方更新限制。
+`npm start` 用于开发；`npm run pack` 生成解包目录。ASAR 构建可沿用完整安装包的 JSON 配置：修改 `config/build.local.json` 中的 `version`，在客户端目录执行：
+
+```bash
+npm run release:hot -- --config config/build.local.json
+```
+
+生成 `updates/app-<version>.asar` 和 `updates/app-<version>.json`（包含 `version`、`size` 字节数和 `sha256`）。公钥与地址配置随包生成，`PROCTOR_*` 环境变量仍优先于 JSON；不传 `--config` 时仅使用环境变量及基础配置。ASAR 只打包应用代码，不需要 Docker、Wine 或 `--win` / `--mac`，不包含 Electron 运行时及安装包中独立的 `scripts/*.ps1` / `restore-network.bat`。修改这些脚本或升级 Electron 必须生成完整安装包。根目录包含正确的 package.json 和 app/main 入口，不自动递增版本、不上传文件、不打包仓库 .env。元数据文件不是 OJ 完整更新清单。当前客户端不会自动执行 ASAR，见下方更新限制；把 ASAR 上传到 OJ 的热更新配置不会自动安装。
 
 `updates/` 是上述可选热更新命令的产物目录，不是运行所需源码，也不参与正常安装包构建。历史遗留的 `updates/app.asar` 已清理；整目录可删除，需要时 `release:hot` 会重新创建。ASAR 是 Electron 的应用文件归档，并不是考试日志；正式安装包自身也可能含有 `resources/app.asar`，那份属于安装包运行文件，应保留。
 

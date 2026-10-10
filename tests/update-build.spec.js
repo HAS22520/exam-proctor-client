@@ -6,7 +6,7 @@ const { test } = require('node:test');
 const Updater = require('../app/main/updater');
 const { validateConfig } = require('../app/main/config-policy');
 const { prepare } = require('../scripts/prepare-build');
-const { buildArchive } = require('../scripts/build-hot-update');
+const { buildArchive, run: buildHotUpdate } = require('../scripts/build-hot-update');
 const { trust, workspace } = require('./helpers');
 const base = { exam: { targetUrl: 'https://oj.example.com' }, updater: { versionUrl: 'https://oj.example.com/version.json', enabled: true }, debug: { allowRoot: false } };
 const environment = { PROCTOR_AUTH_PUBLIC_KEY: trust.authPublicKey, PROCTOR_LOG_PUBLIC_KEY: trust.logPublicKey, PROCTOR_KEY_ID: trust.keyId,
@@ -36,6 +36,31 @@ test('updater really falls back, checks byte length/hash before publishing a dow
   const filename = path.join(directory, 'archive'); await updater.downloadPackage(info, filename); assert.deepEqual(fs.readFileSync(filename), bytes); assert.equal(calls.length, 2);
   fs.rmSync(filename); await assert.rejects(updater.downloadPackage({ ...info, sha256: '0'.repeat(64) }, filename)); assert.ok(!fs.existsSync(filename));
   await assert.rejects(updater.downloadPackage({ ...info, size: bytes.length - 1 }, filename)); assert.ok(!fs.existsSync(filename));
+});
+test('ASAR CLI reads relative public keys from JSON and uses environment overrides in archive metadata', async (t) => {
+  const root = workspace(t), configDirectory = path.join(root, 'config');
+  fs.mkdirSync(configDirectory); fs.mkdirSync(path.join(root, 'app/main'), { recursive: true });
+  fs.writeFileSync(path.join(configDirectory, 'exam-config.json'), JSON.stringify(base));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', main: 'app/main/index.js' }));
+  fs.writeFileSync(path.join(root, 'app/main/index.js'), 'module.exports = 1;');
+  fs.writeFileSync(path.join(configDirectory, 'auth.pem'), trust.authPublicKey);
+  fs.writeFileSync(path.join(configDirectory, 'log.pem'), trust.logPublicKey);
+  const configFile = path.join(configDirectory, 'build.local.json');
+  fs.writeFileSync(configFile, JSON.stringify({ keyId: trust.keyId, version: '1.2.3', authPublicKeyFile: 'auth.pem', logPublicKeyFile: 'log.pem',
+    allowedOrigins: ['https://oj.example.com'], updateOrigins: ['https://oj.example.com'], allowRootDebug: true }));
+  const result = await buildHotUpdate(['--config', configFile], { env: { PROCTOR_CLIENT_VERSION: '1.2.4' }, root, log: () => {} });
+  assert.equal(result.version, '1.2.4');
+  const asar = require('@electron/asar');
+  assert.equal(JSON.parse(asar.extractFile(result.filename, 'package.json')).version, '1.2.4');
+  assert.equal(JSON.parse(asar.extractFile(result.filename, 'app/generated/config.json')).debug.allowRoot, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'updates/app-1.2.4.json'))),
+    { version: result.version, size: result.size, sha256: result.sha256 });
+  assert.ok(!asar.listPackage(result.filename).some((file) => /build\.local\.json|\.pem$/.test(file)));
+  await assert.rejects(buildHotUpdate(['--win'], { env: {}, root }), /Unsupported ASAR build option/);
+  await assert.rejects(buildHotUpdate(['--config'], { env: {}, root }), /requires exactly one file/);
+  const help = [];
+  await buildHotUpdate(['--help'], { env: {}, log: (value) => help.push(value) });
+  assert.match(help[0], /release:hot/);
 });
 test('update redirects cannot escape allowlist or downgrade HTTPS; size bounds apply without Content-Length', async (t) => {
   const config = validateConfig(base, trust), directory = workspace(t);
