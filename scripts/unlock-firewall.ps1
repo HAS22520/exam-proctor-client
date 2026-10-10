@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $mutex = [Threading.Mutex]::new($false, 'Global\HydroProctorNetworkRecovery')
 try {
     try { if (-not $mutex.WaitOne(60000)) { throw 'Network recovery is busy.' } } catch [Threading.AbandonedMutexException] {}
-if (-not (Test-Path -LiteralPath $StatePath)) { exit 0 }
+if (-not (Test-Path -LiteralPath $StatePath)) { return }
 $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
 Get-NetFirewallRule -Group $state.group -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 foreach ($name in $state.rules) { Get-NetFirewallRule -Name $name -ErrorAction SilentlyContinue | Enable-NetFirewallRule }

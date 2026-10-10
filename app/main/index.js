@@ -16,6 +16,7 @@ let window, controller, network, antiCheat, firewall, config, trust, uploadWindo
 let quitting = false, exiting = false, root = false, debug = false, timer, trustedUrl;
 let latestStatus = { phase: 'idle', message: '正在连接 OJ' };
 let exitReady = false;
+let recoveryReady = false;
 const directory = app.getPath('userData');
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.on('second-instance', () => { if (window) { window.restore(); window.focus(); } });
@@ -139,6 +140,7 @@ app.whenReady().then(async () => {
   const logger = { logViolation: (item) => controller?.logViolation(item) };
   firewall = new FirewallGuard(config, logger, directory);
   firewall.recover();
+  recoveryReady = true;
   const store = new ProtectedStore(path.join(directory, 'secrets'), safeStorage);
   store.check();
   const updates = new Updater(config, { directory, trust, version: app.getVersion() });
@@ -209,8 +211,8 @@ app.whenReady().then(async () => {
   timer = setInterval(syncLogin, 15000);
 }).catch((error) => {
   dialog.showErrorBox('客户端启动失败', error.message);
-  try { firewall?.unlock(); } catch { /* Recovery state is retained. */ }
+  try { if (recoveryReady) firewall?.unlock(); } catch { /* Recovery state is retained. */ }
   app.exit(1);
 });
 app.on('before-quit', (event) => { if (!quitting && window) { event.preventDefault(); requestExit(); } });
-process.on('exit', () => { try { firewall?.unlock(); } catch { /* Watchdog retries after process exit. */ } });
+process.on('exit', () => { try { if (recoveryReady) firewall?.unlock(); } catch { /* Watchdog retries after process exit. */ } });

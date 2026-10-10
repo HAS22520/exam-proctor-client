@@ -7,14 +7,19 @@ const { runInNewContext } = require('node:vm');
 const { pathToFileURL } = require('node:url');
 const { workspace } = require('./helpers');
 
-async function fixture(t) {
+async function fixture(t, options = {}) {
   const directory = workspace(t), handlers = new Map(), windows = [], choices = [];
   let quitCount = 0, shutdownCount = 0, finishCalled, releaseFinish;
+  let recoverCount = 0, exitCount = 0;
+  const errors = [], exitHooks = [];
   const started = new Promise((resolve) => { finishCalled = resolve; });
   const finished = new Promise((resolve) => { releaseFinish = resolve; });
   const app = new EventEmitter();
   Object.assign(app, { setName: () => {}, getPath: () => directory, getVersion: () => '1.0.0', requestSingleInstanceLock: () => true,
-    whenReady: () => Promise.resolve(), quit: () => { quitCount++; }, exit: () => assert.fail('app must not exit during initialization') });
+    whenReady: () => Promise.resolve(), quit: () => { quitCount++; }, exit: (code) => {
+      if (!options.recoveryError) assert.fail('app must not exit during initialization');
+      assert.equal(code, 1); exitCount++;
+    } });
   class BrowserWindow extends EventEmitter {
     constructor(options) {
       super(); this.options = options; this.webContents = new EventEmitter(); this.sent = [];
@@ -41,10 +46,17 @@ async function fixture(t) {
     }
     shutdown() { shutdownCount++; }
   }
-  class Guard { recover() {} check() {} install() {} start() {} stop() {} unlock() {} }
+  class Guard {
+    recover() { recoverCount++; if (options.recoveryError) throw options.recoveryError; }
+    check() {} install() {} start() {} stop() {}
+    unlock() { this.recover(); }
+  }
   const mocks = {
     electron: { app, BrowserWindow, ipcMain: { handle: (name, callback) => handlers.set(name, callback) },
-      dialog: { showMessageBox: async (owner, options) => { choices.push(options); return { response: 1 }; }, showErrorBox: () => assert.fail('startup error') } },
+      dialog: { showMessageBox: async (owner, options) => { choices.push(options); return { response: 1 }; }, showErrorBox: (title, message) => {
+        if (!options.recoveryError) assert.fail('startup error');
+        errors.push({ title, message });
+      } } },
     'node:fs': { ...fs, readFileSync: (file, ...args) => String(file).endsWith('/generated/config.json') || String(file).endsWith('\\generated\\config.json')
       ? JSON.stringify(config) : String(file).endsWith('trust.json') ? '{}' : fs.readFileSync(file, ...args) },
     './config-policy': { validateConfig: (value) => value }, './device-store': { ProtectedStore: Guard },
@@ -53,10 +65,11 @@ async function fixture(t) {
   };
   const source = path.resolve(__dirname, '../app/main/index.js');
   runInNewContext(fs.readFileSync(source, 'utf8'), { URL, __dirname: path.dirname(source), require: (name) => mocks[name] || require(name),
-    process: { platform: 'darwin', on: () => {} }, setInterval: () => 1, clearInterval: () => {} });
+    process: { platform: 'darwin', on: (name, callback) => { if (name === 'exit') exitHooks.push(callback); } }, setInterval: () => 1, clearInterval: () => {} });
   await new Promise((resolve) => setImmediate(resolve));
   const event = (owner) => ({ sender: owner.webContents, senderFrame: owner.webContents.mainFrame });
-  return { handlers, windows, choices, started, releaseFinish, event, get quitCount() { return quitCount; }, get shutdownCount() { return shutdownCount; } };
+  return { handlers, windows, choices, errors, exitHooks, started, releaseFinish, event, get quitCount() { return quitCount; },
+    get shutdownCount() { return shutdownCount; }, get recoverCount() { return recoverCount; }, get exitCount() { return exitCount; } };
 }
 
 test('ending requires explicit log reminder and only the native main frame can exit after receipt', async (t) => {
@@ -84,4 +97,13 @@ test('offline finish displays retained logs and allows native exit without claim
   assert.equal(status.upload.phase, 'deferred'); assert.equal(status.upload.percent, null);
   assert.match(status.message, /成绩待确认/); assert.match(status.message, /原考试账号补传/);
   f.handlers.get('exam:upload-exit')(f.event(f.windows[1])); assert.equal(f.quitCount, 1);
+});
+
+test('cancelled startup recovery reports failure once and does not repeatedly elevate during exit', async (t) => {
+  const error = new Error('无法恢复监考网络设置，请允许 Windows 管理员授权。');
+  const f = await fixture(t, { recoveryError: error });
+  assert.equal(f.recoverCount, 1); assert.equal(f.exitCount, 1); assert.equal(f.windows.length, 0);
+  assert.equal(f.errors.length, 1); assert.equal(f.errors[0].message, error.message);
+  for (const hook of f.exitHooks) hook();
+  assert.equal(f.recoverCount, 1);
 });

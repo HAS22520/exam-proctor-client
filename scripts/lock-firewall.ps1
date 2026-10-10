@@ -19,7 +19,7 @@ $state = @{ group = $policy.group; profiles = $profiles; rules = $rules }
 Move-Item -LiteralPath "$StatePath.tmp" -Destination $StatePath -Force
 # A separate elevated process restores policy even if Electron is force-killed.
 $watch = Join-Path $PSScriptRoot 'watch-network.ps1'
-$argsText = "-NoProfile -ExecutionPolicy Bypass -File `"$watch`" -StatePath `"$StatePath`" -ClientProcessId $ClientProcessId"
+$argsText = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$watch`" -StatePath `"$StatePath`" -ClientProcessId $ClientProcessId -PolicyProcessId $PID"
 Start-Process powershell.exe -WindowStyle Hidden -ArgumentList $argsText | Out-Null
 try {
     foreach ($name in $rules) { Disable-NetFirewallRule -Name $name }
