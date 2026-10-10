@@ -1,9 +1,0 @@
-{
-  "version": "1.0.0",
-  "minClientVersion": "1.0.0",
-  "description": "更新清单示例，请使用 OJ 更新设置生成并发布实际清单。",
-  "changelog": [
-    "Hydro 设备认证、加密日志和结束补传",
-    "Windows x64 和 macOS x64/arm64 构建"
-  ]
-}

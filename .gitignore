@@ -7,10 +7,6 @@ records/
 *.webm
 *.log
 
-# 大型二进制文件 (ffmpeg 通过 npm 或独立下载)
-bin/ffmpeg.exe
-bin/*.exe
-
 # 构建输出
 dist/
 out/

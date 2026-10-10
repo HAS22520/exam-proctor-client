@@ -40,8 +40,16 @@ function buildEnvironment(filename, env) {
     allowedOrigins: ['PROCTOR_ALLOWED_ORIGINS', 'origins'], updateOrigins: ['PROCTOR_UPDATE_ORIGINS', 'origins'],
     allowRootDebug: ['PROCTOR_ALLOW_ROOT_DEBUG', 'boolean'],
   };
+  if (Object.hasOwn(config, '_comments')) {
+    const comments = config._comments;
+    if (!comments || typeof comments !== 'object' || Array.isArray(comments)
+      || Object.entries(comments).some(([field, value]) => !Object.hasOwn(fields, field) || typeof value !== 'string')) {
+      throw new Error('Build config _comments must map supported field names to explanation strings');
+    }
+  }
   const result = { ...env };
   for (const [field, value] of Object.entries(config)) {
+    if (field === '_comments') continue;
     if (!Object.hasOwn(fields, field)) throw new Error(`Unknown build config field: ${field}`);
     const [variable, type] = fields[field];
     if (type === 'boolean' ? typeof value !== 'boolean' : type === 'origins'

@@ -25,9 +25,6 @@
     "preventMinimize": true,
     "disableDevTools": true
   },
-  "recording": {
-    "enabled": false
-  },
   "antiCheat": {
     "blockShortcuts": [
       "Alt+Tab",

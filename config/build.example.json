@@ -1,4 +1,15 @@
 {
+  "_comments": {
+    "keyId": "填 OJ 管理后台「监考设置」生成认证密钥时显示的 keyId，必须是 32 位小写十六进制字符。必须与下面两组公钥来自同一次生成；不要填用户 ID、会话令牌或公钥正文。",
+    "version": "填本次安装包版本，格式为 x.y.z，例如 1.2.3。必须与 OJ 监考设置要求的客户端版本完全一致；它是客户端版本，不是 Hydro 服务端版本。",
+    "authPublicKeyFile": "填从 OJ 导出的认证公钥 PEM 文件路径，类型为 Ed25519 / SPKI（BEGIN PUBLIC KEY）。相对路径以本配置文件所在目录为基准，也可使用绝对路径，如 C:/proctor-keys/auth-public.pem 或 /Users/me/proctor-keys/auth-public.pem。公钥文件建议放在仓库外；禁止使用私钥。",
+    "logPublicKeyFile": "填同一次生成并从 OJ 导出的日志加密公钥 PEM 文件路径，类型为 RSA-3072 / SPKI（BEGIN PUBLIC KEY）。路径规则与 authPublicKeyFile 相同；日志解密私钥只留在 OJ 服务端，不能传入构建。",
+    "targetUrl": "填客户端启动后打开的完整 OJ URL，例如 https://oj.example.com/ 或某个域、比赛的页面地址。其 origin 必须列入 allowedOrigins；可以包含页面路径。请将示例域名替换为实际 OJ 地址。",
+    "allowedOrigins": "填考试页面及其必需资源、登录跳转允许访问的 origin 数组。例如 [\"https://oj.example.com\", \"https://assets.example.com\"]。每项只含协议、主机和可选端口，不含页面路径、查询参数或通配符；不同子域和端口需分别列出。必须包含 targetUrl 的 origin。使用 HTTPS，只有 localhost/127.0.0.1/[::1] 可使用 HTTP 调试。",
+    "updateOrigins": "填更新清单、远端配置、安装包下载及下载重定向涉及的 origin 数组，格式同 allowedOrigins。必须包含 versionUrl 的 origin；如更新包放在独立 CDN，还需加入实际下载和重定向的源站。此列表不会自动扩大考试页面的访问白名单。",
+    "versionUrl": "填 OJ 管理后台「更新设置」显示的更新清单 URL，例如 https://oj.example.com/client-updates/version.json。使用完整 HTTPS URL，其 origin 必须列入 updateOrigins；这是 OJ 发布的远端 JSON 地址，不是客户端仓库中的本地文件路径。",
+    "allowRootDebug": "填布尔值 false 或 true，不加引号。正式考试建议 false；true 仅允许经 OJ 签名认证、具有 PRIV_ALL 超级管理员权限的账号进入调试并放开客户端网络限制。普通用户名 root、操作系统 root 或 Windows 管理员身份均不能单独开启该模式。"
+  },
   "keyId": "替换为后台显示的32位小写十六进制keyId",
   "version": "1.2.3",
   "authPublicKeyFile": "../../../proctor-keys/auth-public.pem",

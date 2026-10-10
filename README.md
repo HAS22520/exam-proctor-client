@@ -20,6 +20,8 @@ Electron 客户端，连接 Hydro 的 `hydro-proctor/1` 协议。支持 Windows 
 
 推荐使用跨平台构建脚本 `scripts/build.js`：复制 `config/build.example.json` 为 `config/build.local.json`，填写后台的 keyId、版本、两组公钥文件路径、考试地址、允许访问的 origin 和更新地址。公钥文件路径相对于这份 JSON 文件解析，支持绝对路径；Windows 路径可写成 `C:/proctor-keys/auth-public.pem`。本地配置文件已被 Git 忽略。
 
+示例中的 `_comments` 是每项配置的中文填写说明，可以保留或删除，构建时不会写入安装包配置。文件保持标准 JSON，不支持 `//` 或 `/* */` 注释。修改 `_comments` 外的实际配置值；`oj.example.com`、keyId 和公钥路径均须替换。`versionUrl` 来自 OJ「更新设置」提供的远端清单地址，客户端仓库不再保留本地 `version.json` 示例。
+
 在 `exam-proctor-client` 目录运行（Bash 和 PowerShell 均适用）：
 
 ```text

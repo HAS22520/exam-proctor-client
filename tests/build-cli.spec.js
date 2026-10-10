@@ -40,6 +40,27 @@ test('build JSON resolves PEM files relative to itself, with environment overrid
   }
 });
 
+test('documented JSON comments are accepted, never embedded, and cannot hide unknown build fields', async (t) => {
+  const { root, file, config } = fixture(t);
+  const example = require('../config/build.example.json');
+  const fields = Object.keys(example).filter((field) => field !== '_comments');
+  assert.deepEqual(Object.keys(example._comments).sort(), fields.sort());
+  fs.writeFileSync(file, JSON.stringify({ ...config, _comments: example._comments }));
+  const env = buildEnvironment(file, {});
+  assert.ok(Object.keys(env).every((field) => field.startsWith('PROCTOR_')));
+  await run(['--config', file, '--check'], { root, env: {}, build: async () => assert.fail('check must not package') });
+  for (const name of ['config.json', 'trust.json']) {
+    const generated = JSON.parse(fs.readFileSync(path.join(root, 'app/generated', name)));
+    assert.ok(!Object.hasOwn(generated, '_comments'));
+  }
+  for (const comments of [null, [], 'comment', { unknownOption: 'explanation' }, { version: true }]) {
+    fs.writeFileSync(file, JSON.stringify({ ...config, _comments: comments }));
+    assert.throws(() => buildEnvironment(file, {}), /_comments/);
+  }
+  fs.writeFileSync(file, JSON.stringify({ ...config, _comments: example._comments, typoVersion: '2.0.0' }));
+  assert.throws(() => buildEnvironment(file, {}), /Unknown build config field/);
+});
+
 test('check validates keys and origins before packaging; rejects conflicting targets and unsupported options', async (t) => {
   const { root, file, config } = fixture(t);
   let builds = 0;
