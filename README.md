@@ -39,6 +39,8 @@ Electron 客户端，使用 `HydroNext-proctor/1` 协议连接 OJ。支持 Windo
 
 构建成功后，从运行页面的 **Artifacts** 下载对应平台、架构的 ZIP，解压取得安装包。Windows 使用原生 Windows runner；Mac 两种架构分别使用 Intel 和 Apple Silicon runner。本工作流只上传产物，不自动发布 Release 或上传 OJ。
 
+工作流也运行 `npm run test:updates:electron`，在 Electron 的 Node 模式中验证 ASAR 下载、签名校验、缓存、清理与代码加载，不创建窗口。普通 Node 测试无法覆盖 Electron 把 ASAR 映射成虚拟目录的行为；更新包的文件操作使用 `original-fs`。
+
 ### macOS 安装与可选签名
 
 没有 `MAC_CSC_LINK` 证书时，构建使用免费的 ad-hoc 签名并关闭公证，生成 DMG 不需要 Apple Developer 账号、Team ID 或 provisioning profile。

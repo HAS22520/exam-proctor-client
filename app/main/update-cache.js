@@ -1,4 +1,5 @@
-const fs = require('node:fs');
+// Rename and inspect cached ASAR files without Electron's archive mounting.
+const fs = process.versions.electron ? require('original-fs') : require('node:fs');
 const path = require('node:path');
 const { atomicWrite } = require('./device-store');
 const { buildVersion } = require('./build-version');

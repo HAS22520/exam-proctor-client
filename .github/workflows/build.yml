@@ -82,6 +82,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         if: matrix.platform == 'win'
       - run: npm test
+      - run: npm run test:updates:electron
       - run: npm run test:native
         if: matrix.platform == 'win'
       - name: Build installers
@@ -114,6 +115,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run test:updates:electron
       - run: npm run release:hot
       - uses: actions/upload-artifact@v4
         with:

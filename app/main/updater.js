@@ -1,4 +1,5 @@
-const fs = require('node:fs');
+// Update archives are physical files, not Electron's virtual ASAR directories.
+const fs = process.versions.electron ? require('original-fs') : require('node:fs');
 const path = require('node:path');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');

@@ -13,6 +13,7 @@
     "dist": "node scripts/build.js",
     "release:hot": "node scripts/build-hot-update.js",
     "test": "node --test tests/*.spec.js",
+    "test:updates:electron": "node scripts/test-update-runtime.js",
     "keys:update": "node scripts/update-keys.js",
     "build:native": "node scripts/build-native.js",
     "test:native": "node scripts/test-native.js"
