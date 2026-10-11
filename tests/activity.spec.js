@@ -32,7 +32,7 @@ test('failures leave a brief explanation without leaking error contents or leavi
 test('queued firewall recovery does not replace the running lock indicator until recovery actually starts', async (t) => {
   const progress = new ActivityProgress(), statuses = [];
   progress.onChange = (value) => statuses.push(value);
-  const guard = new FirewallGuard({}, null, workspace(t), { platform: 'darwin', activity: progress.run.bind(progress) });
+  const guard = new FirewallGuard({}, null, workspace(t), { platform: 'win32', activity: progress.run.bind(progress) });
   let release;
   guard.native = { active: false, lock: () => new Promise((resolve) => { release = resolve; }), unlock: async () => {}, close: () => {} };
   guard.config = { exam: { allowedOrigins: ['https://127.0.0.1'] } };

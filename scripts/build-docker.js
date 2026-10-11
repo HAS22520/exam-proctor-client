@@ -15,7 +15,7 @@ function stageProject(projectDir, destination) {
   });
   fs.mkdirSync(path.join(destination, 'scripts'));
   for (const name of ['build.js', 'prepare-build.js', 'before-pack.js', 'docker-build-entry.js',
-    'build-native.js', 'sign-mac.js', 'after-sign.js', 'unlock-firewall.ps1', 'watch-network.ps1', 'restore-network.bat']) {
+    'build-native.js', 'unlock-firewall.ps1', 'watch-network.ps1', 'restore-network.bat']) {
     fs.copyFileSync(path.join(projectDir, 'scripts', name), path.join(destination, 'scripts', name));
   }
   fs.cpSync(path.join(projectDir, 'native'), path.join(destination, 'native'), { recursive: true });

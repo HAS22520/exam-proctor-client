@@ -41,24 +41,6 @@
       "app/**/*",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "scripts",
-        "to": "scripts",
-        "filter": [
-          "unlock-firewall.ps1",
-          "watch-network.ps1",
-          "restore-network.bat"
-        ]
-      },
-      {
-        "from": "build/native",
-        "to": "native",
-        "filter": [
-          "hydro-network.exe"
-        ]
-      }
-    ],
     "win": {
       "requestedExecutionLevel": "asInvoker",
       "target": [
@@ -72,6 +54,24 @@
           "target": "nsis",
           "arch": [
             "x64"
+          ]
+        }
+      ],
+      "extraResources": [
+        {
+          "from": "scripts",
+          "to": "scripts",
+          "filter": [
+            "unlock-firewall.ps1",
+            "watch-network.ps1",
+            "restore-network.bat"
+          ]
+        },
+        {
+          "from": "build/native",
+          "to": "native",
+          "filter": [
+            "hydro-network.exe"
           ]
         }
       ]
@@ -92,17 +92,12 @@
       "hardenedRuntime": true,
       "entitlements": "config/entitlements.mac.plist",
       "entitlementsInherit": "config/entitlements.mac.plist",
-      "sign": "./scripts/sign-mac.js",
-      "minimumSystemVersion": "13.0",
-      "extendInfo": {
-        "NSSystemExtensionUsageDescription": "考试期间仅允许访问考试服务器，退出监考后自动恢复网络。"
-      }
+      "minimumSystemVersion": "13.0"
     },
     "beforePack": "./scripts/before-pack.js",
     "portable": {
       "artifactName": "HydroProctor-${version}-win-${arch}-portable.${ext}"
-    },
-    "afterSign": "./scripts/after-sign.js"
+    }
   },
   "buildVersion": "2026101001"
 }

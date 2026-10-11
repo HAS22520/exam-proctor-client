@@ -14,19 +14,32 @@ function backend() {
     async lock(policy) { this.calls.push(['lock', policy]); this.active = true; },
     async unlock() { this.calls.push('unlock'); this.active = false; }, close() { this.active = false; this.calls.push('close'); } };
 }
-test('both systems use native policy, coalesce locks and restore without editing system firewall rules', async (t) => {
-  for (const platform of ['win32', 'darwin']) {
+test('Windows uses native policy, coalesces locks and restores without editing system firewall rules', async (t) => {
+  for (const platform of ['win32']) {
     const native = backend(), directory = workspace(t), events = [];
     const guard = new FirewallGuard({ exam: { allowedOrigins: ['https://127.0.0.1:8282'] } },
       { logViolation: (event) => events.push(event) }, directory, { platform, native });
     const lock = guard.lock(); assert.equal(lock, guard.lock());
     assert.equal(await lock, true); assert.equal(await guard.lock(), true);
     assert.equal(native.calls.length, 1); assert.equal(guard.isLocked, true);
-    assert.equal(events[0].target, platform === 'win32' ? 'windows-wfp' : 'macos-network-extension');
+    assert.equal(events[0].target, 'windows-wfp');
     assert.equal(fs.existsSync(guard.statePath), false);
     await guard.unlock(); await guard.unlock(); assert.equal(native.calls.length, 2); assert.equal(guard.isLocked, false);
     if (platform === 'win32') { await guard.checkPrivileges(); assert.equal(native.calls.at(-1), 'check'); }
   }
+});
+test('macOS records its passive mode without DNS, privilege checks, helpers or network progress', async (t) => {
+  const native = backend(), events = [], guard = new FirewallGuard({}, { logViolation: (event) => events.push(event) }, workspace(t), {
+    platform: 'darwin', native, lookup: () => assert.fail('macOS must not resolve firewall addresses'),
+    activity: () => assert.fail('macOS must not wait for network operations'),
+    legacy: { statePath: '', recover: () => assert.fail('macOS must not modify system settings') },
+  });
+  await guard.checkPrivileges(); await guard.recover();
+  assert.equal(await guard.lock(), false); await guard.lock();
+  assert.equal(guard.isLocked, false); assert.equal(guard.mode, 'macos-audit-only');
+  assert.equal(events.length, 1); assert.equal(events[0].type, 'NETWORK_AUDIT_ONLY');
+  await guard.unlock(); await guard.lock(); assert.equal(events.length, 2);
+  guard.cancelPendingLock(); guard.close(); assert.deepEqual(native.calls, []);
 });
 test('queued unlock waits for lock to finish; failures never claim successful protection', async (t) => {
   const native = backend(); let release;

@@ -3,7 +3,7 @@ const { execFile } = require('node:child_process');
 const path = require('node:path');
 
 class AntiCheatGuard {
-  constructor(mainWindow, config, auditLogger = null) {
+  constructor(mainWindow, config, auditLogger = null, runtime = {}) {
     this.window = mainWindow;
     this.config = { ...config.antiCheat, preventMinimize: config.window?.preventMinimize };
     this.logger = auditLogger;
@@ -12,6 +12,8 @@ class AntiCheatGuard {
     this.running = false;
     this.scanning = false;
     this.detected = new Map();
+    this.platform = runtime.platform || process.platform;
+    this.auditOnly = this.platform === 'darwin';
   }
 
   record(type, target = '') { this.logger?.logViolation({ source: 'ANTI_CHEAT', type, target, detail: '' }); }
@@ -24,7 +26,7 @@ class AntiCheatGuard {
   start() {
     if (this.running) return;
     this.running = true;
-    for (const shortcut of this.config.blockShortcuts || []) {
+    for (const shortcut of this.auditOnly ? [] : this.config.blockShortcuts || []) {
       try {
         if (globalShortcut.register(shortcut, () => this.record('BLOCKED_SHORTCUT', shortcut))) this.shortcuts.push(shortcut);
         else this.record('SHORTCUT_UNAVAILABLE', shortcut);
@@ -32,11 +34,11 @@ class AntiCheatGuard {
     }
     this.listen(this.window, 'blur', () => {
       this.record('WINDOW_BLUR');
-      if (this.config.preventMinimize && !this.window.isDestroyed()) this.window.focus();
+      if (!this.auditOnly && this.config.preventMinimize && !this.window.isDestroyed()) this.window.focus();
     });
     this.listen(this.window, 'minimize', () => {
       this.record('WINDOW_MINIMIZED');
-      if (this.config.preventMinimize && !this.window.isDestroyed()) this.window.restore();
+      if (!this.auditOnly && this.config.preventMinimize && !this.window.isDestroyed()) this.window.restore();
     });
     const displays = () => {
       const count = screen.getAllDisplays().length;
@@ -52,9 +54,9 @@ class AntiCheatGuard {
   scan() {
     if (!this.running || this.scanning) return;
     this.scanning = true;
-    const windows = process.platform === 'win32';
-    if (!windows && process.platform !== 'darwin') { this.scanning = false; return; }
-    const blacklist = this.config.processBlacklistByPlatform?.[process.platform]
+    const windows = this.platform === 'win32';
+    if (!windows && this.platform !== 'darwin') { this.scanning = false; return; }
+    const blacklist = this.config.processBlacklistByPlatform?.[this.platform]
       || (windows ? this.config.processBlacklist || [] : []);
     execFile(windows ? 'tasklist.exe' : '/bin/ps', windows ? ['/fo', 'csv', '/nh'] : ['-axo', 'pid=,comm='],
       { windowsHide: true, timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, output) => {
@@ -72,7 +74,7 @@ class AntiCheatGuard {
           detected.set(processKey, name);
           if (this.detected.has(processKey)) continue;
           this.record('FORBIDDEN_PROCESS', name);
-          if (this.config.terminateBlacklisted === true) {
+          if (!this.auditOnly && this.config.terminateBlacklisted === true) {
             execFile(windows ? 'taskkill.exe' : '/bin/kill', windows ? ['/F', '/T', '/PID', String(pid)] : ['-TERM', String(pid)],
               { windowsHide: true, timeout: 5000 }, (killError) => this.record(killError ? 'PROCESS_TERMINATION_FAILED' : 'PROCESS_TERMINATED', name));
           }

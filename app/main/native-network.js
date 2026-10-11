@@ -7,18 +7,16 @@ const { spawn } = require('node:child_process');
 const messages = {
   ADMIN_REQUIRED: '请关闭软件，右键点击监考客户端，选择“以管理员身份运行”后重新打开。',
   NATIVE_MISSING: '安装包缺少系统网络组件，请安装新版完整安装包；ASAR 更新不能安装原生组件。',
-  APPROVAL_REQUIRED: '请在 macOS 系统设置中允许监考网络扩展和内容过滤，然后重新尝试进入考试。',
   FILTER_FAILED: '系统网络过滤未能启用，请检查系统授权及网络服务后重试。',
   HELPER_EXITED: '系统网络组件已停止，监考认证已撤销。请重新进入考试。',
-  ETIMEDOUT: '系统网络组件响应超时。请查看诊断日志，macOS 首次使用时需完成系统授权。',
+  ETIMEDOUT: 'Windows 网络组件响应超时。请查看诊断日志。',
 };
 function failure(code, detail = '') {
   return Object.assign(new Error(messages[code] || `系统网络操作失败（${code}）${detail ? `：${String(detail).slice(0, 200)}` : ''}`), { code });
 }
 
 function executable(platform = process.platform, resources = process.resourcesPath) {
-  if (platform === 'darwin' && resources) return path.resolve(resources, '../MacOS/HydroNetworkHost');
-  const name = platform === 'win32' ? 'hydro-network.exe' : 'HydroNetworkHost';
+  const name = 'hydro-network.exe';
   const packaged = resources && path.join(resources, 'native', name);
   return packaged && fs.existsSync(packaged) ? packaged : path.resolve(__dirname, '../../build/native', name);
 }
@@ -49,7 +47,7 @@ class NativeNetwork {
   }
   start() {
     if (this.child) return;
-    if (!['win32', 'darwin'].includes(this.platform)) throw failure('UNSUPPORTED_PLATFORM');
+    if (this.platform !== 'win32') throw failure('UNSUPPORTED_PLATFORM');
     if (this.spawnProcess === spawn && !fs.existsSync(this.filename)) throw failure('NATIVE_MISSING');
     this.closing = false;
     this.lastPulseAt = this.now();
@@ -114,7 +112,7 @@ class NativeNetwork {
   check() { return this.command('check'); }
   healthy() { return this.active && !this.closing && this.now() - this.lastPulseAt < 8000; }
   async lock(policy) {
-    await this.command('lock', policy, this.platform === 'darwin' ? 120000 : 15000);
+    await this.command('lock', policy);
     if (!this.child) throw failure('HELPER_EXITED');
     this.active = true;
   }

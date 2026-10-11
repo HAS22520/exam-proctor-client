@@ -102,8 +102,14 @@ async function fixture(t, options = {}) {
     './activity-progress': require('../app/main/activity-progress'), './waiting-window': require('../app/main/waiting-window'),
   };
   const source = path.resolve(__dirname, '../app/main/index.js');
+  if (options.platform === 'darwin') {
+    const FirewallGuard = require('../app/main/firewall-guard');
+    mocks['./firewall-guard'] = class extends FirewallGuard {
+      constructor(config, logger, directory, runtime) { super(config, logger, directory, { ...runtime, platform: 'darwin' }); }
+    };
+  }
   runInNewContext(fs.readFileSync(source, 'utf8'), { URL, __dirname: path.dirname(source), require: (name) => mocks[name] || require(name),
-    process: { platform: 'darwin', on: (name, callback) => { if (name === 'exit') exitHooks.push(callback); } }, setInterval: () => 1, clearInterval: () => {}, setTimeout, clearTimeout });
+    process: { platform: options.platform || 'win32', on: (name, callback) => { if (name === 'exit') exitHooks.push(callback); } }, setInterval: () => 1, clearInterval: () => {}, setTimeout, clearTimeout });
   await initialized;
   await new Promise((resolve) => setImmediate(resolve));
   const event = (owner) => ({ sender: owner.webContents, senderFrame: owner.webContents.mainFrame });
@@ -118,6 +124,19 @@ test('non-administrator startup prompts to close and reopen elevated before any 
   assert.equal(f.windows.length, 0); assert.equal(f.recoverCount, 0); assert.equal(f.exitCount, 1);
   assert.match(f.choices[0].message, /管理员模式/); assert.match(f.choices[0].detail, /以管理员身份运行/);
   assert.equal(f.choices[0].buttons.length, 1); assert.equal(f.choices[0].buttons[0], '关闭软件');
+});
+test('macOS authenticates without network setup or enforced window focus and prepares logs directly on exit', async (t) => {
+  const f = await fixture(t, { platform: 'darwin', delayLock: true }), main = f.windows[0];
+  await f.controller.options.onIdentity({ uid: 7, proctorEnabled: true, expiresAt: new Date(Date.now() + 60000).toISOString() });
+  assert.equal(main.kiosk, false); assert.equal(main.alwaysOnTop, false);
+  assert.equal(f.antiCheatStarts, 1); assert.equal(f.recoverCount, 0);
+  const ending = f.handlers.get('exam:request-quit')(f.event(main));
+  await f.started;
+  const upload = f.windows[1], statuses = upload.sent.filter((item) => item.channel === 'exam:upload-status').map((item) => item.value);
+  assert.ok(statuses.some((item) => item.upload?.phase === 'preparing' && /加密日志/.test(item.message)));
+  assert.ok(statuses.every((item) => item.upload?.phase !== 'restoring-network'));
+  assert.equal(f.handlers.get('exam:upload-status')(f.event(upload)).networkMode, 'macos-audit-only');
+  f.releaseFinish(true); await ending;
 });
 
 test('ending requires explicit log reminder and only the native main frame can exit after receipt', async (t) => {

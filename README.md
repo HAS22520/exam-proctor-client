@@ -14,7 +14,7 @@ Electron 客户端，连接 HydroNext 的 `HydroNext-proctor/1` 协议。支持 
 
 每次启动，在加载 OJ 页面前清空客户端会话的 Cookie、HTTP 登录缓存、Service Worker 和 Cache Storage，要求重新登录。保留本地草稿、设备密钥和加密日志，原账号登录后仍可恢复未结束的监考或补传日志。登录 Cookie 变化会立即撤销旧身份与调试权限，并触发重新认证。
 
-启动准备超过 350 毫秒时先显示本地准备窗口，说明网络恢复、系统重启检查或考试页面连接的当前步骤，完成后自动关闭。认证与网络操作期间，监考浮窗显示等待动画、阶段、已等待秒数和参考耗时；退出上传窗口也显示网络恢复的具体阶段。参考耗时不是服务端承诺的剩余时间，超过范围时会继续显示实际等待时间，并提示仍在等待系统或网络响应。Windows 必须以管理员身份启动；macOS 首次使用需要在系统设置中允许网络扩展和内容过滤。同一登录状态、同一路由、同一刷新要求的并发认证共用一次握手；强制刷新仍会重新验证身份，换账号立即撤销旧身份，已应用的网络策略不会重复启动设置流程。
+启动准备超过 350 毫秒时先显示本地准备窗口，说明网络恢复、系统重启检查或考试页面连接的当前步骤，完成后自动关闭。认证与网络操作期间，监考浮窗显示等待动画、阶段、已等待秒数和参考耗时；退出上传窗口也显示网络恢复的具体阶段。参考耗时不是服务端承诺的剩余时间，超过范围时会继续显示实际等待时间，并提示仍在等待系统或网络响应。Windows 必须以管理员身份启动；macOS 仅记录日志，不修改系统网络、不需要管理员权限或网络扩展授权。同一登录状态、同一路由、同一刷新要求的并发认证共用一次握手；强制刷新仍会重新验证身份，换账号立即撤销旧身份，已应用的网络策略不会重复启动设置流程。
 
 设备密钥和日志 AES 密钥使用 Electron safeStorage 加密：Windows 的 DPAPI / macOS 的 Keychain。密钥不能加密时客户端拒绝启动，不回退明文。跨系统用户、迁移用户数据或删除密钥可能使原考试无法恢复。当前固定 Electron 44；升级到 46 前需迁移其异步 safeStorage API。参见 [Electron 官方说明](https://github.com/electron/electron/blob/main/docs/api/safe-storage.md)。
 
@@ -110,7 +110,7 @@ npm run release:hot -- --config config/build.local.json --sign-key "$HOME/procto
 
 生成 `updates/app-<version>-<buildVersion>.asar` 和同名 `.json`（包含 `version`、`buildVersion`、`signed`、`size` 字节数、`sha256`）。把 **ASAR 本身**上传至 OJ「更新设置」的热更新包，填写与产物完全一致的 `version` 和 `buildVersion`，发布清单。元数据 JSON 是构建信息，不是完整 OJ 清单；签名位于 ASAR 内的 `release.json`，OJ 不需要增加签名接口或保留外部签名字段。不传签名私钥时仍可生成归档供检查，但 `signed=false`，客户端会拒绝安装。
 
-公钥与地址配置随包生成，`PROCTOR_*` 环境变量优先于 JSON。ASAR 不需要 Docker、Wine、`--win` 或 `--mac`，同一份纯 JS/HTML 归档用于 Windows x64 和 macOS x64/arm64。它不包含 Electron 运行时、WFP 辅助程序或 macOS Network Extension。此次引入原生网络组件必须先安装新版完整包；旧客户端不能用 ASAR 安装组件。新加载器同时验证签名中的 nativeNetworkVersion=1 与已安装组件版本，拒绝不兼容归档。此后纯 JS/HTML 修改仍能使用 ASAR。升级 Electron、原生组件、更改密钥、白名单或 root 调试权限时，需要完整安装包。根目录保留 package.json、启动入口和生成配置，私钥、本地构建 JSON、仓库 `.env` 不会进入归档。
+公钥与地址配置随包生成，`PROCTOR_*` 环境变量优先于 JSON。ASAR 不需要 Docker、Wine、`--win` 或 `--mac`，同一份纯 JS/HTML 归档用于 Windows x64 和 macOS x64/arm64。它不包含 Electron 运行时或 Windows WFP 辅助程序；macOS 已取消原生网络扩展。Windows 引入原生网络组件时必须先安装新版完整包；旧客户端不能用 ASAR 安装组件。新加载器同时验证签名中的 nativeNetworkVersion=1 与已安装组件版本，拒绝不兼容归档。此后纯 JS/HTML 修改仍能使用 ASAR。升级 Electron、原生组件、更改密钥、白名单或 root 调试权限时，需要完整安装包。根目录保留 package.json、启动入口和生成配置，私钥、本地构建 JSON、仓库 `.env` 不会进入归档。
 
 `updates/` 是上述可选热更新命令的产物目录，不是运行所需源码，也不参与正常安装包构建。历史遗留的 `updates/app.asar` 已清理；整目录可删除，需要时 `release:hot` 会重新创建。ASAR 是 Electron 的应用文件归档，并不是考试日志；正式安装包自身也可能含有 `resources/app.asar`，那份属于安装包运行文件，应保留。
 
@@ -120,7 +120,7 @@ npm run release:hot -- --config config/build.local.json --sign-key "$HOME/procto
 
 Actions 的 `build_type` 可以选 `installers`（完整安装包）、`asar`（应用归档）或 `all`（默认，两者都构建）。完整安装包使用 Windows/macOS 原生 runner，输出 Windows x64（NSIS/便携 EXE）、macOS x64（DMG/ZIP）、macOS arm64（DMG/ZIP）三个 Artifact；ASAR 在独立 Ubuntu job 中执行 `release:hot`，输出 `HydroProctor-<version>-<buildVersion>-asar` Artifact，内含签名 ASAR 与构建信息 JSON，沿用同一组公钥、版本、构建编号与地址参数；缺少签名私钥时 ASAR job 会明确失败。工作流只上传构建结果，不自动发布 Release 或上传 OJ。Mac runner 使用明确的 Intel/Arm 标签，参见 [GitHub 官方 runner 列表](https://github.com/actions/runner-images)。
 
-正式分发需要代码签名。Windows 可设置 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`；Mac 设置 `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`，以及 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 进行公证。Windows 未配置证书时可生成测试包；macOS 的系统网络扩展必须使用 Developer ID Application 签名，构建会拒绝未签名或 ad-hoc 签名的完整包。还需 Variable PROCTOR_MAC_TEAM_ID（10 位 Team ID，亦可用 APPLE_TEAM_ID）及 Secrets PROCTOR_MAC_HOST_PROFILE_BASE64、PROCTOR_MAC_EXTENSION_PROFILE_BASE64：分别为下文两份 Developer ID 配置描述文件的 Base64。工作流自动准备 MSVC、编译原生模块和运行策略测试。
+代码签名与公证为可选项。Windows 可设置 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`；Mac 可设置 `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`，以及 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 进行公证。没有证书时，Mac 构建脚本使用免费的 ad-hoc 签名并关闭公证，兼容 Intel / Apple Silicon，不需要付费 Apple Developer 账号；生成的包不具有 Developer ID 信任。已取消 Network Extension，不再要求 Team ID 或两份 provisioning profile。工作流只在 Windows 准备 MSVC、编译 WFP 模块并运行原生策略测试。
 
 ## 本地 Docker 构建 Windows
 
@@ -191,7 +191,7 @@ python3 -m unittest discover -s tools/tests -v
 
 启用 root 调试的构建在每次启动时保存脱敏诊断记录，Windows 路径为 `%APPDATA%\HydroProctorClient\diagnostics\debug-<时间戳>.log`，macOS 路径为 `~/Library/Application Support/HydroProctorClient/diagnostics/debug-<时间戳>.log`。即使尚未登录或启动失败，也可查看文件最后的 `*.start` / `*.failed` 定位停在哪一步。控制台保留最近 1,000 条；文件每次启动最多 4 MiB、保留最近 3 次。诊断文件与考试用的加密 `.hplog` 分开，不作为监考证据上传；不记录请求体、代码、Cookie、令牌、密钥或完整证明，URL 移除查询参数与片段。普通构建不创建诊断文件。修改配置后必须重新构建，旧 EXE 不会自动获得控制台。
 
-诊断记录的 `time` 使用系统本地时区并带偏移，例如 `2026-10-10T18:50:45.841+08:00`，另保留 `utc` 和 `timeZone`。旧记录以 `Z` 结尾，表示 UTC，在香港本地需要加 8 小时；它本身不表示系统时钟错误。HTTP 200 的 `net::OK` 不会再记为错误，HTTP 403 等拒绝响应保留为警告。`firewall.stage` 会标明域名解析、原生策略启用、解除及 macOS 授权阶段；只有恢复旧版本遗留状态时才出现策略快照/原规则恢复阶段。
+诊断记录的 `time` 使用系统本地时区并带偏移，例如 `2026-10-10T18:50:45.841+08:00`，另保留 `utc` 和 `timeZone`。旧记录以 `Z` 结尾，表示 UTC，在香港本地需要加 8 小时；它本身不表示系统时钟错误。HTTP 200 的 `net::OK` 不会再记为错误，HTTP 403 等拒绝响应保留为警告。`firewall.stage` 会标明 Windows 域名解析、原生策略启用及解除阶段；只有恢复旧版本遗留状态时才出现策略快照/原规则恢复阶段。
 
 `identity.verified` 记录签名验证后的 UID、域和比赛；`auth.session-accepted` 表示已收到并验证会话令牌，`auth.attempt-complete` 表示服务端返回已完成状态。`request.authentication-failed` 会记录读取认证失败的实际原因和错误码，不记录令牌或证明。排查换账号的问题时，可以用 UID 区分客户端是否已识别新账号，不能仅凭握手的 HTTP 200 判断仍有有效做题会话。
 
@@ -199,17 +199,26 @@ Windows：启动时通过原生辅助程序读取进程访问令牌的 TokenElev
 
 普通考试握手后启动 WFP 动态会话，在 IPv4/IPv6 的连接授权和双向传输层添加自己的临时规则：只放行白名单 IP/端口的 TCP/UDP、DNS、DHCP、IPv6 邻居发现和本机通信，阻止其它流量，也覆盖已建立连接后续的数据包。规则按整机生效，不枚举、停用或修改用户原有防火墙规则。原有安全产品的阻止规则仍可能阻止考试服务器；临时放行不会强制覆盖它们。DNS 地址在限制前并行解析，8 秒解析超时；原生命令前台等待上限 15 秒，参考耗时不能替代真机测量。
 
-正常退出、保留日志退出和已验证 root 调试均解除自己的临时策略。WFP 会话所属辅助程序退出时，系统自动删除动态规则；辅助程序独立监测 Electron 进程及每 2 秒心跳，父进程退出或超过 10 秒无心跳时退出，使系统清理会话。macOS 扩展也使用单调时钟的 10 秒租约，XPC 连接断开或租约过期后全部放行。网络组件异常时撤销认证缓存，重新进入考试必须再次成功启用过滤；不会静默回退为应用内白名单。
+正常退出、保留日志退出和已验证 root 调试均解除自己的临时策略。WFP 会话所属辅助程序退出时，系统自动删除动态规则；辅助程序独立监测 Electron 进程及每 2 秒心跳，父进程退出或超过 10 秒无心跳时退出，使系统清理会话。Windows 网络组件异常时撤销认证缓存，重新进入考试必须再次成功启用过滤；不会静默回退为应用内白名单。
 
 PowerShell 仅用于恢复旧版 `network-state.json` 遗留策略，保留 `unlock-firewall.ps1`、`watch-network.ps1`、`restore-network.bat`；不再打包或调用旧 `lock-firewall.ps1`。迁移失败会保留状态并阻止新限制，可用管理员终端运行恢复脚本，默认读取 `%APPDATA%\HydroProctorClient\network-state.json`。不要删除用户数据。Docker 构建继续跳过旧 `app/generated` 并生成本次公钥配置。
 
-macOS 13+：完整安装包嵌入 Swift 原生主机与 `NEFilterPacketProvider` 系统扩展，检查双向 IPv4/IPv6 包、保留 ARP/DNS/DHCP/必要的 ICMP 网络维护通信，拦截其它 IP 流量；碎片包与不支持的协议默认拒绝。扩展安装后保持加载，但无有效监考租约时全部放行；每场考试只通过 XPC 更新内存策略，不反复安装扩展。首次授权等待最多 120 秒，界面明确显示授权阶段。拒绝授权、扩展缺失或启动失败会阻止取得做题证明。XPC 校验调用程序签名及 Team ID，跨团队程序不能控制过滤。
+macOS 13+：只记录监考事件，不安装 Network Extension、不启动原生网络辅助程序、不解析系统网络白名单、不修改系统网络。认证、环境绑定、提交证明、实时加密日志、异常续写、结束上传和断网补传继续生效。窗口失焦、最小化、多显示器及进程黑名单命中只记录，不抢焦点、不强制 kiosk 或置顶、不占用防作弊快捷键，也不终止进程；Windows 的原有保护方式保持不变。浮窗明确显示“macOS 仅记录日志，不限制系统网络”。客户端内部仍限制考试页面的导航和资源来源，以保护认证 IPC 的信任边界；这不限制其他应用联网，也不构成整机网络监考。
 
-本地 Mac 构建在 `build.local.json` 填写 `macTeamId`、`macHostProfileFile`、`macExtensionProfileFile`（示例已有注释）。两份 Developer ID provisioning profile 分别对应 `com.exam.proctor` 和 `com.exam.proctor.network-filter`，同一个 Team，开启 `content-filter-provider-systemextension` 和共同的 `TeamID.com.exam.proctor` App Group，主程序还需 System Extension 安装能力。构建自动编译指定架构、嵌入 profile、分别签名原生扩展/主程序并验证；公证沿用 APPLE_* 配置。用户把应用放入 `/Applications` 后，首次进入监考时允许系统扩展和内容过滤。不能通过 sudo 或关闭 SIP 代替正式签名部署。
+Mac 无须填写 `macTeamId`、`macHostProfileFile`、`macExtensionProfileFile`。旧的本地配置含有这三项时会忽略它们，不访问其中的文件，也不写入安装包。准备 Node.js 22.12+、macOS Command Line Tools 以及填好的 `config/build.local.json` 后，在客户端目录一行构建：
 
-`npm run build:native -- --win --x64` 可单独编译 WFP 辅助程序；Mac 使用 `npm run build:native -- --config config/build.local.json --mac --arm64`。`npm run test:native` 只测试原生包解析和白名单决策，不在当前电脑上实际切断网络。Linux 可交叉编译 Windows 模块，但 Mac 模块需要 macOS SDK；实际过滤、权限及异常退出恢复必须在对应系统确认。
+```bash
+npm ci && npm run build -- --config config/build.local.json --mac --arm64
+# Intel Mac 将 --arm64 改为 --x64
+```
 
-进程黑名单按平台配置；默认记录事件，只有明确设置 `antiCheat.terminateBlacklisted=true` 才终止命中的进程。Windows 为原有黑名单，Mac 可在 `processBlacklistByPlatform.darwin` 中配置可执行文件名。
+默认在没有 `CSC_LINK` / `CSC_NAME` 时使用 ad-hoc 签名，不需要 Apple 账号，打包使用系统 `codesign` 工具。ad-hoc 签名不是 Developer ID 认证；没有公证的下载包可能被 Gatekeeper 提示阻止，确认来源可信后按 [Apple 官方说明](https://support.apple.com/102445)在“系统设置 → 隐私与安全性”中允许打开。无需关闭 SIP。提供自己的签名证书时，构建沿用 electron-builder 的常规签名、公证流程。参见 [electron-builder v26 签名说明](https://www.electron.build/v26/docs/features/code-signing/code-signing-mac/)。
+
+此前安装过网络扩展版本的 Mac 建议安装本次完整包，以移除包内原生扩展文件。已注册的旧扩展可在系统设置中关闭／移除；新客户端不会激活或续租它，旧实现的租约到期会放行网络。
+
+`npm run build:native -- --win --x64` 可单独编译 WFP 辅助程序；Mac 无需编译原生模块，`build:native -- --mac` 直接跳过。`npm run test:native` 只测试原生策略，不在当前电脑上实际切断网络。Linux 可交叉编译 Windows 模块；Windows 实际过滤、权限及异常退出恢复仍需在对应系统确认。
+
+进程黑名单按平台配置；默认记录事件。Windows 只有明确设置 `antiCheat.terminateBlacklisted=true` 才终止命中的进程；macOS 无论该值如何均只记录。Mac 可在 `processBlacklistByPlatform.darwin` 中配置可执行文件名。
 
 ## 日志恢复与更新
 
@@ -229,4 +238,4 @@ macOS 13+：完整安装包嵌入 Swift 原生主机与 `NEFilterPacketProvider`
 
 完整包下载按系统/架构选择。OJ 现有 fullUpdate 的 installerUrl/portableUrl 用于 Windows x64，本客户端不会在 Mac 展示 EXE；Mac 完整包先人工分发。客户端也识别 `fullUpdate.platforms.<win32|darwin>.<x64|arm64>`，但不能把 Windows 与 Mac 包混进一个 installerUrl。认证握手始终执行 OJ 的精确版本策略，buildVersion 不替代考试认证版本。
 
-自动化测试覆盖协议验签/刷新、IPC 请求范围、加密格式、异常恢复、原账号断网补传、丢失回执、更新重定向/哈希和 ASAR 目录结构。Windows 防火墙恢复、macOS 权限和签名/公证仍需在相应系统真机验收；Linux 的单元测试不能证明这些行为。
+自动化测试覆盖协议验签/刷新、IPC 请求范围、加密格式、异常恢复、原账号断网补传、丢失回执、更新重定向/哈希和 ASAR 目录结构。Windows 防火墙恢复，以及 macOS 启动、Keychain 日志保护和可选签名/公证仍需在相应系统真机验证；Linux 的单元测试不能证明这些行为。

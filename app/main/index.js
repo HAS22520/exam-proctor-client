@@ -56,8 +56,9 @@ function applyWindowFocus() {
   if (!window || window.isDestroyed()) return;
   const enabled = protectedFocus && !dialogDepth && !exiting;
   if (enabled) antiCheat.start(); else antiCheat.stop();
-  window.setKiosk(enabled && config.window?.kiosk !== false);
-  window.setAlwaysOnTop(enabled && config.window?.alwaysOnTop !== false);
+  const enforce = enabled && process.platform !== 'darwin';
+  window.setKiosk(enforce && config.window?.kiosk !== false);
+  window.setAlwaysOnTop(enforce && config.window?.alwaysOnTop !== false);
 }
 
 async function showExamDialog(options, owner = window) {
@@ -192,7 +193,7 @@ async function syncLogin(force = false) {
     for (const record of controller.records.values()) {
       if (record.login.uid === controller.current?.login.uid && record.journal?.state.phase === 'open') await activity.run('auth', 'refresh', () => record.auth.ensure());
     }
-    controller.logViolation({ source: 'CLIENT', type: 'MONITOR_HEARTBEAT', target: '', detail: debug ? 'root-debug' : 'exam' });
+    controller.logViolation({ source: 'CLIENT', type: 'MONITOR_HEARTBEAT', target: '', detail: debug ? 'root-debug' : process.platform === 'darwin' ? 'macos-audit-only' : 'exam' });
     await controller.retryUploads();
   } catch (error) {
     diagnostics.error('monitor.failed', error);
@@ -241,7 +242,9 @@ async function requestExit() {
   try {
     const uploaded = await diagnostics.span('exit.finish-and-upload', () => controller.finish(async () => {
       await showUploadWindow();
-      publishStatus({ ...latestStatus, upload: { phase: 'restoring-network', percent: null }, message: '正在恢复系统网络，请稍候；日志随后会自动上传。' });
+      const auditOnly = process.platform === 'darwin';
+      publishStatus({ ...latestStatus, upload: { phase: auditOnly ? 'preparing' : 'restoring-network', percent: null },
+        message: auditOnly ? '正在准备加密日志，随后自动上传。' : '正在恢复系统网络，请稍候；日志随后会自动上传。' });
       try { await diagnostics.span('exit.restore-network', () => firewall.unlock()); restored = true; }
       catch (error) {
         networkWarning = '系统网络尚未确认恢复。守护进程会继续恢复；必要时请以管理员身份运行随包 restore-network.bat。';

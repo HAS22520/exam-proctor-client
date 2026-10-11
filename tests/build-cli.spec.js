@@ -80,6 +80,26 @@ test('check validates keys and origins before packaging; rejects conflicting tar
   }
   await assert.rejects(run(['--win', '--arm64'], dependencies), /x64 only/);
 });
+test('macOS packaging needs no developer account, profile files or native build', async (t) => {
+  const { root, file, config } = fixture(t);
+  const pkg = require('../package.json');
+  assert.equal(pkg.build.extraResources, undefined);
+  assert.equal(pkg.build.mac.sign, undefined); assert.equal(pkg.build.afterSign, undefined);
+  assert.ok(pkg.build.win.extraResources.some((resource) => resource.to === 'native'));
+  fs.writeFileSync(file, JSON.stringify({ ...config, macTeamId: 'old-team', macHostProfileFile: 'deleted.profile',
+    macExtensionProfileFile: 'missing.profile', _comments: { macTeamId: 'Retired option' } }));
+  const env = buildEnvironment(file, {});
+  assert.equal(env.PROCTOR_MAC_TEAM_ID, undefined); assert.equal(env.PROCTOR_MAC_HOST_PROFILE, undefined);
+  await run(['--config', file, '--mac', '--arm64'], { root, env: {}, build: async ({ config: settings }) => {
+    assert.equal(settings.mac.identity, '-'); assert.equal(settings.mac.notarize, false);
+    assert.equal(settings.afterPack, undefined);
+    await settings.beforePack({ electronPlatformName: 'darwin', arch: 3, packager: { appInfo: { version: '1.2.3' } } });
+    assert.equal(fs.existsSync(path.join(root, 'build/native')), false);
+  } });
+  await run(['--config', file, '--mac', '--x64'], { root, env: { CSC_LINK: 'certificate.p12' }, build: async ({ config: settings }) => {
+    assert.equal(settings.mac.identity, undefined); assert.equal(settings.mac.notarize, undefined);
+  } });
+});
 
 test('native build uses project root and dynamic version; beforePack keeps file-supplied trust', async (t) => {
   const { root, file } = fixture(t);

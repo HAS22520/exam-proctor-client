@@ -10,12 +10,12 @@ class FirewallGuard {
     this.activity = runtime.activity || ((_kind, _stage, action) => action());
     this.lookup = runtime.lookup;
     this.pending = Promise.resolve();
-    this.native = runtime.native || new NativeNetwork({ platform: this.platform, trace: this.trace,
+    this.native = this.platform === 'darwin' ? null : runtime.native || new NativeNetwork({ platform: this.platform, trace: this.trace,
       onFailure: (error) => { this.isLocked = false; runtime.onFailure?.(error); } });
     this.legacy = runtime.legacy || new LegacyFirewallGuard(config, logger, directory, runtime);
     this.statePath = this.legacy.statePath;
   }
-  get mode() { return this.platform === 'win32' ? 'windows-wfp' : this.platform === 'darwin' ? 'macos-network-extension' : 'unavailable'; }
+  get mode() { return this.platform === 'win32' ? 'windows-wfp' : this.platform === 'darwin' ? 'macos-audit-only' : 'unavailable'; }
   checkPrivileges() { return this.platform === 'win32' ? this.native.check() : Promise.resolve(); }
   enqueue(stage, action) {
     const result = this.pending.then(() => this.activity('network', stage, action));
@@ -23,6 +23,13 @@ class FirewallGuard {
     return result;
   }
   lock() {
+    if (this.platform === 'darwin') {
+      if (!this.auditRecorded) {
+        this.logger?.logViolation({ source: 'CLIENT', type: 'NETWORK_AUDIT_ONLY', target: this.mode, detail: 'macOS 不限制系统网络' });
+        this.auditRecorded = true;
+      }
+      return Promise.resolve(false);
+    }
     if (this.lockPending) return this.lockPending;
     if (this.isLocked && (this.native.healthy?.() ?? this.native.active) && !this.restorePending) return Promise.resolve(true);
     this.cancelled = false;
@@ -45,6 +52,7 @@ class FirewallGuard {
     return pending;
   }
   recover() {
+    if (this.platform === 'darwin') { this.auditRecorded = false; return Promise.resolve(); }
     if (this.restorePending) return this.restorePending;
     const legacy = this.platform === 'win32' && fs.existsSync(this.statePath);
     if (!this.lockPending && !this.isLocked && !this.native.active && !legacy) return Promise.resolve();
@@ -64,6 +72,6 @@ class FirewallGuard {
   cancelPendingLock() {
     if (this.lockPending) { this.cancelled = true; this.native.close(); }
   }
-  close() { this.native.close(); }
+  close() { this.native?.close(); }
 }
 module.exports = FirewallGuard;
