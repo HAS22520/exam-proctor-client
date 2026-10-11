@@ -15,7 +15,7 @@ function failure(code, detail = '') {
   return Object.assign(new Error(messages[code] || `系统网络操作失败（${code}）${detail ? `：${String(detail).slice(0, 200)}` : ''}`), { code });
 }
 
-function executable(platform = process.platform, resources = process.resourcesPath) {
+function executable(resources = process.resourcesPath) {
   const name = 'hydro-network.exe';
   const packaged = resources && path.join(resources, 'native', name);
   return packaged && fs.existsSync(packaged) ? packaged : path.resolve(__dirname, '../../build/native', name);
@@ -41,7 +41,7 @@ async function endpoints(origins, lookup = dns.lookup) {
 }
 
 class NativeNetwork {
-  constructor({ platform = process.platform, spawnProcess = spawn, filename = executable(platform), trace = () => {}, onFailure = () => {}, now = () => performance.now() } = {}) {
+  constructor({ platform = process.platform, spawnProcess = spawn, filename = executable(), trace = () => {}, onFailure = () => {}, now = () => performance.now() } = {}) {
     Object.assign(this, { platform, spawnProcess, filename, trace, onFailure, now });
     this.sequence = 0; this.requests = new Map(); this.child = null; this.active = false; this.closing = false;
   }
@@ -75,9 +75,6 @@ class NativeNetwork {
         let reply;
         try { reply = JSON.parse(line); } catch { continue; }
         if (reply.event === 'stage') { this.trace('info', 'firewall.stage', { phase: reply.phase }); continue; }
-        if (reply.event === 'lease-expired') {
-          this.active = false; this.onFailure(failure('HELPER_EXITED')); continue;
-        }
         const pending = this.requests.get(reply.id);
         if (!pending) continue;
         this.requests.delete(reply.id); clearTimeout(pending.timer);

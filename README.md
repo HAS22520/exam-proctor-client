@@ -1,241 +1,180 @@
 # HydroNext 监考客户端
 
-Electron 客户端，连接 HydroNext 的 `HydroNext-proctor/1` 协议。支持 Windows x64，以及 macOS Intel x64 / Apple Silicon arm64。源码修改可直接在本仓库查看；HydroNext 父仓库把本目录作为独立 Git 仓库忽略。
+Electron 客户端，使用 `HydroNext-proctor/1` 协议连接 OJ。支持 Windows x64 和 macOS 13+（Intel x64 / Apple Silicon arm64）。
 
-## 功能与部署顺序
+| 平台 | 监考行为 | 运行权限 |
+| --- | --- | --- |
+| Windows | WFP 临时限制整机网络，记录加密日志 | 必须以管理员身份启动 |
+| macOS | 只记录监考事件，不限制系统网络、不强制窗口置顶或终止进程 | 普通用户即可，无须网络扩展授权 |
 
-1. 在 OJ「监考设置」生成认证密钥，取得同一次生成的认证公钥（Ed25519）、日志加密公钥（RSA-3072）和 keyId。两组服务端私钥只保存在 OJ，不能用于客户端构建。
-2. 通过环境变量注入公钥和地址，构建、签名、安装客户端。公钥不写进公开源码，但可从安装包提取；隐藏公钥不能证明客户端程序未被修改。
-3. 在 OJ 设置与安装包完全一致的指定客户端版本，开启系统监考，再开启比赛监考。用户登录原 OJ 账号并报名，客户端自动握手，无须注册码或手工设备登记。
-4. ui-next 现有的 `window.examAPI.proctorHeaders` 桥会自动为代码提交、文件提交和自测生成设备签名证明；服务端决定是否接受。普通浏览器没有此桥，不能提交监考比赛。
-5. 退出时可选“保留日志退出”：停止本次客户端监控、恢复网络并保留开放的 attempt 和可续写日志，重新登录原账号后继续做题。只有“上传日志并结束监考”才关闭 attempt、生成最终加密日志并上传；上传前成绩待确认，断网可保留文件并用原账号补传。两种操作都不会代交代码，禁止删除本机数据。
+两种平台均保留设备认证、版本校验、读取和提交证明、日志续写、上传及补传。macOS 客户端内部仍限制考试页面的导航与资源来源，保护认证桥的信任边界；其他应用的联网不受影响。
 
-必须部署 HydroNext 的 `/proctor/identity` 接口（域内为 `/d/<domainId>/proctor/identity`）。它使用已有认证私钥签署当前登录 UID、root 权限和比赛/题目上下文。接口是本次唯一新增的服务端协议入口，不读取前端显示的用户名来判断 root。
+## 部署准备
 
-每次启动，在加载 OJ 页面前清空客户端会话的 Cookie、HTTP 登录缓存、Service Worker 和 Cache Storage，要求重新登录。保留本地草稿、设备密钥和加密日志，原账号登录后仍可恢复未结束的监考或补传日志。登录 Cookie 变化会立即撤销旧身份与调试权限，并触发重新认证。
+1. 在 OJ「监考设置」生成密钥，导出同一次生成的认证公钥（Ed25519）、日志加密公钥（RSA-3072）及 keyId。服务端私钥不进入客户端。
+2. 将公钥、OJ 地址及允许访问的 origin 注入构建配置，构建并分发客户端。公钥可从安装包提取，隐藏公钥不能证明程序未被修改。
+3. 在 OJ 设置与客户端完全一致的 `version`，启用系统及比赛监考。用户登录、报名后自动握手，无须注册码。
 
-启动准备超过 350 毫秒时先显示本地准备窗口，说明网络恢复、系统重启检查或考试页面连接的当前步骤，完成后自动关闭。认证与网络操作期间，监考浮窗显示等待动画、阶段、已等待秒数和参考耗时；退出上传窗口也显示网络恢复的具体阶段。参考耗时不是服务端承诺的剩余时间，超过范围时会继续显示实际等待时间，并提示仍在等待系统或网络响应。Windows 必须以管理员身份启动；macOS 仅记录日志，不修改系统网络、不需要管理员权限或网络扩展授权。同一登录状态、同一路由、同一刷新要求的并发认证共用一次握手；强制刷新仍会重新验证身份，换账号立即撤销旧身份，已应用的网络策略不会重复启动设置流程。
+服务端须提供签名身份接口 `/proctor/identity`（域内为 `/d/<domainId>/proctor/identity`）及比赛监考接口。客户端为受保护的题目、题单、附件和提交请求提供设备签名证明，由 OJ 校验版本、令牌、环境与比赛状态。
 
-设备密钥和日志 AES 密钥使用 Electron safeStorage 加密：Windows 的 DPAPI / macOS 的 Keychain。密钥不能加密时客户端拒绝启动，不回退明文。跨系统用户、迁移用户数据或删除密钥可能使原考试无法恢复。当前固定 Electron 44；升级到 46 前需迁移其异步 safeStorage API。参见 [Electron 官方说明](https://github.com/electron/electron/blob/main/docs/api/safe-storage.md)。
+## GitHub Actions 一键构建
+
+将本客户端作为独立仓库推送 GitHub，使用 `.github/workflows/build.yml`。若放在 Hydro 父仓库内，该目录被父仓库忽略，应推送客户端自己的仓库。
+
+先在仓库 **Settings → Secrets and variables → Actions** 配置：
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Secret | `PROCTOR_AUTH_PUBLIC_KEY` | 完整认证公钥 PEM，保留换行 |
+| Secret | `PROCTOR_LOG_PUBLIC_KEY` | 完整日志加密公钥 PEM，保留换行 |
+| Variable | `PROCTOR_KEY_ID` | 与上述公钥对应的 32 位小写十六进制 keyId |
+| Secret，可选 | `PROCTOR_UPDATE_PUBLIC_KEY` | 独立的 Ed25519 更新签名公钥；启用 ASAR 更新时需要 |
+| Secret，可选 | `PROCTOR_UPDATE_PRIVATE_KEY` | 对应的更新签名私钥；生成可安装的 ASAR 时需要 |
+
+在 **Actions → Build Hydro proctor client → Run workflow** 填写 `version`、递增的 `build_version`、OJ 起始地址、考试及更新 origin JSON 数组、更新清单 URL 和 root 调试开关。选择构建类型：
+
+- `installers`：生成 Windows x64 的安装版／便携 EXE，以及 macOS x64、arm64 的 DMG／ZIP，无须更新签名私钥。
+- `asar`：只生成签名应用更新归档，必须配置两项更新密钥。
+- `all`：同时生成安装包与 ASAR，密钥要求同 `asar`。
+
+构建成功后，从运行页面的 **Artifacts** 下载对应平台、架构的 ZIP，解压取得安装包。Windows 使用原生 Windows runner；Mac 两种架构分别使用 Intel 和 Apple Silicon runner。本工作流只上传产物，不自动发布 Release 或上传 OJ。
+
+### macOS 安装与可选签名
+
+没有 `MAC_CSC_LINK` 证书时，构建使用免费的 ad-hoc 签名并关闭公证，生成 DMG 不需要 Apple Developer 账号、Team ID 或 provisioning profile。
+
+用户根据 Mac 芯片选择 `mac-x64` 或 `mac-arm64` 产物，打开 DMG，将应用拖入“应用程序”再启动。未公证的下载包可能被 Gatekeeper 阻止；确认来源可信后，在 **系统设置 → 隐私与安全性 → 仍要打开** 中允许启动，参见 [Apple 操作说明](https://support.apple.com/102445)。ad-hoc 签名不提供 Developer ID 身份认证。
+
+若已有发行证书，可设置 `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`；公证再配置 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`。Windows 签名使用 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`。这些均为可选项。
 
 ## 本地构建
 
-需要 Node.js 22.12 或更新版本。先 `npm ci`，运行 `npm test`。本地配置位于 `config/exam-config.json`，远端地址使用完整 origin（协议、主机、端口），不能只填写域名。
+需要 Node.js 22.12+。在本客户端目录复制 `config/build.example.json` 为 `config/build.local.json`，按照 `_comments` 填写各项；注释字段不会进入安装包。公钥路径相对于配置文件，文件应放在仓库外。本地配置已被 Git 忽略，`.env` 不会自动加载。
 
-推荐使用跨平台构建脚本 `scripts/build.js`：复制 `config/build.example.json` 为 `config/build.local.json`，填写后台的 keyId、版本、buildVersion 构建编号、两组公钥文件路径（启用 ASAR 更新时再填独立更新公钥）、考试地址、允许访问的 origin 和更新地址。公钥文件路径相对于这份 JSON 文件解析，支持绝对路径；Windows 路径可写成 `C:/proctor-keys/auth-public.pem`。本地配置文件已被 Git 忽略。
+`allowedOrigins` 和 `updateOrigins` 使用完整 origin，例如 `https://oj.example.com`；不同子域、协议和端口需分别填写，不支持路径或通配符。HTTPS 必需，仅本机回环地址允许 HTTP 调试。`versionUrl` 填 OJ「更新设置」提供的远端清单地址。
 
-示例中的 `_comments` 是每项配置的中文填写说明，可以保留或删除，构建时不会写入安装包配置。文件保持标准 JSON，不支持 `//` 或 `/* */` 注释。修改 `_comments` 外的实际配置值；`oj.example.com`、keyId 和公钥路径均须替换。`versionUrl` 来自 OJ「更新设置」提供的远端清单地址，客户端仓库不再保留本地 `version.json` 示例。
-
-在 `exam-proctor-client` 目录运行（Bash 和 PowerShell 均适用）：
-
-```text
+```bash
 npm ci
 npm run build -- --config config/build.local.json --check
 
-# 在 Windows 构建机，生成安装版和便携版 EXE：
+# Windows：安装版和便携版
 npm run build -- --config config/build.local.json --win --x64
-
-# 在 macOS 构建机，分别生成 Intel / Apple Silicon 的 DMG 和 ZIP：
-npm run build -- --config config/build.local.json --mac --x64
-npm run build -- --config config/build.local.json --mac --arm64
-```
-
-输出位于 `dist/`。`--check` 只验证并生成包内配置，不下载打包工具或生成安装包；`--dir` 生成解包目录，`--help` 查看用法。也可从任意工作目录运行 `node /完整路径/exam-proctor-client/scripts/build.js --config /完整路径/build.local.json --win --x64`。`PROCTOR_*` 环境变量优先于 JSON 配置，原有 `npm run dist`、`npm run pack` 和 GitHub Actions 入口继续可用。构建不会自动发布。
-
-客户端的 `package.json` 显式声明 npm 和空的 `workspaces`，用于建立独立的依赖扫描边界。即使放在 Hydro 的 Yarn 仓库内、同时存在其它包管理器的锁文件，electron-builder 也应只扫描客户端。请保留这两项；无需删除或重装 Hydro 的 `node_modules`。
-
-在 Windows 原生构建前安装 Visual Studio Build Tools 的 C++ 桌面开发组件，并在 x64 Developer PowerShell/Command Prompt 中运行 npm 命令（需要 cl.exe）。WSL/Linux x64 原生交叉构建另需 MinGW-w64 C++ 编译器 x86_64-w64-mingw32-g++，推荐使用下文 Docker 构建。便携包命令：
-
-```bash
+# 只生成便携版
 npm run build -- --config config/build.local.json --win --x64 --portable
-```
 
-默认的 `--win --x64` 同时生成便携版与 NSIS 安装版。WSL/Linux 上生成 NSIS 安装版需要可正常执行 Windows 程序的系统 Wine，并能下载 Electron、NSIS 等工具；NSIS 不需要 Mono。未安装或 Wine 无法运行时，可先使用便携版，或使用已有 GitHub Actions 的 Windows 构建任务。macOS 签名与公证在 macOS 构建机完成。参见 [electron-builder v26 跨平台构建说明](https://www.electron.build/v26/docs/features/multi-platform-build/)。
-
-以下 Bash 示例引用管理员导出的**公钥**文件；文件应位于仓库外：
-
-```bash
-export PROCTOR_AUTH_PUBLIC_KEY="$(cat /secure/auth-public.pem)"
-export PROCTOR_LOG_PUBLIC_KEY="$(cat /secure/log-public.pem)"
-export PROCTOR_KEY_ID='后台显示的32位小写十六进制keyId'
-export PROCTOR_CLIENT_VERSION='1.2.3'
-export PROCTOR_CLIENT_BUILD_VERSION='2026101001'
-# 启用 ASAR 更新时预置独立更新公钥：
-export PROCTOR_UPDATE_PUBLIC_KEY="$(cat /secure/update-public.pem)"
-export PROCTOR_TARGET_URL='https://oj.example.com/'
-export PROCTOR_ALLOWED_ORIGINS='["https://oj.example.com"]'
-export PROCTOR_UPDATE_ORIGINS='["https://oj.example.com"]'
-export PROCTOR_VERSION_URL='https://oj.example.com/client-updates/version.json'
-export PROCTOR_ALLOW_ROOT_DEBUG='false'
-npm run dist -- --win --x64
-# 在 Mac 构建机：
-npm run dist -- --mac --arm64
-npm run dist -- --mac --x64
-```
-
-PowerShell 设置公钥时使用 `$env:PROCTOR_AUTH_PUBLIC_KEY = Get-Content -Raw <公钥路径>`，保留真实 PEM 换行。`.env` 不会自动加载。
-
-| 环境变量 | 含义 |
-| --- | --- |
-| `PROCTOR_AUTH_PUBLIC_KEY` | 必填，Ed25519 SPKI PEM 认证公钥 |
-| `PROCTOR_LOG_PUBLIC_KEY` | 必填，RSA-3072 SPKI PEM 日志加密公钥 |
-| `PROCTOR_KEY_ID` | 必填，对应两组密钥的 32 位 keyId |
-| `PROCTOR_CLIENT_VERSION` | 可选，覆盖安装包版本，格式 x.y.z；须匹配 OJ 指定版本 |
-| `PROCTOR_CLIENT_BUILD_VERSION` | YYYYMMDDNN 字符串，如 2026101001；覆盖构建编号，每次新发布递增，须与 OJ 清单一致 |
-| `PROCTOR_UPDATE_PUBLIC_KEY` | 启用 ASAR 时必填，独立 Ed25519 SPKI PEM 更新签名公钥；完整包与 ASAR 保持一致 |
-| `PROCTOR_UPDATE_PRIVATE_KEY` | 仅 `release:hot` 使用的独立更新签名私钥，也可用 `--sign-key FILE`；不写入客户端 |
-| `PROCTOR_ALLOWED_ORIGINS` | JSON 数组；覆盖本地 exam.allowedOrigins |
-| `PROCTOR_UPDATE_ORIGINS` | JSON 数组；覆盖本地 updater.allowedOrigins，包含清单、包、重定向的源站 |
-| `PROCTOR_TARGET_URL` | 覆盖考试起始 URL，必须位于考试白名单 |
-| `PROCTOR_VERSION_URL` | 覆盖 OJ 更新清单 URL，同时替换备用清单地址 |
-| `PROCTOR_ALLOW_ROOT_DEBUG` | true/false；覆盖 debug.allowRoot，默认关闭 |
-
-HTTPS 必需，只有 localhost 可使用 HTTP。`start`、`build`、`pack`、`dist`、`release:hot` 和 electron-builder 的 beforePack 都验证公钥，缺失或类型错误会失败。生成的 `app/generated/` 已被忽略；正式包内有公钥和配置，没有服务端私钥。客户端报告实际启动的应用版本和构建编号；下载清单或 ASAR 不会提前改变本机版本。
-
-`npm start` 用于开发；`npm run pack` 生成解包目录。支持 ASAR 更新需要先生成一组**独立更新签名密钥**，该私钥不是 OJ 的认证私钥或日志解密私钥。密钥目录放在仓库外，例如：
-
-```bash
-npm run keys:update -- --out-dir "$HOME/proctor-update-keys"
-```
-
-生成 `update-public.pem` 和 `update-private.pem`，不会覆盖已有密钥，也不会显示私钥内容。Windows 请将这个目录的访问权限限制给构建管理员；POSIX 系统会使用私钥 0600、目录 0700 权限。在 `config/build.local.json` 的 `updatePublicKeyFile` 填该公钥的路径。先用这个配置构建并安装一次完整客户端，使更新加载器和公钥进入安装包。旧 EXE 不含加载器，不能仅靠发布 ASAR 获得新更新能力。
-
-后续只改应用代码时，增加 `buildVersion`（例如从 `2026101001` 增至 `2026101002`，显示 `version` 可保持 `1.0.0`），执行：
-
-```bash
-npm run release:hot -- --config config/build.local.json --sign-key "$HOME/proctor-update-keys/update-private.pem"
-```
-
-`--sign-key` 指定的是与 `updatePublicKeyFile` 配对的 **update-private.pem 私钥**；不能传 update-public.pem 公钥，也不能使用 OJ 的认证或日志解密私钥。
-
-生成 `updates/app-<version>-<buildVersion>.asar` 和同名 `.json`（包含 `version`、`buildVersion`、`signed`、`size` 字节数、`sha256`）。把 **ASAR 本身**上传至 OJ「更新设置」的热更新包，填写与产物完全一致的 `version` 和 `buildVersion`，发布清单。元数据 JSON 是构建信息，不是完整 OJ 清单；签名位于 ASAR 内的 `release.json`，OJ 不需要增加签名接口或保留外部签名字段。不传签名私钥时仍可生成归档供检查，但 `signed=false`，客户端会拒绝安装。
-
-公钥与地址配置随包生成，`PROCTOR_*` 环境变量优先于 JSON。ASAR 不需要 Docker、Wine、`--win` 或 `--mac`，同一份纯 JS/HTML 归档用于 Windows x64 和 macOS x64/arm64。它不包含 Electron 运行时或 Windows WFP 辅助程序；macOS 已取消原生网络扩展。Windows 引入原生网络组件时必须先安装新版完整包；旧客户端不能用 ASAR 安装组件。新加载器同时验证签名中的 nativeNetworkVersion=1 与已安装组件版本，拒绝不兼容归档。此后纯 JS/HTML 修改仍能使用 ASAR。升级 Electron、原生组件、更改密钥、白名单或 root 调试权限时，需要完整安装包。根目录保留 package.json、启动入口和生成配置，私钥、本地构建 JSON、仓库 `.env` 不会进入归档。
-
-`updates/` 是上述可选热更新命令的产物目录，不是运行所需源码，也不参与正常安装包构建。历史遗留的 `updates/app.asar` 已清理；整目录可删除，需要时 `release:hot` 会重新创建。ASAR 是 Electron 的应用文件归档，并不是考试日志；正式安装包自身也可能含有 `resources/app.asar`，那份属于安装包运行文件，应保留。
-
-## GitHub Actions
-
-独立客户端仓库的 `.github/workflows/build.yml` 提供手动 workflow_dispatch 构建。将客户端仓库推送 GitHub 后，添加 Secrets：`PROCTOR_AUTH_PUBLIC_KEY`、`PROCTOR_LOG_PUBLIC_KEY`；使用 ASAR 时另加 `PROCTOR_UPDATE_PUBLIC_KEY`（上面生成的更新公钥）和 `PROCTOR_UPDATE_PRIVATE_KEY`（对应私钥，仅 ASAR job 使用）；添加 Variable：`PROCTOR_KEY_ID`。Actions 页面填写版本、递增的 `build_version`、考试地址、两个 origin JSON 数组、更新清单 URL，以及是否允许 root 调试。
-
-Actions 的 `build_type` 可以选 `installers`（完整安装包）、`asar`（应用归档）或 `all`（默认，两者都构建）。完整安装包使用 Windows/macOS 原生 runner，输出 Windows x64（NSIS/便携 EXE）、macOS x64（DMG/ZIP）、macOS arm64（DMG/ZIP）三个 Artifact；ASAR 在独立 Ubuntu job 中执行 `release:hot`，输出 `HydroProctor-<version>-<buildVersion>-asar` Artifact，内含签名 ASAR 与构建信息 JSON，沿用同一组公钥、版本、构建编号与地址参数；缺少签名私钥时 ASAR job 会明确失败。工作流只上传构建结果，不自动发布 Release 或上传 OJ。Mac runner 使用明确的 Intel/Arm 标签，参见 [GitHub 官方 runner 列表](https://github.com/actions/runner-images)。
-
-代码签名与公证为可选项。Windows 可设置 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`；Mac 可设置 `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`，以及 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` 进行公证。没有证书时，Mac 构建脚本使用免费的 ad-hoc 签名并关闭公证，兼容 Intel / Apple Silicon，不需要付费 Apple Developer 账号；生成的包不具有 Developer ID 信任。已取消 Network Extension，不再要求 Team ID 或两份 provisioning profile。工作流只在 Windows 准备 MSVC、编译 WFP 模块并运行原生策略测试。
-
-## 本地 Docker 构建 Windows
-
-在 WSL/Linux 的客户端目录执行，沿用填写好的 `config/build.local.json`：
-
-```bash
-npm run build:docker -- --config config/build.local.json --win --x64 --check
-npm run build:docker -- --config config/build.local.json --win --x64
-# 只生成便携 EXE
-npm run build:docker -- --config config/build.local.json --win --x64 --portable
-```
-
-采用 [electron-builder v26 官方跨平台构建流程](https://www.electron.build/v26/docs/features/multi-platform-build/) 的 Wine 容器，以 `electronuserland/builder:22-wine` 为基础，通过 `native/windows/Dockerfile` 添加 MinGW-w64，缓存为本机镜像 `hydro-proctor-builder:22-wine-wfp`，使用 Node 22。当前终端用户须有 Docker daemon 访问权限；构建脚本不会自动修改系统用户组或调用 sudo。`--check` 只验证配置，不启动容器。macOS 打包仍需 macOS；此容器入口仅支持 Windows x64，GitHub Actions 继续使用原有 Windows/macOS 原生 runner。
-
-首次运行自动拉取镜像并在容器内执行 `npm ci`，后续复用客户端 `.docker-cache/` 内的 npm、Electron、electron-builder 和 Wine 缓存；产物写入 `dist/`。容器只挂载独立的临时源码副本、缓存和输出目录，依赖安装在临时副本中，不使用 Hydro 或本机 `node_modules`。宿主机上的公钥文件先读取、验证，再通过环境变量传入；`build.local.json`、PEM 文件、`.env` 和服务端私钥不复制到容器。
-
-自定义镜像必须已安装 x86_64-w64-mingw32-g++；设置后跳过自动构建基础镜像。需要固定自定义镜像摘要时：
-
-```bash
-PROCTOR_BUILDER_IMAGE=your-registry/proctor-builder-with-mingw@sha256:实际摘要 npm run build:docker -- --config config/build.local.json --win --x64
-```
-
-`PROCTOR_*` 公钥、版本和地址环境变量与普通 `build` 一样可以覆盖 JSON 配置。这个本地容器入口用于生成测试包，没有转发宿主机签名证书变量；正式签名发行使用原生构建或 GitHub Actions 中的证书配置。
-
-## 比赛读取认证与结束监考
-
-兼容 HydroNext 提交 `b74f64ed` 的读取保护：开启监考的比赛在读取题目、提交页面、题目文件、题单、打印页面和比赛私有文件前，需要带有 `problem_view` 或 `contest_view` 的 GET 签名证明。客户端通过签名身份响应确认账号、域和比赛，完成版本与设备认证后，按原始路径和读取参数生成证明。深链接、刷新和附件请求也会自动补充证明；每次读取生成新的 nonce，已有前端桥接证明保持原样。身份、握手和状态接口不走读取签名，跨源跳转剥离监考令牌和证明。
-
-版本或认证密钥不匹配时不能获得有效证明，由 OJ 拒绝读取和提交；客户端不会用调试身份绕过服务端检查。普通比赛及赛后浏览仍由 OJ 的既有规则决定。客户端进入比赛前应先报名并登录，且构建版本必须与后台指定版本完全一致。
-
-同一 origin、域、比赛和题目上下文的签名身份最多缓存 20 秒，并在签名即将到期前重新获取；导航认证串行合并，比赛页与题目列表共用一次握手。每次读取和提交仍生成新的请求证明，由 OJ 校验实际请求的版本、令牌、环境和比赛状态。客户端不再对每个受保护资源额外查询比赛状态；后台定期检查及登录变化会重新获取签名身份。
-
-结束监考并上传成功后，服务端会把该账号在这场比赛中的 attempt 设为 `complete`。之后握手可能返回 HTTP 200 和 `completed: true`，而不是新的会话令牌；这代表该场监考已结束，不代表版本不匹配。客户端显示“本场监考已结束且日志已上传”，不再对此记录反复握手或恢复监考限制。按“完成并退出”退出客户端后，另一账号可以重新登录、独立认证和建立自己的日志；原账号继续同场比赛受服务端规则限制，客户端不会清除原日志或重开已结束的 attempt。
-
-点击“退出 / 结束监考”先选择操作。“保留日志退出”不关闭服务端 attempt、不生成最终文件也不上传；正常退出会在加密日志中记录 CLIENT_PAUSED 和 CLIENT_SHUTDOWN，下次原账号登录仍可续写与做题。“上传日志并结束监考”先明确提示必须上传日志才能确认成绩，随后打开本地独立上传窗口，显示整理/加密、实际网络上传百分比和字节数、等待服务端确认、成功或待补传状态。上传到 100% 仍需等待有效回执，才允许“完成并退出”。网络中断时提示日志已加密保存在本机、成绩待确认，可选择保留待补传文件退出，联网后重新启动并登录原账号补传。此时不能继续做题。多个待上传比赛依次显示，各自成功才报告全部完成。
-
-上传窗口先显示网络恢复阶段。恢复失败时显示单独的网络警告，仍整理日志并尝试向白名单内的 OJ 上传；失败则保留加密文件供补传，不重新开始考试。加密整理定期让出主进程事件循环，上传使用文件流和实际网络进度，最长等待 120 秒；兼容 Electron 44 的字符串响应头及请求体流先关闭、服务端回执后到达的行为。
-
-考试页面的监考面板显示认证状态、已监考时长、待补传数量、实际运行的版本/buildVersion 和更新状态，提供检查更新、签名 ASAR 安装及完整包下载入口。拖动面板标题可改变位置，位置在当前 OJ origin 的本地存储中保留，窗口缩放时限制在视口内；仍可收起以减少遮挡。管理员调试和补传按钮按当前可信状态显示。
-
-## 管理员解密日志
-
-`tools/decrypt-log.py` 是离线命令行工具，需要 Python 3.9+ 和 `cryptography`。Windows 可用 `py` 代替下面的 `python3`：
-
-```bash
-python3 -m venv .venv
-# Linux/macOS；Windows 使用 .venv/Scripts/python.exe 执行后续命令
-.venv/bin/python -m pip install -r tools/requirements.txt
-.venv/bin/python tools/decrypt-log.py downloaded.hplog --private-key /path/to/log-private.pem -o decrypted.log
-```
-
-使用 OJ 后台“日志解密私钥”（RSA-3072），不是 Ed25519 认证私钥，也不是客户端构建用公钥。工具也接受 JSON：`{"keyId":"…","encryptionPrivateKey":"-----BEGIN PRIVATE KEY-----\n…"}`，或后台响应的 `privateKeys` / `keys` 包装结构；可用 `--key-id` 额外核对密钥 ID。加密 PEM 使用 `--password` 交互输入密码。私钥只供管理员本地解密，不放入客户端配置、安装包或 Actions 公钥变量。
-
-输出 `.log` 保留原始 UTF-8 JSON Lines：首行是账号/域/比赛绑定元数据，后续每行一个监考事件。文件完整性经过 RSA-OAEP/SHA-256 解包和 AES-256-GCM 校验；错误密钥、截断或篡改不会生成输出文件，已有文件也不会被破坏。默认拒绝覆盖，确需替换时加 `--force`。实时的 `journal.enc` 需要本机 OS 保护的密钥，不能作为 `.hplog` 输入。
-
-验证客户端和解密工具：
-
-```bash
-npm test
-python3 -m unittest discover -s tools/tests -v
-```
-
-## root 调试与系统保护
-
-只有构建配置 `debug.allowRoot=true` 且 OJ **签名响应**确认 具有 `PRIV_ALL` 超级管理员权限时，才自动进入 root 调试：恢复 Windows 防火墙、停止防作弊快捷键/进程扫描、退出 kiosk、允许网络访问所有 HTTP(S) 地址，并可打开开发工具。用户名为 root 的普通账号不能开启。切换账号或验签失败立即取消调试；前端无法请求任意签名或自行声明 root。调试不豁免服务端版本、令牌、提交证明及日志要求。
-
-在 `config/build.local.json` 设置 `"allowRootDebug": true`（或构建时传入 `PROCTOR_ALLOW_ROOT_DEBUG=true`），重新打包后用 OJ 超级管理员账号登录。签名身份验证成功时会自动打开独立“调试控制台”，关闭后可通过监考面板的“调试控制台”按钮重新打开。控制台显示启动步骤、防火墙操作、身份请求、challenge/handshake/refresh 阶段、HTTP 错误、网络拦截、日志上传进度与耗时、页面无响应/崩溃及主进程事件循环延迟；可筛选、复制日志，也可打开考试页面开发工具查看页面问题。控制台使用独立会话，不提供执行命令或任意签名功能。退出登录、验签失败或签名身份到期时关闭控制台并撤销调试权限。
-
-启用 root 调试的构建在每次启动时保存脱敏诊断记录，Windows 路径为 `%APPDATA%\HydroProctorClient\diagnostics\debug-<时间戳>.log`，macOS 路径为 `~/Library/Application Support/HydroProctorClient/diagnostics/debug-<时间戳>.log`。即使尚未登录或启动失败，也可查看文件最后的 `*.start` / `*.failed` 定位停在哪一步。控制台保留最近 1,000 条；文件每次启动最多 4 MiB、保留最近 3 次。诊断文件与考试用的加密 `.hplog` 分开，不作为监考证据上传；不记录请求体、代码、Cookie、令牌、密钥或完整证明，URL 移除查询参数与片段。普通构建不创建诊断文件。修改配置后必须重新构建，旧 EXE 不会自动获得控制台。
-
-诊断记录的 `time` 使用系统本地时区并带偏移，例如 `2026-10-10T18:50:45.841+08:00`，另保留 `utc` 和 `timeZone`。旧记录以 `Z` 结尾，表示 UTC，在香港本地需要加 8 小时；它本身不表示系统时钟错误。HTTP 200 的 `net::OK` 不会再记为错误，HTTP 403 等拒绝响应保留为警告。`firewall.stage` 会标明 Windows 域名解析、原生策略启用及解除阶段；只有恢复旧版本遗留状态时才出现策略快照/原规则恢复阶段。
-
-`identity.verified` 记录签名验证后的 UID、域和比赛；`auth.session-accepted` 表示已收到并验证会话令牌，`auth.attempt-complete` 表示服务端返回已完成状态。`request.authentication-failed` 会记录读取认证失败的实际原因和错误码，不记录令牌或证明。排查换账号的问题时，可以用 UID 区分客户端是否已识别新账号，不能仅凭握手的 HTTP 200 判断仍有有效做题会话。
-
-Windows：启动时通过原生辅助程序读取进程访问令牌的 TokenElevation。非管理员运行会先提示关闭软件并选择“以管理员身份运行”，确认后退出，不打开 OJ、不自动运行提权 PowerShell。即使构建允许 root 调试，Windows 进程仍需管理员权限；调试放行需要后续验证 OJ root 身份。
-
-普通考试握手后启动 WFP 动态会话，在 IPv4/IPv6 的连接授权和双向传输层添加自己的临时规则：只放行白名单 IP/端口的 TCP/UDP、DNS、DHCP、IPv6 邻居发现和本机通信，阻止其它流量，也覆盖已建立连接后续的数据包。规则按整机生效，不枚举、停用或修改用户原有防火墙规则。原有安全产品的阻止规则仍可能阻止考试服务器；临时放行不会强制覆盖它们。DNS 地址在限制前并行解析，8 秒解析超时；原生命令前台等待上限 15 秒，参考耗时不能替代真机测量。
-
-正常退出、保留日志退出和已验证 root 调试均解除自己的临时策略。WFP 会话所属辅助程序退出时，系统自动删除动态规则；辅助程序独立监测 Electron 进程及每 2 秒心跳，父进程退出或超过 10 秒无心跳时退出，使系统清理会话。Windows 网络组件异常时撤销认证缓存，重新进入考试必须再次成功启用过滤；不会静默回退为应用内白名单。
-
-PowerShell 仅用于恢复旧版 `network-state.json` 遗留策略，保留 `unlock-firewall.ps1`、`watch-network.ps1`、`restore-network.bat`；不再打包或调用旧 `lock-firewall.ps1`。迁移失败会保留状态并阻止新限制，可用管理员终端运行恢复脚本，默认读取 `%APPDATA%\HydroProctorClient\network-state.json`。不要删除用户数据。Docker 构建继续跳过旧 `app/generated` 并生成本次公钥配置。
-
-macOS 13+：只记录监考事件，不安装 Network Extension、不启动原生网络辅助程序、不解析系统网络白名单、不修改系统网络。认证、环境绑定、提交证明、实时加密日志、异常续写、结束上传和断网补传继续生效。窗口失焦、最小化、多显示器及进程黑名单命中只记录，不抢焦点、不强制 kiosk 或置顶、不占用防作弊快捷键，也不终止进程；Windows 的原有保护方式保持不变。浮窗明确显示“macOS 仅记录日志，不限制系统网络”。客户端内部仍限制考试页面的导航和资源来源，以保护认证 IPC 的信任边界；这不限制其他应用联网，也不构成整机网络监考。
-
-Mac 无须填写 `macTeamId`、`macHostProfileFile`、`macExtensionProfileFile`。旧的本地配置含有这三项时会忽略它们，不访问其中的文件，也不写入安装包。准备 Node.js 22.12+、macOS Command Line Tools 以及填好的 `config/build.local.json` 后，在客户端目录一行构建：
-
-```bash
+# Mac：在 macOS 上构建，无需付费开发者账号
 npm ci && npm run build -- --config config/build.local.json --mac --arm64
 # Intel Mac 将 --arm64 改为 --x64
 ```
 
-默认在没有 `CSC_LINK` / `CSC_NAME` 时使用 ad-hoc 签名，不需要 Apple 账号，打包使用系统 `codesign` 工具。ad-hoc 签名不是 Developer ID 认证；没有公证的下载包可能被 Gatekeeper 提示阻止，确认来源可信后按 [Apple 官方说明](https://support.apple.com/102445)在“系统设置 → 隐私与安全性”中允许打开。无需关闭 SIP。提供自己的签名证书时，构建沿用 electron-builder 的常规签名、公证流程。参见 [electron-builder v26 签名说明](https://www.electron.build/v26/docs/features/code-signing/code-signing-mac/)。
+Windows 原生构建需 Visual Studio Build Tools 的 C++ 桌面开发组件，并在 x64 Developer Command Prompt／PowerShell 中运行。Mac 需安装 Command Line Tools，以提供打包、签名工具。
 
-此前安装过网络扩展版本的 Mac 建议安装本次完整包，以移除包内原生扩展文件。已注册的旧扩展可在系统设置中关闭／移除；新客户端不会激活或续租它，旧实现的租约到期会放行网络。
+输出位于 `dist/`。`--check` 只验证并生成配置；`--dir` 生成解包目录；`--help` 查看参数。`npm run dist` 与 `build` 等价，`npm run pack` 生成解包目录，`npm start` 用于开发。`package.json` 的 npm 声明和空 `workspaces` 用于隔离 Hydro 父仓库的依赖扫描，应保留。
 
-`npm run build:native -- --win --x64` 可单独编译 WFP 辅助程序；Mac 无需编译原生模块，`build:native -- --mac` 直接跳过。`npm run test:native` 只测试原生策略，不在当前电脑上实际切断网络。Linux 可交叉编译 Windows 模块；Windows 实际过滤、权限及异常退出恢复仍需在对应系统确认。
+环境变量优先于 JSON 配置，可用于 CI：
 
-进程黑名单按平台配置；默认记录事件。Windows 只有明确设置 `antiCheat.terminateBlacklisted=true` 才终止命中的进程；macOS 无论该值如何均只记录。Mac 可在 `processBlacklistByPlatform.darwin` 中配置可执行文件名。
+| 环境变量 | 对应内容 |
+| --- | --- |
+| `PROCTOR_AUTH_PUBLIC_KEY` / `PROCTOR_LOG_PUBLIC_KEY` | 完整公钥 PEM 正文，不是文件路径 |
+| `PROCTOR_KEY_ID` | 两组公钥对应的 keyId |
+| `PROCTOR_CLIENT_VERSION` / `PROCTOR_CLIENT_BUILD_VERSION` | 客户端版本／递增构建编号 |
+| `PROCTOR_TARGET_URL` / `PROCTOR_VERSION_URL` | OJ 起始地址／更新清单 URL |
+| `PROCTOR_ALLOWED_ORIGINS` / `PROCTOR_UPDATE_ORIGINS` | JSON 格式的 origin 数组 |
+| `PROCTOR_ALLOW_ROOT_DEBUG` | `true` 或 `false`，默认关闭 |
+| `PROCTOR_UPDATE_PUBLIC_KEY` | 独立更新公钥 PEM |
+| `PROCTOR_UPDATE_PRIVATE_KEY` | 仅生成签名 ASAR 使用，不进入客户端 |
 
-## 日志恢复与更新
+生成的 `app/generated/` 不提交源码仓库。旧本地配置中的 `macTeamId`、`macHostProfileFile`、`macExtensionProfileFile` 会被忽略，可以删除。
 
-用户数据目录名固定为 `HydroProctorClient`。`journals/<上下文摘要>/journal.enc` 为逐条 AES-GCM 加密记录，附带序号、单调时间和摘要链。`state.json` 仅保留归属、阶段和重试元数据，`secrets/*.bin` 是 OS 保护的密钥，`final.hplog` 使用独立 RSA/AES 封装供 OJ 验证和管理员离线解密。日志不包含代码正文、令牌、私钥或完整请求证明。断电时损坏尾部另行保留并记录恢复事件；中段损坏拒绝续写，不重建空日志冒充完整。
+### WSL／Linux 使用 Docker 构建 Windows
 
-尚未结束的日志重启后自动续写，记录异常退出及客户端重启，只有 OS boot 标识改变才另记系统重启。已结束文件保持不变；上传响应丢失时通过服务端 SHA-256 回执确认。版本/密钥错误暂停该版本的补传，升级客户端后允许重新尝试；管理员修复策略后可点击“补传日志”手动重试。成功上传的加密证据目前保留在本机，便于管理员删除服务端日志后恢复；管理员应按考试留存期限安排本机数据清理。
+需要 Docker daemon 访问权限，无需宿主机 Wine 或 MinGW：
 
-更新器兼容 OJ 的 version/minClientVersion/buildVersion/config/hotUpdate/fullUpdate 清单。**是否有更新只比较合法的 buildVersion 字符串**，格式为实际日期 YYYYMMDD 加两位序号。同版本也能更新；较高显示版本配较低构建编号不会提示新构建。最低版本仍按 x.y.z 独立校验，低于最低版本不能取得做题/提交证明。每次检查都刷新最低版本和远端配置，降低最低版本限制也会生效。旧清单或旧本机身份缺少合法 buildVersion 时提示安装完整客户端，不回退用 version 判断更新。
+```bash
+npm run build:docker -- --config config/build.local.json --win --x64 --check
+npm run build:docker -- --config config/build.local.json --win --x64
+# 可追加 --portable 或 --dir
+```
 
-窗口和认证 IPC 先启动，清单后台检查，不等待慢速更新服务器。存在开放、关闭中或待上传日志时仍可查看更新状态，但禁止下载应用 ASAR 和重启应用新代码；先上传并结束所有监考。下载期间开始监考也会取消暂存，下一次启动加载新包前再次检查所有本地日志（包括其他账号）。已经运行的 ASAR 可继续用于续写，不因日志未结束而切换回旧代码。
+以 `electronuserland/builder:22-wine` 为基础添加 MinGW-w64，首次运行构建本机镜像 `hydro-proctor-builder:22-wine-wfp`。依赖、Electron、Wine 等缓存保存在 `.docker-cache/`，产物写入 `dist/`。只挂载临时源码副本、缓存及输出目录；公钥验证后通过环境变量传入，本地配置、PEM 文件和 `.env` 不复制到容器。
 
-「更新并重启」提示先上传日志时，表示更新被日志状态阻止，尚未开始下载。面板直接显示本机未结束、待上传和需恢复的日志数量及处理方法；此检查包含其他账号留下的日志。「退出但不上传」会保留未结束状态，需原账号登录后选择「上传并结束」；已结束但上传失败的日志可用原账号点击「补传日志」。全部上传成功后解除阻止，不需要删除日志或重新检查更新。状态损坏时保留本地数据并联系管理员恢复。禁用按钮显示禁止光标，只有实际检查、下载、验证或按钮操作中的状态显示等待光标；日志目录中的 `.DS_Store` 等非监考文件不会阻止更新。
+`PROCTOR_BUILDER_IMAGE` 可指定已包含 MinGW-w64 的自定义镜像，跳过镜像构建。Docker 入口仅支持 Windows x64，不转发宿主机代码签名凭据；macOS 使用 Mac 或 GitHub Actions 构建。
 
-签名 ASAR 更新依次经过：受白名单约束的下载/重定向、大小与 SHA-256 校验、预置更新公钥的 Ed25519 验签、所有应用文件的 SHA-256 校验、版本/buildVersion/Electron 身份及信任边界核对，之后暂存到用户数据目录 `updates/`。发布签名绑定构建编号、显示版本、Electron 版本及每个文件的路径、大小、哈希。拒绝链接、unpacked 和原生模块；不会因为清单提供了同一个包的哈希就信任它。考试面板显示下载进度和验证状态，用户确认后重启；选择稍后重启时，下次启动且没有未结束日志时生效。
+## 认证、退出与日志
 
-原安装包中的启动加载器负责验证并加载缓存 ASAR 的 main 入口，以及其中的 preload/页面文件，不覆盖安装目录的 `resources/app.asar`。更新启动完成才确认新版本；首次启动未完成或 main 加载失败，会回退到上一份已确认的签名归档或原安装包。Mac 原始签名 bundle 保持完整。Linux Node 测试验证真实 ASAR 文件、加载选择与失败回退，Windows/macOS 的实际 Electron 启动仍需真机验证。
+每次启动先清空客户端登录 Cookie、HTTP 登录缓存、Service Worker 和 Cache Storage，要求重新登录；保留草稿、设备密钥及加密日志。登录变化立即撤销旧身份。同一上下文的并发认证合并处理，签名身份短暂缓存；每次读取与提交仍生成新的请求证明。
 
-完整包下载按系统/架构选择。OJ 现有 fullUpdate 的 installerUrl/portableUrl 用于 Windows x64，本客户端不会在 Mac 展示 EXE；Mac 完整包先人工分发。客户端也识别 `fullUpdate.platforms.<win32|darwin>.<x64|arm64>`，但不能把 Windows 与 Mac 包混进一个 installerUrl。认证握手始终执行 OJ 的精确版本策略，buildVersion 不替代考试认证版本。
+“退出 / 结束监考”提供两种操作：
 
-自动化测试覆盖协议验签/刷新、IPC 请求范围、加密格式、异常恢复、原账号断网补传、丢失回执、更新重定向/哈希和 ASAR 目录结构。Windows 防火墙恢复，以及 macOS 启动、Keychain 日志保护和可选签名/公证仍需在相应系统真机验证；Linux 的单元测试不能证明这些行为。
+- **保留日志退出**：保留开放的监考记录，不生成最终文件、不上传；原账号再次登录后继续续写和做题。
+- **上传日志并结束监考**：关闭本次监考，生成最终加密文件并上传。窗口显示加密、上传百分比／字节数及服务端确认进度；收到有效回执才报告完成。断网时保留文件，联网后原账号登录补传，成绩待确认。
+
+Windows 在上传前解除网络限制，恢复失败时仍尝试上传并显示警告；macOS 直接准备日志。两种退出操作均不会代交代码。成功结束后，原账号能否再次参加同场比赛由服务端决定；另一账号独立认证，不复用原账号令牌或日志。
+
+用户数据目录为 Windows 的 `%APPDATA%\HydroProctorClient`、macOS 的 `~/Library/Application Support/HydroProctorClient`。实时日志以 AES-GCM 存入 `journals/`，密钥由 Windows DPAPI／macOS Keychain 保护；最终 `.hplog` 使用 OJ 日志公钥封装。不能保护密钥时拒绝启动，不回退明文。
+
+异常退出后自动续写，记录客户端重启与异常事件；检测到系统启动标识变化时记录系统重启。损坏尾部保留备份，中段损坏拒绝续写。上传回执丢失时查询文件 SHA-256 确认。日志不包含代码正文、会话令牌或私钥，禁止通过删除本机数据解决认证、补传或更新问题。
+
+### Windows 网络限制与恢复
+
+普通监考使用 WFP 动态会话，临时放行允许的 IP／端口及必要的 DNS、DHCP、IPv6 邻居发现和本机通信，限制整机其他流量。不会枚举或停用用户原有防火墙规则，其他安全软件仍可能阻止 OJ 连接。
+
+正常退出撤销临时策略；原生辅助进程监测客户端退出和心跳，失联时退出，由系统清理动态规则。网络组件异常会撤销客户端认证，不能以未启用限制的状态继续考试。进度提示显示阶段、实际等待时间和参考耗时。
+
+`unlock-firewall.ps1`、`restore-network.bat` 和旧策略恢复代码保留用于迁移旧版 `network-state.json`，不再用于启用监考限制。恢复失败时，以管理员身份运行随包 `scripts/restore-network.bat`，保留用户数据。
+
+此前安装过 macOS 网络扩展版本时，安装新版完整包并在系统设置关闭／移除旧扩展；当前客户端不会激活它。
+
+## ASAR 热更新
+
+更新只比较递增的 `buildVersion`，格式为实际日期加两位序号 `YYYYMMDDNN`。`version` 仍用于 OJ 精确版本认证和 `minClientVersion` 校验；两者不能互相替代。
+
+先生成一组独立更新签名密钥，将公钥填入构建配置的 `updatePublicKeyFile`，并安装包含该公钥的完整客户端：
+
+```bash
+npm run keys:update -- --out-dir /path/outside-repo/update-keys
+```
+
+后续修改应用代码并增加 `buildVersion`，执行：
+
+```bash
+npm run release:hot -- --config config/build.local.json --sign-key /path/outside-repo/update-keys/update-private.pem
+```
+
+`--sign-key` 必须是对应的更新**私钥**，不能使用更新公钥或 OJ 的认证／日志私钥。产物为 `updates/app-<version>-<buildVersion>.asar` 及构建信息 JSON。将 ASAR 上传 OJ「更新设置」，填写一致的版本与构建编号；构建信息 JSON 不是完整的远端更新清单。未签名归档会被客户端拒绝。
+
+同一份 JS／HTML ASAR 适用于 Windows 和 Mac；不包含 Electron 或 Windows WFP 辅助程序。更换 Electron、原生组件、密钥、白名单或调试权限时重新分发完整包。加载器验证签名、文件哈希、版本、构建编号及运行时兼容性，不覆盖原安装目录；新版本启动失败会回退。
+
+存在未结束或待上传日志时，可查看更新状态，但需先上传并结束所有监考才能安装 ASAR 和重启。此检查包含其他账号的日志。浮窗显示阻止原因、当前版本、更新进度，并允许拖动和收起。
+
+源码仓库的 `updates/` 是可重建产物，可以清理；安装包中的 `resources/app.asar` 和用户数据目录中的日志、更新缓存属于运行数据。完整包地址支持 `fullUpdate.platforms.<win32|darwin>.<x64|arm64>`；旧 `installerUrl` / `portableUrl` 只用于 Windows x64。
+
+## root 调试与诊断
+
+构建配置 `allowRootDebug=true` 且 OJ 签名确认具有 `PRIV_ALL` 权限时，才启用管理员调试：停止防作弊限制、解除 Windows 网络策略，并自动打开独立调试控制台。普通用户名 root、系统 root 或 Windows 管理员身份不能单独开启调试。Windows 启动权限要求及服务端认证、版本和日志规则仍适用。
+
+控制台可筛选、复制诊断记录并打开开发工具。登录失效或换账号时关闭控制台并撤销调试权限。启用该构建选项后，每次启动在用户数据目录 `diagnostics/` 保存脱敏日志，时间使用本地时区偏移并保留 UTC 对照。诊断文件不作为考试证据上传，不记录 Cookie、令牌、私钥或请求体。
+
+排查问题时检查 `startup.*`、`identity.verified`、`auth.session-accepted`、`auth.attempt-complete`、`request.authentication-failed`、`firewall.*` 和 `logs.upload-progress`。HTTP 200 不代表一定取得会话令牌；服务端可能返回“本场监考已结束”。
+
+## 管理员解密日志
+
+需要 Python 3.9+ 和 `cryptography`，使用 OJ 的 RSA 日志解密私钥：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r tools/requirements.txt
+.venv/bin/python tools/decrypt-log.py downloaded.hplog --private-key /path/to/log-private.pem -o decrypted.log
+```
+
+Windows 使用 `py -m venv .venv`，后续以 `.venv/Scripts/python.exe` 执行。工具也接受后台导出的私钥 JSON；`--key-id` 可额外核对 keyId，`--password` 交互读取加密 PEM 的密码。输出为 UTF-8 JSON Lines `.log`，通过 RSA-OAEP／AES-GCM 完整性校验后生成；默认不覆盖已有文件。实时 `journal.enc` 不能作为输入。
+
+## 验证
+
+```bash
+npm test
+npm run test:native
+python3 -m unittest discover -s tools/tests -v
+```
+
+原生测试需要 C++17 编译器，只检查 Windows endpoint 策略解析，不修改系统网络。`npm run build:native -- --win --x64` 可单独编译 WFP 辅助程序。Windows 实际网络限制与恢复、Mac 安装启动及 Keychain 行为仍需在对应系统验证；Node 测试不代替真机检查。

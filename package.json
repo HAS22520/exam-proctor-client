@@ -63,7 +63,6 @@
           "to": "scripts",
           "filter": [
             "unlock-firewall.ps1",
-            "watch-network.ps1",
             "restore-network.bat"
           ]
         },

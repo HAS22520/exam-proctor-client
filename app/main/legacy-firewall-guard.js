@@ -19,7 +19,6 @@ function execute(command, args, options, callback) {
 
 class FirewallGuard {
   constructor(config, logger, directory, runtime = {}) {
-    Object.assign(this, { config, logger, directory, isLocked: false });
     this.platform = runtime.platform || process.platform;
     this.exec = runtime.exec || execute;
     this.trace = runtime.trace || (() => {});
@@ -27,7 +26,6 @@ class FirewallGuard {
     this.pending = Promise.resolve();
     this.restorePending = null;
     this.restoreFailure = null;
-    this.clientPid = runtime.pid || process.pid;
     this.statePath = path.join(directory, 'network-state.json');
   }
 
@@ -75,7 +73,7 @@ class FirewallGuard {
   }
 
   async restore() {
-    if (this.platform !== 'win32' || !fs.existsSync(this.statePath)) { this.isLocked = false; this.restoreFailure = null; return; }
+    if (this.platform !== 'win32' || !fs.existsSync(this.statePath)) { this.restoreFailure = null; return; }
     if (this.restoreFailure && Date.now() < this.retryRestoreAt) throw this.restoreFailure;
     try {
       const state = JSON.parse(fs.readFileSync(this.statePath, 'utf8'));
@@ -91,7 +89,6 @@ class FirewallGuard {
       this.restoreFailure = error; this.retryRestoreAt = Date.now() + 30000;
       throw error;
     }
-    this.isLocked = false;
   }
 
   liveWatch() {
@@ -130,19 +127,14 @@ class FirewallGuard {
 
   recover() {
     if (this.restorePending) return this.restorePending;
-    // A queued lock may not have written its snapshot yet. Only skip recovery
-    // when there is no lock in flight and no saved network state to restore.
     if (this.platform !== 'win32' || !fs.existsSync(this.statePath)) {
-      this.isLocked = false; this.restoreFailure = null; return Promise.resolve();
+      this.restoreFailure = null; return Promise.resolve();
     }
     const pending = this.enqueue(() => this.restore(), 'restore');
     this.restorePending = pending;
     pending.finally(() => { if (this.restorePending === pending) this.restorePending = null; }).catch(() => {});
     return pending;
   }
-
-  unlock() { return this.recover(); }
 }
 
 module.exports = FirewallGuard;
-module.exports.powerShellArgs = powerShellArgs;

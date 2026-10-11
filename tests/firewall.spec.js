@@ -84,6 +84,23 @@ test('legacy recovery keeps failed snapshots and never invokes automatic elevati
   assert.equal(fs.existsSync(guard.statePath), true);
   await assert.rejects(guard.recover(), /操作超时/); assert.equal(calls.length, 1);
 });
+test('migration can request an already running legacy watchdog without launching its removed script', async (t) => {
+  const directory = workspace(t), statePath = path.join(directory, 'network-state.json');
+  const group = 'HydroProctor-abc123';
+  fs.writeFileSync(statePath, JSON.stringify({ group, watchdogProtocol: 1 }));
+  fs.writeFileSync(`${statePath}.watch.json`, JSON.stringify({ group, pid: 123 }));
+  const guard = new LegacyFirewallGuard({}, null, directory, { platform: 'win32', exec: () => assert.fail('reuse the existing watchdog') });
+  let received;
+  const timer = setInterval(() => {
+    if (!fs.existsSync(`${statePath}.restore-request.json`) || received) return;
+    received = JSON.parse(fs.readFileSync(`${statePath}.restore-request.json`, 'utf8'));
+    fs.unlinkSync(statePath);
+  }, 20);
+  t.after(() => clearInterval(timer));
+  await guard.recover();
+  assert.equal(received.group, group); assert.match(received.id, /^[a-f0-9]{32}$/);
+  assert.equal(fs.existsSync(statePath), false);
+});
 test('allowlist resolves all addresses concurrently, includes IPv6 and rejects malformed resolver results', async () => {
   const hosts = [];
   const result = await endpoints(['https://oj.example', 'https://assets.example:8443', 'http://[::1]:8282'], async (host) => {

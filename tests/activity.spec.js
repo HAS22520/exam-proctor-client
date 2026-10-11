@@ -11,14 +11,14 @@ test('network activity explains an authentication wait, keeps elapsed time acros
   now += 500; progress.stage('auth', 'challenge');
   assert.equal(progress.snapshot().stage, 'challenge'); assert.equal(progress.snapshot().elapsedMs, 500);
   const network = progress.run('network', 'lock', () => new Promise((resolve) => { releaseNetwork = resolve; }));
-  now += 5000; progress.stage('network', 'snapshot-policy');
+  now += 5000; progress.stage('network', 'apply-native-policy');
   assert.equal(progress.snapshot().kind, 'network'); assert.equal(progress.snapshot().elapsedMs, 5000);
-  assert.equal(progress.snapshot().estimatedMaxMs, 30000);
+  assert.equal(progress.snapshot().estimatedMaxMs, 10000);
   now += 30000; assert.equal(progress.snapshot().delayed, true);
   releaseNetwork(); await network;
   assert.equal(progress.snapshot().kind, 'auth'); assert.equal(progress.snapshot().elapsedMs, 35500);
   releaseAuth(); await auth; assert.equal(progress.snapshot(), null);
-  assert.ok(statuses.some((value) => value?.stage === 'snapshot-policy'));
+  assert.ok(statuses.some((value) => value?.stage === 'apply-native-policy'));
 });
 test('failures leave a brief explanation without leaking error contents or leaving an endless spinner', async () => {
   let now = 0;

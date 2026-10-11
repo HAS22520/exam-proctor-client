@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const path = require('node:path');
 const { NativeNetwork, endpoints, failure } = require('./native-network');
 const LegacyFirewallGuard = require('./legacy-firewall-guard');
 
@@ -12,8 +13,8 @@ class FirewallGuard {
     this.pending = Promise.resolve();
     this.native = this.platform === 'darwin' ? null : runtime.native || new NativeNetwork({ platform: this.platform, trace: this.trace,
       onFailure: (error) => { this.isLocked = false; runtime.onFailure?.(error); } });
-    this.legacy = runtime.legacy || new LegacyFirewallGuard(config, logger, directory, runtime);
-    this.statePath = this.legacy.statePath;
+    this.legacy = this.platform === 'win32' ? runtime.legacy || new LegacyFirewallGuard(config, logger, directory, runtime) : null;
+    this.statePath = this.legacy?.statePath || path.join(directory, 'network-state.json');
   }
   get mode() { return this.platform === 'win32' ? 'windows-wfp' : this.platform === 'darwin' ? 'macos-audit-only' : 'unavailable'; }
   checkPrivileges() { return this.platform === 'win32' ? this.native.check() : Promise.resolve(); }

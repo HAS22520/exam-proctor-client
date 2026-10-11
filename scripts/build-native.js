@@ -14,19 +14,17 @@ async function buildNative(platform, arch, env = process.env, project = root) {
   const output = path.join(project, 'build/native');
   fs.mkdirSync(output, { recursive: true });
   const common = path.join(project, 'native/common/policy.cpp');
-  if (platform === 'win32') {
-    if (arch !== 'x64') throw new Error('WFP currently supports Windows x64');
-    const filename = path.join(output, 'hydro-network.exe');
-    const source = path.join(project, 'native/windows/main.cpp');
-    if (process.platform === 'win32') {
-      execute('cl.exe', ['/nologo', '/EHsc', '/std:c++17', '/O2', '/MT', '/D_WIN32_WINNT=0x0A00', `/Fe:${filename}`, source, common,
-        '/link', 'fwpuclnt.lib', 'rpcrt4.lib', 'ws2_32.lib', 'advapi32.lib'], output);
-    } else {
-      execute(env.PROCTOR_MINGW_CXX || 'x86_64-w64-mingw32-g++', ['-std=c++17', '-O2', '-static', '-D_WIN32_WINNT=0x0A00',
-        source, common, '-o', filename, '-lfwpuclnt', '-lrpcrt4', '-lws2_32', '-ladvapi32'], output);
-    }
-    return output;
+  if (arch !== 'x64') throw new Error('WFP currently supports Windows x64');
+  const filename = path.join(output, 'hydro-network.exe');
+  const source = path.join(project, 'native/windows/main.cpp');
+  if (process.platform === 'win32') {
+    execute('cl.exe', ['/nologo', '/EHsc', '/std:c++17', '/O2', '/MT', '/D_WIN32_WINNT=0x0A00', `/Fe:${filename}`, source, common,
+      '/link', 'fwpuclnt.lib', 'rpcrt4.lib', 'ws2_32.lib', 'advapi32.lib'], output);
+  } else {
+    execute(env.PROCTOR_MINGW_CXX || 'x86_64-w64-mingw32-g++', ['-std=c++17', '-O2', '-static', '-D_WIN32_WINNT=0x0A00',
+      source, common, '-o', filename, '-lfwpuclnt', '-lrpcrt4', '-lws2_32', '-ladvapi32'], output);
   }
+  return output;
 }
 if (require.main === module) {
   const { parseArgs, buildEnvironment } = require('./build');
