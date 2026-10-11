@@ -60,6 +60,23 @@ test('build ordering alone determines new releases; policies and remote config r
   const legacy = new Updater(config, { directory: workspace(t), trust, version: '0.1.0', fetch: async () => new Response(JSON.stringify({ version: '1.0.0', buildVersion: '2026101002' })) });
   await legacy.check(); assert.equal(legacy.snapshot().phase, 'incompatible');
 });
+test('a foreign optional installer is disabled without blocking a valid manifest or permitting foreign ASAR downloads', async (t) => {
+  const directory = workspace(t), config = validateConfig(base, trust), requested = [];
+  const manifest = { version: '1.0.0', buildVersion: '2026101002',
+    fullUpdate: { platforms: { [process.platform]: { [process.arch]: { installerUrl: 'https://qfile.qq.com/package' } } } },
+    hotUpdate: { version: '1.0.0', asarUrl: 'https://oj.example.com/app.asar', size: 1, sha256: 'a'.repeat(64) } };
+  const updater = new Updater(config, { directory, trust, version: '1.0.0', buildVersion: '2026101001', cache: {},
+    fetch: async (url) => { requested.push(String(url)); return new Response(JSON.stringify(manifest)); } });
+  await updater.check();
+  assert.equal(updater.snapshot().phase, 'available'); assert.equal(updater.snapshot().canHotUpdate, true);
+  assert.equal(updater.snapshot().installerUrl, ''); assert.match(updater.snapshot().installerWarning, /https:\/\/qfile.qq.com/);
+  assert.equal(requested.length, 1);
+  await assert.rejects(updater.response('https://qfile.qq.com/app.asar', 10), (error) => error.code === 'UPDATE_ORIGIN_DENIED');
+  assert.equal(requested.length, 1);
+  manifest.fullUpdate.platforms[process.platform][process.arch].installerUrl = 'https://oj.example.com/setup.exe';
+  await updater.check(); assert.equal(updater.snapshot().installerWarning, '');
+  assert.equal(updater.snapshot().installerUrl, 'https://oj.example.com/setup.exe');
+});
 test('actual ASAR contains a signed release and no private key; altered bytes fail despite a matching external hash', async (t) => {
   const f = fixture(t), result = await release(f);
   await verifyArchive(result.filename, result, f.anchor);

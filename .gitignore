@@ -31,6 +31,7 @@ app.asar
 .env.*
 config/build.local.json
 config/pem
+config/pem-local
 
 bun.lock
 config/build.local.json.lock

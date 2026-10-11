@@ -30,13 +30,15 @@ class Updater {
     const journals = journalUpdateState(this.directory);
     return { ...this.state, enabled: this.config.updater.enabled, source: this.source, rollback: this.failure?.message || '', blocked: journals.blocked, blockedReason: journals.message,
       journalCounts: { open: journals.open, pending: journals.pending, unreadable: journals.unreadable }, version: this.version, buildVersion: this.buildVersion, minimumBlocked: this.minimumBlocked,
-      installerUrl: this.installerUrl || '', canHotUpdate: !!this.cache && !!this.manifest?.hotUpdate?.asarUrl && this.state.available };
+      installerUrl: this.installerUrl || '', installerWarning: this.installerWarning || '',
+      canHotUpdate: !!this.cache && !!this.manifest?.hotUpdate?.asarUrl && this.state.available };
   }
   publish(state) { Object.assign(this.state, state); this.onStatus(this.snapshot()); }
 
   url(value, base) {
     const url = secureUrl(new URL(value, base || this.config.updater.versionUrl).href);
-    if (!this.config.updater.allowedOrigins.includes(url.origin)) throw new Error('Update address outside compiled allowlist');
+    if (!this.config.updater.allowedOrigins.includes(url.origin)) throw Object.assign(
+      new Error(`Update address outside compiled allowlist: ${url.origin}`), { code: 'UPDATE_ORIGIN_DENIED' });
     return url;
   }
 
@@ -117,7 +119,14 @@ class Updater {
       const platform = manifest.fullUpdate?.platforms?.[process.platform]?.[process.arch];
       const info = platform || (process.platform === 'win32' && process.arch === 'x64' ? manifest.fullUpdate : null);
       const candidate = info?.installerUrl || info?.portableUrl;
-      this.installerUrl = candidate ? this.url(candidate).href : '';
+      this.installerUrl = ''; this.installerWarning = '';
+      if (candidate) try { this.installerUrl = this.url(candidate).href; }
+      catch (error) {
+        if (error.code !== 'UPDATE_ORIGIN_DENIED') throw error;
+        // An optional installer link must not block a valid manifest/ASAR.
+        // Keep the download button unavailable; never bypass the allowlist.
+        this.installerWarning = `安装包地址未加入更新白名单，已禁用安装包下载：${new URL(candidate, this.config.updater.versionUrl).origin}`;
+      }
       let newer;
       try { newer = validateBuildVersion(manifest.buildVersion) > validateBuildVersion(this.buildVersion); }
       catch {

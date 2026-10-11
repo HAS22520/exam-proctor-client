@@ -132,6 +132,26 @@ test('simultaneous identity requests for the same account and route share one ha
   f.uid = 8; controller.invalidateIdentity();
   assert.equal((await controller.sync(url)).login.uid, 8);
 });
+test('connection loss cannot retain an authenticated badge or erase open logs; signed recovery clears the failure', async (t) => {
+  const f = fixture(t), controller = new ProctorController(f.options);
+  await controller.sync(url);
+  const journal = controller.current.journal, attempt = controller.current.auth.attemptId;
+  assert.equal(f.statuses.at(-1).authenticated, true);
+  controller.authenticationFailed(new Error('net::ERR_CONNECTION_CLOSED'));
+  assert.equal(f.statuses.at(-1).authenticated, false); assert.equal(f.statuses.at(-1).phase, 'network-error');
+  assert.match(f.statuses.at(-1).message, /无法连接 OJ/);
+  controller.status(); assert.match(f.statuses.at(-1).message, /无法连接 OJ/);
+  assert.equal(journal.state.phase, 'open');
+  f.offline = true;
+  await assert.rejects(controller.sync(url)); assert.equal(f.statuses.at(-1).authenticated, false);
+  f.offline = false;
+  await controller.sync(url);
+  assert.equal(f.statuses.at(-1).authenticated, true); assert.equal(f.statuses.at(-1).message, '');
+  assert.equal(controller.current.journal, journal); assert.equal(controller.current.auth.attemptId, attempt);
+  assert.equal(journal.state.phase, 'open');
+  controller.current.auth.session.expiresAt = new Date(Date.now() - 1).toISOString();
+  controller.status(); assert.equal(f.statuses.at(-1).authenticated, false);
+});
 test('a cookie change during a signed identity response discards the old identity before handshake', async (t) => {
   const f = fixture(t), identities = [];
   let enter, release;

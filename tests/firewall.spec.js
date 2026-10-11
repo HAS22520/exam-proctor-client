@@ -41,6 +41,21 @@ test('macOS records its passive mode without DNS, privilege checks, helpers or n
   await guard.unlock(); await guard.lock(); assert.equal(events.length, 2);
   guard.cancelPendingLock(); guard.close(); assert.deepEqual(native.calls, []);
 });
+test('network protection is ready only after OJ remains reachable; failure rolls back and retains recovery', async (t) => {
+  const native = backend(), events = [];
+  let available = false;
+  const guard = new FirewallGuard({ exam: { allowedOrigins: ['https://127.0.0.1:8282'] } },
+    { logViolation: (event) => events.push(event) }, workspace(t), { platform: 'win32', native,
+      verifyConnectivity: async () => {
+        assert.equal(native.active, true); assert.equal(guard.isLocked, false);
+        if (!available) throw new Error('net::ERR_CONNECTION_CLOSED');
+      } });
+  await assert.rejects(guard.lock(), (error) => error.code === 'NETWORK_OJ_UNREACHABLE' && /TUN/.test(error.message));
+  assert.equal(native.active, false); assert.equal(guard.isLocked, false); assert.equal(events.length, 0);
+  assert.deepEqual(native.calls, [['lock', '127.0.0.1|8282'], 'unlock', 'close']);
+  available = true;
+  await guard.lock(); assert.equal(guard.isLocked, true); assert.equal(events.length, 1);
+});
 test('queued unlock waits for lock to finish; failures never claim successful protection', async (t) => {
   const native = backend(); let release;
   native.lock = () => new Promise((resolve) => { release = () => { native.active = true; resolve(); }; });

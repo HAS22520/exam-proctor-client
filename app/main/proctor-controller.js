@@ -5,7 +5,7 @@ const AuditLogger = require('./audit-logger');
 const { atomicWrite } = require('./device-store');
 const { canonical, digest } = require('./proctor-crypto');
 const { contextFromUrl } = require('./config-policy');
-const { ProctorAuth, Transport, identity, proctorErrorMessage } = require('./proctor-auth');
+const { ProctorAuth, Transport, identity, proctorErrorMessage, isNetworkError } = require('./proctor-auth');
 const { accessRequest } = require('./proctor-access');
 
 function submission(request, context, login) {
@@ -53,9 +53,11 @@ class ProctorController {
     this.identityEpoch = 0;
     this.identityWork = Promise.resolve();
     this.pendingIdentities = new Map();
+    this.authenticationError = null;
   }
 
   invalidateIdentity() {
+    this.authenticationError = null;
     this.identityEpoch++;
     this.identityCache.clear();
     this.pendingIdentities.clear();
@@ -77,6 +79,7 @@ class ProctorController {
     if (current.auth && !current.completed && !current.auth.session) return null;
     this.current = current; this.lastUrl = url;
     await this.onIdentity(current.login);
+    this.authenticationError = null;
     this.status();
     return current;
   }
@@ -93,22 +96,32 @@ class ProctorController {
       } catch { /* Damaged states are handled by recovery, never replaced here. */ }
     }
     const ended = !!active?.completed || !!active?.journal && active.journal.state.phase !== 'open';
-    const phase = active?.completed ? 'complete' : active?.journal?.state.phase || 'idle';
+    const phase = !ended && this.authenticationError ? isNetworkError(this.authenticationError) ? 'network-error' : 'authentication-error'
+      : active?.completed ? 'complete' : active?.journal?.state.phase || 'idle';
     const fallback = active?.completed || phase === 'uploaded' ? '本场监考已结束且日志已上传，原账号不能继续本场比赛。请进入新比赛或联系管理员处理。'
       : ended ? '本场监考已结束，日志尚待上传。请使用原账号补传日志。' : '';
-    this.onStatus({ authenticated: !ended && !!active?.auth?.session, phase, ended,
+    const session = active?.auth?.session;
+    this.onStatus({ authenticated: !ended && !this.authenticationError && !!session && Date.parse(session.expiresAt) > Date.now(), phase, ended,
       createdAt: active?.journal?.state.createdAt || null, root: !!this.current?.login.root, pendingUploads,
-      finishing: this.finishing, upload: this.uploadProgress, message: message || fallback });
+      finishing: this.finishing, upload: this.uploadProgress,
+      message: message || (!ended && this.authenticationError ? proctorErrorMessage(this.authenticationError, this.version) : fallback) });
+  }
+
+  authenticationFailed(error) {
+    this.authenticationError = error;
+    this.identityCache.clear();
+    this.status(proctorErrorMessage(error, this.version));
   }
 
   sync(url, options = {}) {
+    const epoch = this.identityEpoch;
     let key;
     try { key = `${this.identityEpoch}:${!!options.force}:${this.identityKey(url)}`; }
     catch (error) { return Promise.reject(error); }
     if (this.pendingIdentities.has(key)) return this.pendingIdentities.get(key);
     const work = this.identityWork.catch(() => {}).then(() => this.activity('auth', 'identity', () => this.syncSerial(url, options)))
       .catch((error) => {
-        if (error.publicMessage) this.status(proctorErrorMessage(error, this.version));
+        if (epoch === this.identityEpoch) this.authenticationFailed(error);
         throw error;
       });
     this.pendingIdentities.set(key, work);
@@ -157,6 +170,7 @@ class ProctorController {
       if (login.uid) await this.resumeOpen();
       if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
       await this.onIdentity(login);
+      this.authenticationError = null;
       this.status(login.root ? '已验证 root 身份' : '请登录并进入启用监考的比赛');
       return this.current;
     }
@@ -173,6 +187,7 @@ class ProctorController {
         this.records.set(recordKey, record);
         this.current = record;
         await this.onIdentity(login);
+        this.authenticationError = null;
         this.status();
         return record;
       }
@@ -191,6 +206,7 @@ class ProctorController {
     if (record.completed) {
       this.current = record;
       await this.onIdentity(login);
+      this.authenticationError = null;
       this.status();
       return record;
     }
@@ -199,6 +215,7 @@ class ProctorController {
     if (renewed.completed) record.completed = true;
     this.current = record;
     await this.onIdentity(login);
+    this.authenticationError = null;
     this.status();
     return record;
   }
@@ -246,8 +263,12 @@ class ProctorController {
       const session = await record.auth.ensure();
       if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
       if (session.completed || this.finishing) throw new Error('本场监考已结束');
+      this.status();
       record.journal.append(payload.pretest ? 'SELF_TEST_REQUESTED' : 'SUBMISSION_REQUESTED', { pid: payload.pid });
       return record.auth.proof('submit', request.path, payload);
+    }).catch((error) => {
+      if (epoch === this.identityEpoch && !error.code?.startsWith('PROCTOR_ATTEMPT_')) this.authenticationFailed(error);
+      throw error;
     });
     this.proofPending = work.then(() => {}, () => {});
     return work;
@@ -268,6 +289,7 @@ class ProctorController {
     const session = await record.auth.ensure();
     if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
     if (session.completed || this.finishing) throw new Error('本场监考已结束');
+    this.status();
     // The actual protected GET validates the live attempt on the OJ. A second
     // status round trip per resource adds latency without authorizing anything.
     record.journal.append(request.action === 'problem_view' ? 'PROBLEM_VIEW' : 'CONTEST_VIEW', target.payload);

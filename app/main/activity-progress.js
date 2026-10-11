@@ -7,6 +7,7 @@ const stages = {
   restore: ['正在解除系统网络过滤', 500, 5000],
   'resolve-destinations': ['正在解析允许访问的服务器地址', 1000, 10000],
   'apply-native-policy': ['正在应用临时网络白名单', 1000, 10000],
+  'verify-oj-connectivity': ['正在确认网络限制下可以连接 OJ', 500, 5000],
   'remove-native-policy': ['正在移除临时网络限制', 500, 5000],
   'restore-outbound-policy': ['正在恢复原有网络访问策略', 3000, 20000],
   'restore-original-rules': ['正在恢复原有防火墙规则', 3000, 20000],

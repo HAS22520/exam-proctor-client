@@ -10,6 +10,7 @@ const messages = {
   FILTER_FAILED: '系统网络过滤未能启用，请检查系统授权及网络服务后重试。',
   HELPER_EXITED: '系统网络组件已停止，监考认证已撤销。请重新进入考试。',
   ETIMEDOUT: 'Windows 网络组件响应超时。请查看诊断日志。',
+  NETWORK_OJ_UNREACHABLE: '启用网络限制后无法连接 OJ，已撤销本次网络设置。请关闭代理软件的系统代理／TUN／Fake-IP 模式，确认 OJ 可直接访问后重试；日志已保留。',
 };
 function failure(code, detail = '') {
   return Object.assign(new Error(messages[code] || `系统网络操作失败（${code}）${detail ? `：${String(detail).slice(0, 200)}` : ''}`), { code });

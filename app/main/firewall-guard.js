@@ -10,6 +10,7 @@ class FirewallGuard {
     this.trace = runtime.trace || (() => {});
     this.activity = runtime.activity || ((_kind, _stage, action) => action());
     this.lookup = runtime.lookup;
+    this.verifyConnectivity = runtime.verifyConnectivity || (async () => {});
     this.pending = Promise.resolve();
     this.native = this.platform === 'darwin' ? null : runtime.native || new NativeNetwork({ platform: this.platform, trace: this.trace,
       onFailure: (error) => { this.isLocked = false; runtime.onFailure?.(error); } });
@@ -38,10 +39,25 @@ class FirewallGuard {
       if (this.platform === 'win32' && fs.existsSync(this.statePath)) await this.legacy.recover();
       this.trace('info', 'firewall.stage', { phase: 'resolve-destinations' });
       const policy = await endpoints(this.config.exam.allowedOrigins, this.lookup);
+      this.trace('info', 'firewall.policy', { message: policy });
       if (this.cancelled) throw failure('NETWORK_CANCELLED', '用户已退出监考');
       const started = Date.now();
-      try { await this.native.lock(policy); }
-      catch (error) { this.isLocked = false; this.native.close(); throw error; }
+      try {
+        await this.native.lock(policy);
+        this.trace('info', 'firewall.stage', { phase: 'verify-oj-connectivity' });
+        try { await this.verifyConnectivity(); }
+        catch (cause) {
+          this.trace('error', 'firewall.connectivity-failed', { name: cause.name, code: cause.code, message: cause.message });
+          throw Object.assign(failure('NETWORK_OJ_UNREACHABLE'), { cause });
+        }
+      }
+      catch (error) {
+        this.isLocked = false;
+        try { await this.native.unlock(); } catch (restoreError) {
+          this.trace('error', 'firewall.rollback-failed', { code: restoreError.code, message: restoreError.message });
+        } finally { this.native.close(); }
+        throw error;
+      }
       if (this.cancelled) { this.native.close(); throw failure('NETWORK_CANCELLED', '用户已退出监考'); }
       this.isLocked = true;
       this.trace('info', 'firewall.complete', { operation: 'native-lock', backend: this.mode, durationMs: Date.now() - started });

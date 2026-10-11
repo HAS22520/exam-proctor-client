@@ -30,9 +30,11 @@ async function fixture(t, options = {}) {
       super(); this.options = options; this.webContents = new EventEmitter(); this.sent = [];
       Object.assign(this.webContents, { id: windows.length + 1, mainFrame: { url: '' },
         session: { clearStorageData: async () => { startupSteps.push('clear-storage'); }, clearAuthCache: async () => { startupSteps.push('clear-auth'); },
+          setProxy: async (value) => { assert.equal(value.mode, 'direct'); startupSteps.push('direct-proxy'); },
+          closeAllConnections: async () => { startupSteps.push('close-connections'); },
           cookies: Object.assign(new EventEmitter(), { flushStore: async () => { startupSteps.push('flush-cookies'); } }),
           webRequest: { onBeforeSendHeaders: () => {}, onCompleted: (callback) => requestEvents.set('completed', callback),
-            onErrorOccurred: (callback) => requestEvents.set('error', callback), onBeforeRequest: () => {} } },
+            onErrorOccurred: (callback) => requestEvents.set('error', callback), onResponseStarted: (callback) => requestEvents.set('started', callback), onBeforeRequest: () => {} } },
         setWindowOpenHandler: () => {}, send: (channel, value) => this.sent.push({ channel, value }),
         isDevToolsOpened: () => false, closeDevTools: () => {}, openDevTools: () => {}, getURL: () => this.webContents.mainFrame.url });
       windows.push(this);
@@ -101,6 +103,7 @@ async function fixture(t, options = {}) {
     './login-session': require('../app/main/login-session'),
     './diagnostics': require('../app/main/diagnostics'), './debug-console': require('../app/main/debug-console'),
     './activity-progress': require('../app/main/activity-progress'), './waiting-window': require('../app/main/waiting-window'),
+    './exam-network': require('../app/main/exam-network'),
   };
   const source = path.resolve(__dirname, '../app/main/index.js');
   if (options.platform === 'darwin') {
@@ -160,7 +163,22 @@ test('ending requires explicit log reminder and only the native main frame can e
 
 test('every startup clears login and flushes cookies before navigating to the OJ', async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(f.startupSteps, ['clear-storage', 'clear-auth', 'flush-cookies', 'load-page']);
+  assert.deepEqual(f.startupSteps, ['direct-proxy', 'close-connections', 'clear-storage', 'clear-auth', 'flush-cookies', 'load-page']);
+});
+test('an ordinary user gets a native recovery prompt for a failed main page, without triggering it for subframes or aborted navigation', async (t) => {
+  const f = await fixture(t, { exitChoice: 1 }), main = f.windows[0];
+  const failures = [];
+  f.controller.authenticationFailed = (error) => failures.push(error.message);
+  main.webContents.emit('did-fail-load', {}, -100, 'ERR_CONNECTION_CLOSED', 'https://oj.example.com/contest/problems', false);
+  main.webContents.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://oj.example.com/contest/problems', true);
+  await new Promise((resolve) => setImmediate(resolve)); assert.equal(f.choices.length, 0);
+  main.webContents.emit('did-fail-load', {}, -100, 'ERR_CONNECTION_CLOSED', 'https://oj.example.com/contest/problems', true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.choices.length, 1); assert.equal(f.choices[0].title, '考试页面无法加载');
+  assert.match(f.choices[0].detail, /日志已保留/);
+  assert.deepEqual(failures, ['net::ERR_CONNECTION_CLOSED']);
+  assert.equal(main.webContents.getURL(), 'https://oj.example.com/d/exam/');
+  assert.equal(f.startupSteps.filter((step) => step === 'load-page').length, 2);
 });
 test('background authentication and the page bridge retain a version-specific Chinese error', async (t) => {
   const { ProctorError } = require('../app/main/proctor-auth');
@@ -219,10 +237,13 @@ test('successful net::OK responses do not become errors, while HTTP rejection re
   const settled = f.requestEvents.get('completed');
   settled({ id: 1, url: 'https://oj.example.com/assets/page.js', statusCode: 200, error: 'net::OK' });
   settled({ id: 2, url: 'https://oj.example.com/contest/blocked', statusCode: 403, error: 'net::OK' });
+  f.requestEvents.get('error')({ id: 3, url: 'wss://oj.example.com/contest-announcements-conn', statusCode: 101, error: 'net::ERR_WS_UPGRADE' });
   await f.controller.options.onIdentity({ uid: 1, root: true, expiresAt: new Date(Date.now() + 60000).toISOString() });
   const console = f.windows[1];
   const entries = f.handlers.get('exam:debug-logs')(f.event(console), 0).entries.filter((entry) => entry.event === 'request.response');
   assert.equal(entries.length, 1); assert.equal(entries[0].level, 'warn'); assert.equal(entries[0].data.status, 403);
+  const upgraded = f.handlers.get('exam:debug-logs')(f.event(console), 0).entries.filter((entry) => entry.event === 'request.websocket-upgraded');
+  assert.equal(upgraded.length, 1); assert.equal(upgraded[0].level, 'info');
 });
 
 test('offline finish displays retained logs and allows native exit without claiming upload success', async (t) => {

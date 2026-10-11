@@ -5,7 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { ProtectedStore, prepareBootIdentity } = require('./device-store');
 const { validateConfig } = require('./config-policy');
 const { ProctorController } = require('./proctor-controller');
-const { proctorErrorMessage } = require('./proctor-auth');
+const { identity, Transport, proctorErrorMessage, isNetworkError } = require('./proctor-auth');
 const NetworkGuard = require('./network-guard');
 const AntiCheatGuard = require('./anti-cheat');
 const FirewallGuard = require('./firewall-guard');
@@ -15,6 +15,7 @@ const { Diagnostics } = require('./diagnostics');
 const DebugConsole = require('./debug-console');
 const ActivityProgress = require('./activity-progress');
 const WaitingWindow = require('./waiting-window');
+const ExamNetwork = require('./exam-network');
 const { resetLogin, observeLogin } = require('./login-session');
 const { runtime } = require('./runtime');
 const { hasUnfinishedJournals } = require('./update-cache');
@@ -33,7 +34,7 @@ const trace = (level, event, details = {}) => {
 const debugConsole = new DebugConsole(BrowserWindow);
 
 app.setName('HydroProctorClient');
-let window, controller, network, antiCheat, firewall, config, trust, uploadWindow, updates;
+let window, controller, network, antiCheat, firewall, config, trust, uploadWindow, updates, examNetwork;
 let quitting = false, exiting = false, root = false, debug = false, timer, trustedUrl;
 let latestStatus = { phase: 'idle', message: '正在连接 OJ' };
 let exitReady = false;
@@ -42,6 +43,7 @@ let recoveryReady = false;
 let debugExpiry = 0, syncing = false, syncRequested = false, lastUploadStage, identityRevision = 0;
 let lastTick = Date.now();
 let preparationTimer;
+let startupReady = false, pageFailurePrompt = false;
 diagnostics.log('info', 'startup.process', { platform: process.platform, arch: process.arch });
 process.on('uncaughtExceptionMonitor', (error) => diagnostics.error('process.uncaught-exception', error));
 const directory = app.getPath('userData');
@@ -198,11 +200,33 @@ async function syncLogin(force = false) {
     await controller.retryUploads();
   } catch (error) {
     diagnostics.error('monitor.failed', error, { version: running.identity.version });
-    if (latestStatus.phase !== 'network-error') latestStatus.message = proctorErrorMessage(error, running.identity.version);
+    if (latestStatus.phase !== 'network-error') publishStatus({ ...latestStatus, authenticated: false,
+      phase: isNetworkError(error) ? 'network-error' : 'authentication-error', message: proctorErrorMessage(error, running.identity.version) });
   } finally {
     syncing = false;
     if (syncRequested) { syncRequested = false; setTimeout(() => syncLogin(true), 0); }
   }
+}
+
+async function pageLoadFailed(code, message, url, isMainFrame) {
+  if (code === -3) return; // Aborted navigations are normal during redirects/reloads.
+  trace('error', 'page.load-failed', { code, message, url });
+  if (!startupReady || !isMainFrame || pageFailurePrompt || exiting || quitting
+    || !config.exam.allowedOrigins.includes(new URL(url).origin)) return;
+  pageFailurePrompt = true;
+  const error = new Error(`net::${message}`);
+  controller.authenticationFailed(error);
+  try {
+    for (;;) {
+      const choice = await showExamDialog({ type: 'warning', title: '考试页面无法加载', message: '与 OJ 的连接已中断，页面未能加载',
+        detail: `${proctorErrorMessage(error, running.identity.version)}\n可以关闭代理后重试，或退出并保留当前日志。`,
+        buttons: ['重试加载', '返回 OJ 首页', '退出／结束监考'], defaultId: 0, cancelId: 2 });
+      if (exiting || quitting || window.isDestroyed()) return;
+      if (choice.response === 2) { await requestExit(); return; }
+      try { await window.loadURL(choice.response === 0 ? url : config.exam.targetUrl); return; }
+      catch (retryError) { diagnostics.error('page.retry-failed', retryError); }
+    }
+  } finally { pageFailurePrompt = false; }
 }
 
 async function requestExit() {
@@ -299,10 +323,18 @@ app.whenReady().then(async () => {
     controller?.logViolation(item);
   } };
   firewall = new FirewallGuard(config, logger, directory, { trace, activity: activity.run.bind(activity),
+    lookup: (host) => examNetwork.lookup(host),
+    verifyConnectivity: async () => {
+      const record = controller.current;
+      const login = await identity(new Transport(window.webContents.session, record.context.origin, 5000, trace), record.context, trust);
+      if (login.uid !== record.login.uid || login.domainId !== record.login.domainId || login.tid !== record.login.tid) {
+        throw new Error('网络设置期间登录身份已变化，请重新认证');
+      }
+    },
     onFailure: (error) => {
       diagnostics.error('firewall.protection-lost', error);
       controller?.invalidateIdentity();
-      publishStatus({ ...latestStatus, authenticated: false, message: error.message });
+      publishStatus({ ...latestStatus, authenticated: false, phase: 'network-error', message: error.message });
     } });
   await diagnostics.span('startup.restore-network', () => firewall.recover());
   const bootId = await diagnostics.span('startup.boot-identity', () => activity.run('startup', 'boot-identity', () => prepareBootIdentity()));
@@ -316,6 +348,8 @@ app.whenReady().then(async () => {
   window = new BrowserWindow({ width: 1280, height: 800, title: config.exam.title, autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, '../preload/preload.js'), partition: 'persist:hydro-exam',
       nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: true, webSecurity: true } });
+  examNetwork = new ExamNetwork(window.webContents.session, config.exam.allowedOrigins, trace);
+  if (process.platform === 'win32') await diagnostics.span('startup.direct-connection', () => examNetwork.prepare());
   await diagnostics.span('startup.clear-login', () => resetLogin(window.webContents.session));
   network = new NetworkGuard(config, logger);
   network.install(window);
@@ -358,7 +392,7 @@ app.whenReady().then(async () => {
     try { return await controller.headers(url, request); }
     catch (error) {
       // Electron IPC serializes Error.message, but drops publicMessage and code.
-      if (error.publicMessage) throw new Error(proctorErrorMessage(error, running.identity.version));
+      if (error.publicMessage || isNetworkError(error)) throw new Error(proctorErrorMessage(error, running.identity.version));
       throw error;
     }
   });
@@ -383,6 +417,7 @@ app.whenReady().then(async () => {
     window.webContents.openDevTools({ mode: 'detach' });
   });
   const requests = window.webContents.session.webRequest;
+  requests.onResponseStarted((details) => examNetwork.observe(details));
   const requestMethods = new Map();
   const requestGuard = new ProctorRequestGuard(controller, config, window.webContents, () => updates.minimumBlocked);
   requests.onBeforeSendHeaders((details, callback) => {
@@ -398,8 +433,11 @@ app.whenReady().then(async () => {
   });
   const settled = (details) => {
     const read = requestMethods.get(details.id) === 'GET'; requestMethods.delete(details.id);
-    const failure = details.error && details.error !== 'net::OK' ? details.error : undefined;
-    if (failure || details.statusCode >= 400) trace(failure ? 'error' : 'warn', 'request.response',
+    // Chromium ends URLRequest with ERR_WS_UPGRADE after a successful upgrade.
+    const upgraded = details.error === 'net::ERR_WS_UPGRADE' && details.statusCode === 101 && /^wss?:/.test(details.url);
+    const failure = details.error && details.error !== 'net::OK' && !upgraded ? details.error : undefined;
+    if (upgraded) trace('info', 'request.websocket-upgraded', { url: details.url, status: details.statusCode });
+    if (failure || details.statusCode >= 400) trace(failure && failure !== 'net::ERR_BLOCKED_BY_CLIENT' ? 'error' : 'warn', 'request.response',
       { url: details.url, status: details.statusCode, message: failure });
     if (controller.inFlight.delete(details.id)) controller.logViolation({ source: read ? 'ACCESS' : 'SUBMISSION', type: read ? 'ACCESS_RESPONSE' : 'SUBMISSION_RESPONSE',
       target: details.url, detail: String(details.statusCode || details.error || '') });
@@ -411,7 +449,9 @@ app.whenReady().then(async () => {
   window.webContents.on('did-navigate-in-page', () => syncLogin());
   window.on('unresponsive', () => trace('error', 'window.unresponsive'));
   window.on('responsive', () => trace('info', 'window.responsive'));
-  window.webContents.on('did-fail-load', (_event, code, message, url) => trace('error', 'page.load-failed', { code, message, url }));
+  window.webContents.on('did-fail-load', (_event, code, message, url, isMainFrame) => {
+    pageLoadFailed(code, message, url, isMainFrame).catch((error) => diagnostics.error('page.error-prompt-failed', error));
+  });
   window.webContents.on('render-process-gone', (_event, details) => {
     trace('error', 'renderer.crashed', { reason: details?.reason, exitCode: details?.exitCode });
     controller.logViolation({ source: 'CLIENT', type: 'RENDERER_CRASH', target: '', detail: '' });
@@ -419,6 +459,7 @@ app.whenReady().then(async () => {
   window.on('close', (event) => { if (!quitting) { event.preventDefault(); requestExit(); } });
   await diagnostics.span('startup.load-exam', () => activity.run('startup', 'load-exam', () => window.loadURL(config.exam.targetUrl)));
   trace('info', 'startup.ready');
+  startupReady = true;
   clearTimeout(preparationTimer); waitingWindow.close();
   running.markReady();
   if (running.failure) trace('warn', 'update.rollback', running.failure);

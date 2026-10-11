@@ -101,6 +101,17 @@ test('closing attempts retain native finish/refresh/upload proofs on their own p
   controller.current.login.uid = 8;
   assert.deepEqual(await guard.headers(details), {});
 });
+test('a failed network/authentication state strips cached read proofs while keeping native recovery proofs', async () => {
+  const error = new Error('net::ERR_CONNECTION_CLOSED'), proctorPath = `/contest/${tid}/proctor`;
+  const controller = { current: { login: { uid: 7 } }, authenticationError: error, records: new Map([[tid, {
+    login: { uid: 7 }, context: { origin, proctorPath }, journal: { state: { phase: 'open' } }, auth: { session: { token: 'token' } },
+  }]]), headers: async () => { throw error; }, status: () => {} };
+  const guard = new ProctorRequestGuard(controller, { exam: { allowedOrigins: [origin] } }, { id: 1, getURL: () => `${origin}/contest/${tid}` });
+  const requestHeaders = { 'x-proctor-token': 'token', 'x-proctor-proof': 'cached-proof' };
+  assert.deepEqual(await guard.headers({ url: `${origin}/contest/${tid}/problems`, method: 'GET', webContentsId: 1,
+    resourceType: 'mainFrame', requestHeaders }), {});
+  assert.deepEqual(await guard.headers({ url: origin + proctorPath, method: 'POST', webContentsId: -1, requestHeaders }), requestHeaders);
+});
 
 test('completed attempts show their specific reason and trace the failure without exposing request credentials', async () => {
   const messages = [], traces = [];

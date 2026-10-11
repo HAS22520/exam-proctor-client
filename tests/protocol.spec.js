@@ -116,6 +116,14 @@ test('bare ForbiddenError and expired-session responses never claim a definite v
     assert.match(error.publicMessage, /会话已过期或/); return true;
   });
 });
+test('attendance rejection and network loss give distinct actionable messages', () => {
+  assert.throws(() => parseReply(JSON.stringify({ error: { message: 'ForbiddenError',
+    params: ['Attend the contest before starting proctoring.'] } }), 403, 'application/json'), (error) => {
+    assert.equal(error.code, 'PROCTOR_ATTEND_REQUIRED'); assert.match(error.publicMessage, /请先报名/); return true;
+  });
+  assert.match(proctorErrorMessage(new Error('net::ERR_CONNECTION_CLOSED'), version), /无法连接 OJ/);
+  assert.doesNotMatch(proctorErrorMessage(new Error('net::ERR_CONNECTION_CLOSED'), version), /客户端版本及认证密钥/);
+});
 test('attempt binding survives token invalidation and never signs a different attempt', async (t) => {
   const device = store(workspace(t)).device();
   const client = new ProctorAuth({ transport: server(device), context, identity: login, trust, device, version });

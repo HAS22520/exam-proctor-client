@@ -13,7 +13,8 @@ class ProctorRequestGuard {
     const sameUser = owner && owner.login.uid === this.controller.current?.login.uid;
     // Closing attempts still need their native refresh/finish/upload proofs.
     const protocol = details.method === 'POST' && url.pathname === owner?.context.proctorPath;
-    const usable = sameUser && (protocol || !owner.completed && (!owner.journal || owner.journal.state.phase === 'open'));
+    const usable = sameUser && (protocol || !this.controller.authenticationError && !owner.completed
+      && (!owner.journal || owner.journal.state.phase === 'open'));
     let headers = usable && owner.context.origin === origin ? { ...original } : stripProctorHeaders(original);
     if (details.method !== 'GET' || details.webContentsId !== this.webContents.id || !this.config.exam.allowedOrigins.includes(origin)) return headers;
     const target = accessTarget(details.url);
@@ -25,13 +26,14 @@ class ProctorRequestGuard {
     const names = Object.keys(headers).map((name) => name.toLowerCase());
     if (names.includes('x-proctor-token') && names.includes('x-proctor-proof')) return headers;
     const sourceUrl = details.resourceType === 'mainFrame' ? target.identityUrl : this.webContents.getURL();
+    const epoch = this.controller.identityEpoch;
     try {
       headers = { ...stripProctorHeaders(headers), ...await this.controller.headers(sourceUrl,
         { action: target.action, method: 'GET', path: target.path, payload: target.payload }) };
     } catch (error) {
       // The OJ returns a content-free 403 page, including on a deep link/refresh.
       this.controller.trace?.('warn', 'request.authentication-failed', { url: details.url, name: error.name, code: error.code, message: error.message });
-      this.controller.status(proctorErrorMessage(error, this.controller.version));
+      if (epoch === this.controller.identityEpoch) this.controller.status(proctorErrorMessage(error, this.controller.version));
       return stripProctorHeaders(headers);
     }
     return headers;
