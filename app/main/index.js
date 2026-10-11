@@ -114,7 +114,13 @@ async function applyIdentity(login) {
   protectedFocus = !!uid && ((!!login?.proctorEnabled && !closed) || ongoing) && !debug;
   const protectedExam = protectedFocus && !exiting;
   if (protectedExam) {
-    if (config.globalFirewallLock?.enabled) await firewall.lock();
+    if (config.globalFirewallLock?.enabled) {
+      try { await firewall.lock(); }
+      catch (error) {
+        publishStatus({ ...latestStatus, authenticated: false, phase: 'network-error', message: error.message });
+        throw error;
+      }
+    }
     if (revision !== identityRevision || exiting) return;
   } else { antiCheat.stop(); await firewall.unlock(); }
   if (revision !== identityRevision) return;
@@ -142,7 +148,7 @@ function uploadContext(event) {
 }
 
 function publishStatus(status) {
-  latestStatus = { ...status, activity: activity.snapshot(), update: updates?.snapshot(), debug, root, exitReady, networkMode: process.platform === 'win32' ? 'windows-firewall' : 'application-allowlist' };
+  latestStatus = { ...status, activity: activity.snapshot(), update: updates?.snapshot(), debug, root, exitReady, networkMode: firewall?.mode || 'unavailable' };
   if (uploadWindow && !uploadWindow.isDestroyed()) uploadWindow.webContents.send('exam:upload-status', latestStatus);
   if (status.upload) {
     const { phase, percent, sent, total } = status.upload;
@@ -190,7 +196,7 @@ async function syncLogin(force = false) {
     await controller.retryUploads();
   } catch (error) {
     diagnostics.error('monitor.failed', error);
-    latestStatus.message = '认证失败，请检查登录账号、客户端版本及认证密钥';
+    if (latestStatus.phase !== 'network-error') latestStatus.message = '认证失败，请检查登录账号、客户端版本及认证密钥';
   } finally {
     syncing = false;
     if (syncRequested) { syncRequested = false; setTimeout(() => syncLogin(true), 0); }
@@ -211,6 +217,7 @@ async function requestExit() {
     exiting = false; applyWindowFocus(); return;
   }
   if (![1, 2].includes(response)) { exiting = false; applyWindowFocus(); return; }
+  firewall.cancelPendingLock?.();
   clearInterval(timer);
   antiCheat.stop();
   window.setKiosk(false); window.setAlwaysOnTop(false);
@@ -264,6 +271,18 @@ async function requestExit() {
 }
 
 app.whenReady().then(async () => {
+  // Check the process token before loading the OJ, recovering old rules or
+  // opening protected windows. No automatic PowerShell elevation is used.
+  const privilegeGuard = new FirewallGuard({}, null, directory);
+  try { await privilegeGuard.checkPrivileges(); }
+  catch (error) {
+    privilegeGuard.close();
+    if (error.code !== 'ADMIN_REQUIRED') throw error;
+    await dialog.showMessageBox({ type: 'warning', title: '需要管理员权限', message: '请使用管理员模式打开监考客户端',
+      detail: error.message, buttons: ['关闭软件'], defaultId: 0, cancelId: 0 });
+    quitting = true; app.exit(1); return;
+  }
+  privilegeGuard.close();
   config = loadConfig();
   ipcMain.handle('exam:waiting-status', (event) => { waitingWindow.context(event); return activity.snapshot(); });
   // Show a native status window only when preparation takes long enough to be
@@ -275,7 +294,12 @@ app.whenReady().then(async () => {
     trace('warn', 'guard.event', { source: item.source, type: item.type, url: item.target });
     controller?.logViolation(item);
   } };
-  firewall = new FirewallGuard(config, logger, directory, { trace, activity: activity.run.bind(activity) });
+  firewall = new FirewallGuard(config, logger, directory, { trace, activity: activity.run.bind(activity),
+    onFailure: (error) => {
+      diagnostics.error('firewall.protection-lost', error);
+      controller?.invalidateIdentity();
+      publishStatus({ ...latestStatus, authenticated: false, message: error.message });
+    } });
   await diagnostics.span('startup.restore-network', () => firewall.recover());
   const bootId = await diagnostics.span('startup.boot-identity', () => activity.run('startup', 'boot-identity', () => prepareBootIdentity()));
   if (!bootId) trace('warn', 'startup.boot-identity-unavailable');
@@ -408,5 +432,6 @@ app.whenReady().then(async () => {
   app.exit(1);
 });
 app.on('before-quit', (event) => { if (!quitting && window) { event.preventDefault(); requestExit(); } });
+app.on('will-quit', () => firewall?.close());
 // Normal exit awaits restoration in requestExit. Forced exit is covered by the elevated watchdog;
 // asynchronous subprocesses cannot be awaited from Node's exit event.

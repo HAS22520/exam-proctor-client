@@ -29,7 +29,7 @@ function readSigningKey(pem) {
 async function buildArchive(env = process.env, root = path.resolve(__dirname, '..')) {
   // Validate before generating config, staging source or creating output files.
   const key = env.PROCTOR_UPDATE_PRIVATE_KEY ? readSigningKey(env.PROCTOR_UPDATE_PRIVATE_KEY) : null;
-  const { version, buildVersion, trust } = prepare(env, root);
+  const { version, buildVersion, trust, nativeNetworkVersion } = prepare(env, root);
   if (env.PROCTOR_REQUIRE_SIGNED_UPDATE === 'true' && !env.PROCTOR_UPDATE_PRIVATE_KEY) throw new Error('Signed ASAR requires PROCTOR_UPDATE_PRIVATE_KEY');
   if (env.PROCTOR_UPDATE_PRIVATE_KEY && !trust.updatePublicKey) throw new Error('Signed ASAR requires an independent PROCTOR_UPDATE_PUBLIC_KEY');
   const asar = require('@electron/asar');
@@ -53,7 +53,7 @@ async function buildArchive(env = process.env, root = path.resolve(__dirname, '.
       }
       collect(staging);
       const payload = { action: 'hydro-proctor-update/2', version, buildVersion, entry: ENTRY,
-        electronVersion: original.devDependencies?.electron || '', files };
+        electronVersion: original.devDependencies?.electron || '', nativeNetworkVersion, files };
       const signature = sign(payload, key);
       if (!verify(payload, signature, trust.updatePublicKey)) throw new Error('Update signing key does not match embedded public key');
       fs.writeFileSync(path.join(staging, 'release.json'), JSON.stringify({ payload, signature }));

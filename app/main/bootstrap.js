@@ -13,7 +13,7 @@ else (async () => {
     identity: json('app/generated/build.json'), electronVersion: process.versions.electron };
   const cache = new UpdateCache(app.getPath('userData'), anchor);
   const selected = await cache.select();
-  globalThis.__hydroProctorRuntime = { identity: selected ? { version: selected.version, buildVersion: selected.buildVersion } : anchor.identity,
+  globalThis.__hydroProctorRuntime = { identity: selected ? { ...anchor.identity, version: selected.version, buildVersion: selected.buildVersion } : anchor.identity,
     markReady: () => cache.ready(), singleInstanceLocked: true, source: selected ? 'asar' : 'installed', failure: cache.read('failure'), cache };
   try { require(selected ? path.join(cache.filename(selected), ENTRY) : './index'); }
   catch (error) {

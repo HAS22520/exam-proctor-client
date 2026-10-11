@@ -78,6 +78,7 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      PROCTOR_MAC_TEAM_ID: ${{ vars.PROCTOR_MAC_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -85,7 +86,17 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.platform == 'win'
+      - name: Prepare macOS Network Extension profiles
+        if: matrix.platform == 'mac'
+        env:
+          HOST_PROFILE: ${{ secrets.PROCTOR_MAC_HOST_PROFILE_BASE64 }}
+          FILTER_PROFILE: ${{ secrets.PROCTOR_MAC_EXTENSION_PROFILE_BASE64 }}
+        run: |
+          node -e "const fs = require('fs'); for (const [key, value] of [['PROCTOR_MAC_HOST_PROFILE', process.env.HOST_PROFILE], ['PROCTOR_MAC_EXTENSION_PROFILE', process.env.FILTER_PROFILE]]) { if (!value) throw new Error('Missing ' + key + ' provisioning profile'); const file = process.env.RUNNER_TEMP + '/' + key + '.provisionprofile'; fs.writeFileSync(file, Buffer.from(value, 'base64')); fs.appendFileSync(process.env.GITHUB_ENV, key + '=' + file + '\n'); }"
       - run: npm test
+      - run: npm run test:native
       - run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish=never
       - uses: actions/upload-artifact@v4
         with:

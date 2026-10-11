@@ -26,8 +26,9 @@ function prepare(env = process.env, buildRoot = root) {
   const version = env.PROCTOR_CLIENT_VERSION || pkg.version;
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('PROCTOR_CLIENT_VERSION must be x.y.z');
   const buildVersion = validateBuildVersion(env.PROCTOR_CLIENT_BUILD_VERSION || pkg.buildVersion);
-  atomicWrite(path.join(generated, 'build.json'), JSON.stringify({ version, buildVersion }));
-  return { config, trust: normalizedTrust, version, buildVersion };
+  const nativeNetworkVersion = 1;
+  atomicWrite(path.join(generated, 'build.json'), JSON.stringify({ version, buildVersion, nativeNetworkVersion }));
+  return { config, trust: normalizedTrust, version, buildVersion, nativeNetworkVersion };
 }
 if (require.main === module) {
   try { const result = prepare(); console.log(`Validated proctor build ${result.version}`); }

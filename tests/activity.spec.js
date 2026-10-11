@@ -34,7 +34,8 @@ test('queued firewall recovery does not replace the running lock indicator until
   progress.onChange = (value) => statuses.push(value);
   const guard = new FirewallGuard({}, null, workspace(t), { platform: 'darwin', activity: progress.run.bind(progress) });
   let release;
-  guard.applyLock = () => new Promise((resolve) => { release = resolve; });
+  guard.native = { active: false, lock: () => new Promise((resolve) => { release = resolve; }), unlock: async () => {}, close: () => {} };
+  guard.config = { exam: { allowedOrigins: ['https://127.0.0.1'] } };
   const lock = guard.lock(), restore = guard.unlock();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(progress.snapshot().stage, 'lock');
@@ -47,7 +48,8 @@ test('unchanged firewall protection and recovery with no saved state do not star
   progress.onChange = (value) => statuses.push(value);
   let commands = 0;
   const guard = new FirewallGuard({ exam: { allowedOrigins: ['https://oj.example.com'] } }, null, workspace(t), {
-    platform: 'win32', activity: progress.run.bind(progress), exec: (_command, _args, _options, callback) => { commands++; callback(null); },
+    platform: 'win32', activity: progress.run.bind(progress), native: { active: false, async lock() { commands++; this.active = true; }, async unlock() { this.active = false; }, close: () => {} },
+    lookup: async () => [{ address: '127.0.0.1' }],
   });
   await guard.recover(); await guard.unlock(); assert.equal(statuses.length, 0);
   await guard.lock(); assert.equal(commands, 1);

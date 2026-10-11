@@ -28,7 +28,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(root, 'app/main/bootstrap.js'), 'require("./index");');
   const prepared = prepare(environment, root);
   const config = { ...prepared.config }; delete config.trust;
-  return { root, directory, anchor: { trust: prepared.trust, config, identity: { version: prepared.version, buildVersion: prepared.buildVersion }, electronVersion: '44.7.0' } };
+  return { root, directory, anchor: { trust: prepared.trust, config, identity: { version: prepared.version, buildVersion: prepared.buildVersion, nativeNetworkVersion: 1 }, electronVersion: '44.7.0' } };
 }
 async function release(f, extra = {}) { return buildArchive({ ...environment, PROCTOR_CLIENT_BUILD_VERSION: '2026101002', ...extra }, f.root); }
 function unfinished(f, phase = 'open') {
@@ -82,6 +82,13 @@ test('signed archives cannot change trusted keys, allowlists, debug permission, 
   await assert.rejects(verifyArchive(unsigned.filename, unsigned, f.anchor), /发布签名/);
   await assert.rejects(release(f, { PROCTOR_UPDATE_PRIVATE_KEY: '', PROCTOR_REQUIRE_SIGNED_UPDATE: 'true' }), /requires/);
   await assert.rejects(release(f, { PROCTOR_UPDATE_PRIVATE_KEY: crypto.generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() }), /does not match/);
+});
+
+test('native network components require a full installer before compatible ASAR updates', async (t) => {
+  const f = fixture(t), result = await release(f);
+  const old = { ...f.anchor, identity: { version: '1.0.0', buildVersion: '2026101001' } };
+  await assert.rejects(verifyArchive(result.filename, result, old), /系统网络组件不兼容.*完整安装包/);
+  await verifyArchive(result.filename, result, f.anchor);
 });
 test('verified download stays pending until boot, failed first boot rolls back, successful boot commits actual identity', async (t) => {
   const f = fixture(t), result = await release(f), cache = new UpdateCache(f.directory, f.anchor);
@@ -200,7 +207,7 @@ test('installed bootstrap selects cached ASAR entry and exposes its actual versi
   }
   const updated = await boot();
   assert.ok(updated.loaded[0].endsWith('.asar/app/main/index.js')); assert.equal(updated.runtime.source, 'asar');
-  assert.deepEqual({ ...updated.runtime.identity }, { version: '0.9.0', buildVersion: '2026101002' });
+  assert.deepEqual({ ...updated.runtime.identity }, { version: '0.9.0', buildVersion: '2026101002', nativeNetworkVersion: 1 });
   const next = await release(f, { PROCTOR_CLIENT_BUILD_VERSION: '2026101003' }); await cache.stage(next, next.filename);
   // release() rewrites build outputs, restore the native identity once more.
   fs.writeFileSync(path.join(f.root, 'app/generated/build.json'), JSON.stringify(f.anchor.identity));
@@ -212,7 +219,7 @@ test('full client sources build a signed portable-code archive validated against
   const { stageProject } = require('../scripts/build-docker');
   const root = workspace(t); stageProject(path.resolve(__dirname, '..'), root);
   const prepared = prepare(environment, root);
-  const anchor = { trust: prepared.trust, config: prepared.config, identity: { version: prepared.version, buildVersion: prepared.buildVersion }, electronVersion: '44.7.0' };
+  const anchor = { trust: prepared.trust, config: prepared.config, identity: { version: prepared.version, buildVersion: prepared.buildVersion, nativeNetworkVersion: 1 }, electronVersion: '44.7.0' };
   const result = await buildArchive({ ...environment, PROCTOR_CLIENT_BUILD_VERSION: '2026101002' }, root);
   await verifyArchive(result.filename, result, anchor);
   const archive = readArchive(result.filename);

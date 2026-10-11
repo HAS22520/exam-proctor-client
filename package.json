@@ -13,7 +13,9 @@
     "dist": "node scripts/build.js",
     "release:hot": "node scripts/build-hot-update.js",
     "test": "node --test tests/*.spec.js",
-    "keys:update": "node scripts/update-keys.js"
+    "keys:update": "node scripts/update-keys.js",
+    "build:native": "node scripts/build-native.js",
+    "test:native": "node scripts/test-native.js"
   },
   "keywords": [
     "proctor",
@@ -44,10 +46,16 @@
         "from": "scripts",
         "to": "scripts",
         "filter": [
-          "lock-firewall.ps1",
           "unlock-firewall.ps1",
           "watch-network.ps1",
           "restore-network.bat"
+        ]
+      },
+      {
+        "from": "build/native",
+        "to": "native",
+        "filter": [
+          "hydro-network.exe"
         ]
       }
     ],
@@ -83,12 +91,18 @@
       ],
       "hardenedRuntime": true,
       "entitlements": "config/entitlements.mac.plist",
-      "entitlementsInherit": "config/entitlements.mac.plist"
+      "entitlementsInherit": "config/entitlements.mac.plist",
+      "sign": "./scripts/sign-mac.js",
+      "minimumSystemVersion": "13.0",
+      "extendInfo": {
+        "NSSystemExtensionUsageDescription": "考试期间仅允许访问考试服务器，退出监考后自动恢复网络。"
+      }
     },
     "beforePack": "./scripts/before-pack.js",
     "portable": {
       "artifactName": "HydroProctor-${version}-win-${arch}-portable.${ext}"
-    }
+    },
+    "afterSign": "./scripts/after-sign.js"
   },
   "buildVersion": "2026101001"
 }

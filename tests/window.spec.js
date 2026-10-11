@@ -22,7 +22,7 @@ async function fixture(t, options = {}) {
   const app = new EventEmitter();
   Object.assign(app, { setName: () => {}, getPath: () => directory, getVersion: () => '1.0.0', requestSingleInstanceLock: () => true,
     whenReady: () => Promise.resolve(), quit: () => { quitCount++; }, exit: (code) => {
-      if (!options.recoveryError) assert.fail('app must not exit during initialization');
+      if (!options.recoveryError && !options.adminError) assert.fail('app must not exit during initialization');
       assert.equal(code, 1); exitCount++; ready();
     } });
   class BrowserWindow extends EventEmitter {
@@ -69,6 +69,8 @@ async function fixture(t, options = {}) {
       this.running = false; this.refocus = () => windows[0].focus();
       this.activity = runtime.activity || ((_kind, _stage, action) => action());
     }
+    checkPrivileges() { if (options.adminError) return Promise.reject(options.adminError); return Promise.resolve(); }
+    close() {}
     recover() {
       return this.activity('network', 'restore', async () => {
         recoverCount++; if (options.recoveryGate) await options.recoveryGate;
@@ -84,7 +86,7 @@ async function fixture(t, options = {}) {
   }
   const mocks = {
     electron: { app, BrowserWindow, ipcMain: { handle: (name, callback) => handlers.set(name, callback) },
-      dialog: { showMessageBox: async (owner, options) => { choices.push(options); if (onDialog) await onDialog(owner, options); return { response: options.buttons?.length === 3 ? exitChoice : 1 }; }, showErrorBox: (title, message) => {
+      dialog: { showMessageBox: async (owner, options) => { if (!options) { options = owner; owner = null; } choices.push(options); if (onDialog) await onDialog(owner, options); return { response: options.buttons?.length === 3 ? exitChoice : 1 }; }, showErrorBox: (title, message) => {
         if (!options.recoveryError) assert.fail('startup error');
         errors.push({ title, message });
       } } },
@@ -109,6 +111,14 @@ async function fixture(t, options = {}) {
     get antiCheatStarts() { return antiCheatStarts; }, get quitCount() { return quitCount; },
     get pauseCount() { return pauseCount; }, get shutdownCount() { return shutdownCount; }, get recoverCount() { return recoverCount; }, get exitCount() { return exitCount; } };
 }
+
+test('non-administrator startup prompts to close and reopen elevated before any exam or recovery', async (t) => {
+  const error = Object.assign(new Error('请关闭软件，右键选择“以管理员身份运行”'), { code: 'ADMIN_REQUIRED' });
+  const f = await fixture(t, { adminError: error });
+  assert.equal(f.windows.length, 0); assert.equal(f.recoverCount, 0); assert.equal(f.exitCount, 1);
+  assert.match(f.choices[0].message, /管理员模式/); assert.match(f.choices[0].detail, /以管理员身份运行/);
+  assert.equal(f.choices[0].buttons.length, 1); assert.equal(f.choices[0].buttons[0], '关闭软件');
+});
 
 test('ending requires explicit log reminder and only the native main frame can exit after receipt', async (t) => {
   const f = await fixture(t), main = f.windows[0];

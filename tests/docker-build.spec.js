@@ -20,14 +20,16 @@ function fixture(t) {
 test('Docker stages only build sources, injects public configuration and isolates dependencies/caches', (t) => {
   const f = fixture(t); let stage, calls = 0;
   run(['--win', '--x64', '--portable'], { ...f, spawn: (command, args, options) => {
-    calls++; assert.equal(command, 'docker');
-    assert.ok(args.includes('electronuserland/builder:22-wine'));
+    assert.equal(command, 'docker');
+    if (args[0] === 'build') { assert.ok(args.includes('hydro-proctor-builder:22-wine-wfp')); return { status: 0 }; }
+    calls++;
+    assert.ok(args.includes('hydro-proctor-builder:22-wine-wfp'));
     assert.deepEqual(args.slice(-3), ['--win', '--x64', '--portable']);
     const mounts = args.filter((arg) => arg.startsWith('type=bind,'));
     assert.equal(mounts.length, 3);
     stage = mounts.find((arg) => arg.endsWith('target=/project')).match(/source=(.*),target=/)[1];
     assert.notEqual(stage, f.root);
-    assert.deepEqual(fs.readdirSync(stage).sort(), ['app', 'config', 'package-lock.json', 'package.json', 'scripts']);
+    assert.deepEqual(fs.readdirSync(stage).sort(), ['app', 'config', 'native', 'package-lock.json', 'package.json', 'scripts']);
     assert.deepEqual(fs.readdirSync(path.join(stage, 'config')).sort(), ['entitlements.mac.plist', 'exam-config.json']);
     assert.ok(!fs.existsSync(path.join(stage, 'node_modules')));
     assert.ok(fs.existsSync(path.join(stage, 'app/debug/console.html')));

@@ -43,6 +43,9 @@ function buildEnvironment(filename, env) {
     targetUrl: ['PROCTOR_TARGET_URL', 'string'], versionUrl: ['PROCTOR_VERSION_URL', 'string'],
     allowedOrigins: ['PROCTOR_ALLOWED_ORIGINS', 'origins'], updateOrigins: ['PROCTOR_UPDATE_ORIGINS', 'origins'],
     allowRootDebug: ['PROCTOR_ALLOW_ROOT_DEBUG', 'boolean'],
+    macTeamId: ['PROCTOR_MAC_TEAM_ID', 'string'],
+    macHostProfileFile: ['PROCTOR_MAC_HOST_PROFILE', 'path'],
+    macExtensionProfileFile: ['PROCTOR_MAC_EXTENSION_PROFILE', 'path'],
   };
   if (Object.hasOwn(config, '_comments')) {
     const comments = config._comments;
@@ -62,6 +65,7 @@ function buildEnvironment(filename, env) {
     // CI environment takes precedence; unused local key files need not exist there.
     if (env[variable] !== undefined) continue;
     result[variable] = type === 'file' ? fs.readFileSync(path.resolve(path.dirname(configFile), value), 'utf8')
+      : type === 'path' ? path.resolve(path.dirname(configFile), value)
       : type === 'origins' ? JSON.stringify(value) : String(value);
   }
   return result;
@@ -80,10 +84,12 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
   const platform = options.win ? Platform.WINDOWS : options.mac ? Platform.MAC : Platform.current();
   const arch = options.arm64 ? Arch.arm64 : Arch.x64;
   const target = options.dir ? 'dir' : options.portable ? 'portable' : undefined;
+  const { buildNative, afterPack } = require('./build-native');
   await (dependencies.build || build)({ projectDir, targets: platform.createTarget(target, arch), publish: 'never',
-    config: { extraMetadata: { version, buildVersion }, beforePack: async (context) => {
+    config: { extraMetadata: { version, buildVersion }, afterPack: (context) => afterPack(context, env, projectDir), beforePack: async (context) => {
       const prepared = prepare(env, projectDir);
       if (context.packager.appInfo.version !== prepared.version) throw new Error('Build metadata does not match configured client version');
+      if (context.electronPlatformName) await buildNative(context.electronPlatformName, context.arch === Arch.arm64 ? 'arm64' : 'x64', env, projectDir);
     } } });
 }
 if (require.main === module) {

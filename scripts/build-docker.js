@@ -15,9 +15,10 @@ function stageProject(projectDir, destination) {
   });
   fs.mkdirSync(path.join(destination, 'scripts'));
   for (const name of ['build.js', 'prepare-build.js', 'before-pack.js', 'docker-build-entry.js',
-    'lock-firewall.ps1', 'unlock-firewall.ps1', 'watch-network.ps1', 'restore-network.bat']) {
+    'build-native.js', 'sign-mac.js', 'after-sign.js', 'unlock-firewall.ps1', 'watch-network.ps1', 'restore-network.bat']) {
     fs.copyFileSync(path.join(projectDir, 'scripts', name), path.join(destination, 'scripts', name));
   }
+  fs.cpSync(path.join(projectDir, 'native'), path.join(destination, 'native'), { recursive: true });
   fs.mkdirSync(path.join(destination, 'config'));
   for (const name of ['exam-config.json', 'entitlements.mac.plist']) fs.copyFileSync(path.join(projectDir, 'config', name), path.join(destination, 'config', name));
   for (const name of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(projectDir, name), path.join(destination, name));
@@ -36,7 +37,7 @@ function dockerArguments(stage, projectDir, env, options) {
     npm_config_cache: '/cache/npm', WINEPREFIX: '/cache/wine', USE_SYSTEM_WINE: 'true', XDG_CACHE_HOME: '/cache' };
   for (const [name, value] of Object.entries(variables)) args.push('--env', `${name}=${value}`);
   for (const name of Object.keys(env).filter((name) => name.startsWith('PROCTOR_') && name !== 'PROCTOR_BUILDER_IMAGE')) args.push('--env', name);
-  args.push('--entrypoint', 'node', env.PROCTOR_BUILDER_IMAGE || 'electronuserland/builder:22-wine', 'scripts/docker-build-entry.js', '--win', '--x64');
+  args.push('--entrypoint', 'node', env.PROCTOR_BUILDER_IMAGE || 'hydro-proctor-builder:22-wine-wfp', 'scripts/docker-build-entry.js', '--win', '--x64');
   if (options.portable) args.push('--portable');
   if (options.dir) args.push('--dir');
   return args;
@@ -63,6 +64,11 @@ function run(args = process.argv.slice(2), dependencies = {}) {
       PROCTOR_UPDATE_ORIGINS: JSON.stringify(result.trust.updateOrigins), PROCTOR_TARGET_URL: result.config.exam.targetUrl,
       PROCTOR_VERSION_URL: result.config.updater.versionUrl || '', PROCTOR_ALLOW_ROOT_DEBUG: String(result.config.debug.allowRoot),
       ...(env.PROCTOR_BUILDER_IMAGE ? { PROCTOR_BUILDER_IMAGE: env.PROCTOR_BUILDER_IMAGE } : {}) };
+    if (!env.PROCTOR_BUILDER_IMAGE) {
+      const image = (dependencies.spawn || spawnSync)('docker', ['build', '--platform', 'linux/amd64', '--tag', 'hydro-proctor-builder:22-wine-wfp',
+        '--file', path.join(stage, 'native/windows/Dockerfile'), stage], { stdio: 'inherit' });
+      if (image.error || image.status !== 0) throw new Error('Docker native builder image failed; check daemon access and MinGW installation');
+    }
     const child = (dependencies.spawn || spawnSync)('docker', dockerArguments(stage, projectDir, publicEnv, options),
       { stdio: 'inherit', env: { ...process.env, ...publicEnv } });
     if (child.error) throw new Error(`Cannot run Docker: ${child.error.message}`);

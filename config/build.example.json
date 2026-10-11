@@ -10,7 +10,10 @@
     "versionUrl": "填 OJ 管理后台「更新设置」显示的更新清单 URL，例如 https://oj.example.com/client-updates/version.json。使用完整 HTTPS URL，其 origin 必须列入 updateOrigins；这是 OJ 发布的远端 JSON 地址，不是客户端仓库中的本地文件路径。",
     "allowRootDebug": "填布尔值 false 或 true，不加引号。正式考试建议 false；true 允许经 OJ 签名认证、具有 PRIV_ALL 超级管理员权限的账号自动打开实时调试控制台并放开客户端网络限制，同时保存脱敏启动诊断文件（本地时间带时区偏移，并保留 UTC 对照）。每次启动仍要求重新登录。普通用户名 root、操作系统 root 或 Windows 管理员身份均不能单独开启该模式。修改后需重新打包。",
     "buildVersion": "填每次发布的构建编号，必须为 10 位字符串 YYYYMMDDNN，例如 2026101001（2026 年 10 月 10 日第 01 次构建）。同一天依次增加末两位；每个新包必须递增，且与 OJ 更新设置的 buildVersion 完全相同。仅此字段判断更新，version 仍用于考试认证和最低版本校验。",
-    "updatePublicKeyFile": "填独立生成的 Ed25519 更新签名公钥 PEM 路径，路径规则同 authPublicKeyFile。原安装包和后续 ASAR 必须使用同一组更新公钥；签名私钥只通过 release:hot 的 --sign-key FILE 或 CI Secret PROCTOR_UPDATE_PRIVATE_KEY 传入，不会打入客户端。如果仅发布完整安装包，可删除此项；没有更新公钥的客户端禁止安装 ASAR。请勿将 OJ 的认证或日志解密私钥交给构建环境。"
+    "updatePublicKeyFile": "填独立生成的 Ed25519 更新签名公钥 PEM 路径，路径规则同 authPublicKeyFile。原安装包和后续 ASAR 必须使用同一组更新公钥；签名私钥只通过 release:hot 的 --sign-key FILE 或 CI Secret PROCTOR_UPDATE_PRIVATE_KEY 传入，不会打入客户端。如果仅发布完整安装包，可删除此项；没有更新公钥的客户端禁止安装 ASAR。请勿将 OJ 的认证或日志解密私钥交给构建环境。",
+    "macTeamId": "仅 macOS 构建需要：填写 Apple Developer 账号的 10 位 Team ID。Windows 构建可删除这三项。",
+    "macHostProfileFile": "仅 macOS 完整包需要：Developer ID 类型、App ID 为 com.exam.proctor 的配置描述文件，开启 System Extension、Network Extension（content-filter-provider-systemextension）及 TeamID.com.exam.proctor App Group。路径相对本 JSON。",
+    "macExtensionProfileFile": "仅 macOS 完整包需要：同一 Team、App ID 为 com.exam.proctor.network-filter 的 Developer ID 配置描述文件，开启 Network Extension（content-filter-provider-systemextension）及相同 App Group。还需配置 Developer ID Application 签名证书。路径相对本 JSON。"
   },
   "keyId": "替换为后台显示的32位小写十六进制keyId",
   "version": "1.2.3",
@@ -26,5 +29,8 @@
   "versionUrl": "https://oj.example.com/client-updates/version.json",
   "allowRootDebug": false,
   "buildVersion": "2026101001",
-  "updatePublicKeyFile": "../../../proctor-keys/update-public.pem"
+  "updatePublicKeyFile": "../../../proctor-keys/update-public.pem",
+  "macTeamId": "ABCDEFGHIJ",
+  "macHostProfileFile": "../../../proctor-keys/host.provisionprofile",
+  "macExtensionProfileFile": "../../../proctor-keys/filter.provisionprofile"
 }

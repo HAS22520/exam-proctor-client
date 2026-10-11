@@ -66,6 +66,9 @@ async function verifyArchive(filename, expected, anchor) {
   if (!anchor.trust.updatePublicKey || !payload || !verify(payload, archive.release.signature, anchor.trust.updatePublicKey)) throw new Error('ASAR 缺少有效的发布签名');
   if (payload.action !== 'hydro-proctor-update/2' || payload.version !== expected.version || payload.buildVersion !== expected.buildVersion
     || payload.entry !== ENTRY || payload.electronVersion !== anchor.electronVersion) throw new Error('ASAR 版本、构建编号或 Electron 运行时不匹配，需要完整安装包');
+  if (payload.nativeNetworkVersion !== 1 || anchor.identity.nativeNetworkVersion !== 1) {
+    throw new Error('ASAR 与已安装的系统网络组件不兼容，请先安装新版完整安装包');
+  }
   if (!Array.isArray(payload.files) || payload.files.length !== archive.files.size - 1) throw new Error('ASAR 签名文件列表不完整');
   const seen = new Set();
   for (const file of payload.files) {
@@ -77,7 +80,7 @@ async function verifyArchive(filename, expected, anchor) {
     if (hash !== file.sha256) throw new Error(`ASAR 文件签名校验失败：${file.path}`);
   }
   if (!seen.has(ENTRY) || archive.pkg.version !== expected.version || archive.pkg.buildVersion !== expected.buildVersion
-    || canonical(archive.identity) !== canonical({ version: expected.version, buildVersion: expected.buildVersion })
+    || canonical(archive.identity) !== canonical({ version: expected.version, buildVersion: expected.buildVersion, nativeNetworkVersion: 1 })
     || archive.pkg.dependencies && Object.keys(archive.pkg.dependencies).length) throw new Error('ASAR 应用身份无效');
   if (canonical(archive.trust) !== canonical(anchor.trust)
     || canonical(archive.config.exam.allowedOrigins) !== canonical(anchor.config.exam.allowedOrigins)

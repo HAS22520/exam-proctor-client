@@ -3,9 +3,12 @@ const stages = {
   challenge: ['正在验证客户端身份与版本', 1000, 10000],
   handshake: ['正在完成安全握手', 1000, 10000],
   refresh: ['正在刷新认证令牌', 1000, 10000],
-  lock: ['正在配置考试网络，请确认 Windows 管理员授权', 5000, 30000],
-  restore: ['正在恢复系统网络', 3000, 20000],
-  'resolve-destinations': ['正在解析允许访问的服务器地址', 5000, 30000],
+  lock: ['正在启用系统网络过滤', 1000, 10000],
+  restore: ['正在解除系统网络过滤', 500, 5000],
+  'resolve-destinations': ['正在解析允许访问的服务器地址', 1000, 10000],
+  'apply-native-policy': ['正在应用临时网络白名单', 1000, 10000],
+  'remove-native-policy': ['正在移除临时网络限制', 500, 5000],
+  'approve-network-extension': ['请在 macOS 系统设置中允许网络扩展及内容过滤', 5000, 120000],
   'snapshot-policy': ['正在保存原有网络设置', 5000, 30000],
   'disable-original-rules': ['正在调整网络规则', 5000, 30000],
   'allow-exam-network': ['正在设置考试服务器访问规则', 5000, 30000],
@@ -32,7 +35,7 @@ class ActivityProgress {
     const elapsedMs = Math.max(0, this.now() - task.startedAt);
     return { kind: task.kind, stage: task.stage, label, busy: true, elapsedMs, estimatedMinMs: minMs, estimatedMaxMs: maxMs,
       delayed: elapsedMs > maxMs,
-      hint: task.kind === 'network' ? '实际耗时取决于 Windows 防火墙和管理员授权；授权窗口出现时请确认。'
+      hint: task.kind === 'network' ? '正在等待系统网络组件；macOS 首次使用需要允许系统扩展和内容过滤。参考时间不包含人工授权等待。'
         : task.kind === 'startup' ? '正在检查本机环境或打开考试页面，完成后会自动进入。'
           : task.kind === 'exit' ? '正在保留日志并等待已发出的请求完成；下次可登录原考试账号继续。'
             : '实际耗时取决于网络和服务端响应；耗时超出参考范围时仍会等待请求结果。' };
