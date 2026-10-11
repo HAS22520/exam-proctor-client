@@ -5,6 +5,7 @@ const { pathToFileURL } = require('node:url');
 const { ProtectedStore, prepareBootIdentity } = require('./device-store');
 const { validateConfig } = require('./config-policy');
 const { ProctorController } = require('./proctor-controller');
+const { proctorErrorMessage } = require('./proctor-auth');
 const NetworkGuard = require('./network-guard');
 const AntiCheatGuard = require('./anti-cheat');
 const FirewallGuard = require('./firewall-guard');
@@ -196,8 +197,8 @@ async function syncLogin(force = false) {
     controller.logViolation({ source: 'CLIENT', type: 'MONITOR_HEARTBEAT', target: '', detail: debug ? 'root-debug' : process.platform === 'darwin' ? 'macos-audit-only' : 'exam' });
     await controller.retryUploads();
   } catch (error) {
-    diagnostics.error('monitor.failed', error);
-    if (latestStatus.phase !== 'network-error') latestStatus.message = '认证失败，请检查登录账号、客户端版本及认证密钥';
+    diagnostics.error('monitor.failed', error, { version: running.identity.version });
+    if (latestStatus.phase !== 'network-error') latestStatus.message = proctorErrorMessage(error, running.identity.version);
   } finally {
     syncing = false;
     if (syncRequested) { syncRequested = false; setTimeout(() => syncLogin(true), 0); }
@@ -354,7 +355,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('exam:proctor-headers', async (event, request) => {
     const url = ipcContext(event);
     if (updates.minimumBlocked) throw new Error('客户端低于更新清单指定的最低版本，请安装新版');
-    return controller.headers(url, request);
+    try { return await controller.headers(url, request); }
+    catch (error) {
+      // Electron IPC serializes Error.message, but drops publicMessage and code.
+      if (error.publicMessage) throw new Error(proctorErrorMessage(error, running.identity.version));
+      throw error;
+    }
   });
   ipcMain.handle('exam:request-quit', async (event) => { ipcContext(event); await requestExit(); });
   ipcMain.handle('exam:retry', async (event) => { await controller.retryManually(ipcContext(event)); });

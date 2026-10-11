@@ -94,6 +94,7 @@ async function fixture(t, options = {}) {
       ? JSON.stringify(config) : String(file).endsWith('trust.json') ? '{}' : fs.readFileSync(file, ...args) },
     './config-policy': { validateConfig: (value) => value }, './device-store': { ProtectedStore: Guard, prepareBootIdentity: async () => 'boot-id' },
     './proctor-controller': { ProctorController: Controller }, './network-guard': Guard, './anti-cheat': Guard,
+    './proctor-auth': require('../app/main/proctor-auth'),
     './firewall-guard': Guard, './updater': Guard, './proctor-request-guard': Guard,
     './runtime': { runtime: () => ({ identity: { version: '1.0.0', buildVersion: '2026101001' }, markReady: () => {}, source: 'installed' }) },
     './update-cache': require('../app/main/update-cache'),
@@ -160,6 +161,23 @@ test('ending requires explicit log reminder and only the native main frame can e
 test('every startup clears login and flushes cookies before navigating to the OJ', async (t) => {
   const f = await fixture(t);
   assert.deepEqual(f.startupSteps, ['clear-storage', 'clear-auth', 'flush-cookies', 'load-page']);
+});
+test('background authentication and the page bridge retain a version-specific Chinese error', async (t) => {
+  const { ProctorError } = require('../app/main/proctor-auth');
+  const f = await fixture(t), main = f.windows[0];
+  const error = new ProctorError('Proctor client version mismatch.', 403);
+  f.controller.sync = async () => { throw error; };
+  main.webContents.emit('did-navigate');
+  await new Promise((resolve) => setImmediate(resolve));
+  const status = f.handlers.get('exam:status')(f.event(main));
+  assert.match(status.message, /版本不符合系统要求（当前：1\.0\.0）/);
+  assert.match(status.message, /请安装/);
+  f.controller.headers = async () => { throw error; };
+  await assert.rejects(f.handlers.get('exam:proctor-headers')(f.event(main), {}), /版本不符合系统要求（当前：1\.0\.0）/);
+  f.controller.options.onStatus({ phase: 'network-error', message: '网络设置失败' });
+  main.webContents.emit('did-navigate');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.handlers.get('exam:status')(f.event(main)).message, '网络设置失败');
 });
 test('slow startup recovery exposes native progress before the exam loads and closes it after recovery', async (t) => {
   let release, show;

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { ProctorAuth, Transport, identity } = require('../app/main/proctor-auth');
+const { ProctorAuth, Transport, identity, parseReply, proctorErrorMessage } = require('../app/main/proctor-auth');
 const { canonical, sign, verify, digest, nonce, validateTrust } = require('../app/main/proctor-crypto');
 const { contextFromUrl, validateConfig } = require('../app/main/config-policy');
 const { submission } = require('../app/main/proctor-controller');
@@ -86,6 +86,35 @@ test('transport refuses redirects and non JSON replies without disclosing respon
     const transport = new Transport({ fetch: async () => response }, context.origin);
     await assert.rejects(transport.request('/contest/x'), (error) => !error.message.includes('token-secret'));
   }
+});
+test('Hydro version rejection preserves params, emits a diagnostic code and provides a Chinese update instruction', async () => {
+  const traces = [];
+  const transport = new Transport({ fetch: async () => new Response(JSON.stringify({ error: {
+    name: 'ForbiddenError', message: 'ForbiddenError', code: 403, params: ['Proctor client version mismatch.'],
+  } }), { status: 403, headers: { 'content-type': 'application/json' } }) }, context.origin, 15000,
+  (...entry) => traces.push(entry));
+  await assert.rejects(transport.json(context.proctorPath, { operation: 'challenge', version: '0.9.0' }), (error) => {
+    assert.equal(error.message, 'Proctor client version mismatch.'); assert.equal(error.status, 403);
+    assert.equal(error.code, 'PROCTOR_VERSION_MISMATCH'); assert.equal(error.retryable, false);
+    assert.match(proctorErrorMessage(error, '0.9.0'), /版本不符合系统要求（当前：0\.9\.0）/);
+    assert.match(error.publicMessage, /请安装/); return true;
+  });
+  const failure = traces.find((entry) => entry[1] === 'protocol.failed')[2];
+  assert.equal(failure.code, 'PROCTOR_VERSION_MISMATCH'); assert.equal(failure.operation, 'challenge');
+});
+test('bare ForbiddenError and expired-session responses never claim a definite version mismatch', () => {
+  for (const params of [undefined, [], {}, 'invalid', [null, 403]]) {
+    assert.throws(() => parseReply(JSON.stringify({ error: { message: 'ForbiddenError', params } }), 403, 'application/json'), (error) => {
+      assert.equal(error.status, 403); assert.equal(error.code, undefined);
+      assert.match(proctorErrorMessage(error, version), /服务端未提供具体原因/);
+      assert.doesNotMatch(error.publicMessage, /版本不符合/); return true;
+    });
+  }
+  assert.throws(() => parseReply(JSON.stringify({ error: { message: 'ForbiddenError',
+    params: ['Proctor session expired or client version mismatch.'] } }), 403, 'application/json'), (error) => {
+    assert.equal(error.code, 'PROCTOR_SESSION_REJECTED');
+    assert.match(error.publicMessage, /会话已过期或/); return true;
+  });
 });
 test('attempt binding survives token invalidation and never signs a different attempt', async (t) => {
   const device = store(workspace(t)).device();

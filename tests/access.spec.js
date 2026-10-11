@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const { accessTarget, accessRequest } = require('../app/main/proctor-access');
 const { contextFromUrl } = require('../app/main/config-policy');
 const ProctorRequestGuard = require('../app/main/proctor-request-guard');
-const { ProctorAuth } = require('../app/main/proctor-auth');
+const { ProctorAuth, ProctorError } = require('../app/main/proctor-auth');
 const { canonical, digest, verify } = require('../app/main/proctor-crypto');
 const { auth } = require('./helpers');
 const tid = '1234567890abcdef12345678', origin = 'https://oj.example.com';
@@ -113,4 +113,15 @@ test('completed attempts show their specific reason and trace the failure withou
   assert.deepEqual(headers, { Accept: 'text/html' }); assert.equal(messages.at(-1), '本场监考已结束且日志已上传');
   assert.equal(traces[0][1], 'request.authentication-failed'); assert.equal(traces[0][2].code, 'PROCTOR_ATTEMPT_COMPLETE');
   assert.doesNotMatch(JSON.stringify(traces), /private-token|private-proof/);
+});
+test('protected reads show the rejected version and never forward credentials after version rejection', async () => {
+  const messages = [];
+  const controller = { version: '0.9.0', records: new Map(), status: (message) => messages.push(message), headers: async () => {
+    throw new ProctorError('Proctor client version mismatch.', 403);
+  } };
+  const guard = new ProctorRequestGuard(controller, { exam: { allowedOrigins: [origin] } }, { id: 1, getURL: () => `${origin}/contest/${tid}` });
+  const headers = await guard.headers({ url: `${origin}/contest/${tid}/problems`, method: 'GET', webContentsId: 1,
+    resourceType: 'mainFrame', requestHeaders: { Accept: 'text/html', 'x-proctor-token': 'private-token', 'x-proctor-proof': 'private-proof' } });
+  assert.deepEqual(headers, { Accept: 'text/html' });
+  assert.match(messages.at(-1), /版本不符合系统要求（当前：0\.9\.0）/);
 });

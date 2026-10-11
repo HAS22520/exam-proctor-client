@@ -37,7 +37,8 @@ function fixture(t) {
       assert.ok(!usedNonces.has(p.nonce)); usedNonces.add(p.nonce); response = { ok: true };
     } else if (request.method === 'GET') response = { state: account().state, logUploaded: !!account().receipt, receipt: account().receipt };
     else if (body.operation === 'challenge') {
-      if (body.version !== '1.0.0') return new Response(JSON.stringify({ error: { message: 'Client version mismatch' } }),
+      if (body.version !== '1.0.0') return new Response(JSON.stringify({ error: { name: 'ForbiddenError', message: 'ForbiddenError',
+        code: 403, params: ['Proctor client version mismatch.'] } }),
         { status: 403, headers: { 'content-type': 'application/json' } });
       challenge = { protocol: 'hydro-proctor/1', action: 'handshake', keyId: trust.keyId, origin: 'https://oj.example.com', uid, domainId: 'exam', tid: '1234567890abcdef12345678',
         fingerprint: body.fingerprint, version: body.version, publicKey: body.publicKey, deviceInfo: body.deviceInfo, clientNonce: body.clientNonce, challengeId: nonce(), serverNonce: nonce(), expiresAt: new Date(Date.now() + 120000).toISOString() };
@@ -227,9 +228,11 @@ test('protected problem reads require a matching client and open attempt, with f
   f.offline = false; await controller.finish();
   await assert.rejects(controller.headers(url, request));
   await assert.rejects(controller.sync(url), /正在结束/);
-  const wrong = new ProctorController({ ...fixture(t).options, version: '0.9.0' });
+  const wrongFixture = fixture(t), wrong = new ProctorController({ ...wrongFixture.options, version: '0.9.0' });
   await assert.rejects(wrong.headers(url, request), /version mismatch/);
   assert.equal(wrong.records.size, 0);
+  assert.equal(wrongFixture.statuses.at(-1).authenticated, false);
+  assert.match(wrongFixture.statuses.at(-1).message, /版本不符合系统要求（当前：0\.9\.0）/);
 });
 
 test('exit before starting an exam reports no pending logs rather than inventing a server receipt', async (t) => {

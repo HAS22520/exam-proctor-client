@@ -5,7 +5,7 @@ const AuditLogger = require('./audit-logger');
 const { atomicWrite } = require('./device-store');
 const { canonical, digest } = require('./proctor-crypto');
 const { contextFromUrl } = require('./config-policy');
-const { ProctorAuth, Transport, identity } = require('./proctor-auth');
+const { ProctorAuth, Transport, identity, proctorErrorMessage } = require('./proctor-auth');
 const { accessRequest } = require('./proctor-access');
 
 function submission(request, context, login) {
@@ -106,7 +106,11 @@ class ProctorController {
     try { key = `${this.identityEpoch}:${!!options.force}:${this.identityKey(url)}`; }
     catch (error) { return Promise.reject(error); }
     if (this.pendingIdentities.has(key)) return this.pendingIdentities.get(key);
-    const work = this.identityWork.catch(() => {}).then(() => this.activity('auth', 'identity', () => this.syncSerial(url, options)));
+    const work = this.identityWork.catch(() => {}).then(() => this.activity('auth', 'identity', () => this.syncSerial(url, options)))
+      .catch((error) => {
+        if (error.publicMessage) this.status(proctorErrorMessage(error, this.version));
+        throw error;
+      });
     this.pendingIdentities.set(key, work);
     this.identityWork = work.then(() => {}, () => {});
     this.syncPending = work;

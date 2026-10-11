@@ -1,4 +1,5 @@
 const { accessTarget, stripProctorHeaders } = require('./proctor-access');
+const { proctorErrorMessage } = require('./proctor-auth');
 
 class ProctorRequestGuard {
   constructor(controller, config, webContents, isBlocked = () => false) { Object.assign(this, { controller, config, webContents, isBlocked }); }
@@ -30,7 +31,7 @@ class ProctorRequestGuard {
     } catch (error) {
       // The OJ returns a content-free 403 page, including on a deep link/refresh.
       this.controller.trace?.('warn', 'request.authentication-failed', { url: details.url, name: error.name, code: error.code, message: error.message });
-      this.controller.status(error.publicMessage || '客户端认证未完成，请检查登录状态，或查看调试控制台中的具体原因。');
+      this.controller.status(proctorErrorMessage(error, this.controller.version));
       return stripProctorHeaders(headers);
     }
     return headers;

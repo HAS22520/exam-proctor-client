@@ -33,3 +33,4 @@ config/build.local.json
 config/pem
 
 bun.lock
+config/build.local.json.lock
