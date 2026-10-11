@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
-const { run, parseArgs, buildEnvironment } = require('../scripts/build');
+const { run, parseArgs, buildEnvironment, clearEmptySigningEnvironment } = require('../scripts/build');
 const { trust, auth, workspace } = require('./helpers');
 
 function fixture(t) {
@@ -90,15 +90,38 @@ test('macOS packaging needs no developer account, profile files or native build'
     macExtensionProfileFile: 'missing.profile', _comments: { macTeamId: 'Retired option' } }));
   const env = buildEnvironment(file, {});
   assert.equal(env.PROCTOR_MAC_TEAM_ID, undefined); assert.equal(env.PROCTOR_MAC_HOST_PROFILE, undefined);
-  await run(['--config', file, '--mac', '--arm64'], { root, env: {}, build: async ({ config: settings }) => {
+  const optional = ['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'];
+  const previous = Object.fromEntries(optional.map((name) => [name, process.env[name]]));
+  t.after(() => { for (const name of optional) {
+    if (previous[name] === undefined) delete process.env[name]; else process.env[name] = previous[name];
+  } });
+  for (const name of optional) process.env[name] = '';
+  await run(['--config', file, '--mac', '--arm64'], { root, env: { CSC_LINK: '', CSC_KEY_PASSWORD: '', APPLE_ID: '',
+    APPLE_APP_SPECIFIC_PASSWORD: '', APPLE_TEAM_ID: '' }, build: async ({ config: settings }) => {
+    for (const name of optional) assert.equal(process.env[name], undefined);
     assert.equal(settings.mac.identity, '-'); assert.equal(settings.mac.notarize, false);
     assert.equal(settings.afterPack, undefined);
     await settings.beforePack({ electronPlatformName: 'darwin', arch: 3, packager: { appInfo: { version: '1.2.3' } } });
     assert.equal(fs.existsSync(path.join(root, 'build/native')), false);
+    return ['fixture.dmg', 'fixture.zip'];
   } });
   await run(['--config', file, '--mac', '--x64'], { root, env: { CSC_LINK: 'certificate.p12' }, build: async ({ config: settings }) => {
     assert.equal(settings.mac.identity, undefined); assert.equal(settings.mac.notarize, undefined);
+    return ['fixture.dmg', 'fixture.zip'];
   } });
+});
+
+test('empty optional Actions signing secrets never resolve as a certificate directory; configured credentials survive', () => {
+  const env = { CSC_LINK: '', CSC_NAME: '  ', CSC_KEY_PASSWORD: '', CSC_INSTALLER_LINK: '', CSC_INSTALLER_KEY_PASSWORD: '',
+    WIN_CSC_LINK: '', WIN_CSC_KEY_PASSWORD: '', APPLE_ID: '', APPLE_APP_SPECIFIC_PASSWORD: '', APPLE_TEAM_ID: '',
+    PROCTOR_ALLOW_ROOT_DEBUG: 'false' };
+  clearEmptySigningEnvironment(env);
+  assert.deepEqual(env, { PROCTOR_ALLOW_ROOT_DEBUG: 'false' });
+  const configured = { CSC_LINK: 'certificate.p12', CSC_KEY_PASSWORD: ' password ', APPLE_ID: 'test@example.com',
+    APPLE_TEAM_ID: 'TEAM123', APPLE_APP_SPECIFIC_PASSWORD: 'app-password' };
+  const copy = { ...configured };
+  clearEmptySigningEnvironment(copy);
+  assert.deepEqual(copy, configured);
 });
 
 test('native build uses project root and dynamic version; beforePack keeps file-supplied trust', async (t) => {
@@ -122,8 +145,31 @@ test('native build uses project root and dynamic version; beforePack keeps file-
       await options.config.beforePack({ packager: { appInfo: { version: '2.3.4' } } });
       assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'app/generated/trust.json'))).authPublicKey, trust.authPublicKey);
       await assert.rejects(options.config.beforePack({ packager: { appInfo: { version: '1.0.0' } } }), /metadata/);
+      return args.includes('--dir') ? [] : ['fixture.exe'];
     } });
     assert.ok(called);
+  }
+});
+
+test('installer builds cannot report success without artifacts; unpacked builds do not require installers', async (t) => {
+  const { root, file } = fixture(t);
+  const dependencies = { root, env: {}, build: async () => [] };
+  await assert.rejects(run(['--config', file, '--mac'], dependencies), /未生成安装包/);
+  await assert.rejects(run(['--config', file, '--win'], dependencies), /未生成安装包/);
+  await run(['--config', file, '--mac', '--dir'], dependencies);
+});
+
+test('CLI fails when a packaging promise never settles, and preserves successful and rejected exit statuses', () => {
+  const { spawnSync } = require('node:child_process');
+  const script = JSON.stringify(path.resolve(__dirname, '../scripts/build.js'));
+  for (const [execute, status, message] of [
+    ['() => new Promise(() => {})', 1, /构建未完成便提前退出/],
+    ['async () => {}', 0, /^$/],
+    ['async () => { throw new Error("packaging failed"); }', 1, /packaging failed/],
+  ]) {
+    const child = spawnSync(process.execPath, ['-e', `require(${script}).runCli([], ${execute});`], { encoding: 'utf8', timeout: 10000 });
+    assert.equal(child.error, undefined); assert.equal(child.status, status);
+    assert.match(child.stderr, message);
   }
 });
 

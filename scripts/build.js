@@ -69,6 +69,15 @@ function buildEnvironment(filename, env) {
   return result;
 }
 
+function clearEmptySigningEnvironment(env) {
+  // Unconfigured Actions secrets become empty strings. electron-builder treats
+  // CSC_LINK='' as a certificate path pointing to the project directory.
+  for (const name of ['CSC_LINK', 'CSC_NAME', 'CSC_KEY_PASSWORD', 'CSC_INSTALLER_LINK', 'CSC_INSTALLER_KEY_PASSWORD',
+    'WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) {
+    if (typeof env[name] === 'string' && !env[name].trim()) delete env[name];
+  }
+}
+
 async function run(args = process.argv.slice(2), dependencies = {}) {
   const options = parseArgs(args);
   if (options.help) { console.log(help); return; }
@@ -78,6 +87,9 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
   if (nativePlatform === 'win32' && options.arm64) throw new Error('Windows packages currently support x64 only');
   const { version, buildVersion } = prepare(env, projectDir);
   if (options.check) { console.log(`Validated proctor build ${version}`); return; }
+  clearEmptySigningEnvironment(env);
+  // electron-builder reads signing variables from process.env directly.
+  clearEmptySigningEnvironment(process.env);
   const { build, Platform, Arch } = require('electron-builder');
   const platform = options.win ? Platform.WINDOWS : options.mac ? Platform.MAC : Platform.current();
   const arch = options.arm64 ? Arch.arm64 : Arch.x64;
@@ -86,14 +98,25 @@ async function run(args = process.argv.slice(2), dependencies = {}) {
   // Ad-hoc signing works without an Apple account on Intel and Apple Silicon.
   // Imported certificates opt into normal electron-builder signing instead.
   const mac = !env.CSC_LINK && !env.CSC_NAME ? { identity: '-', notarize: false } : {};
-  await (dependencies.build || build)({ projectDir, targets: platform.createTarget(target, arch), publish: 'never',
+  const artifacts = await (dependencies.build || build)({ projectDir, targets: platform.createTarget(target, arch), publish: 'never',
     config: { extraMetadata: { version, buildVersion }, mac, beforePack: async (context) => {
       const prepared = prepare(env, projectDir);
       if (context.packager.appInfo.version !== prepared.version) throw new Error('Build metadata does not match configured client version');
       if (context.electronPlatformName) await buildNative(context.electronPlatformName, context.arch === Arch.arm64 ? 'arm64' : 'x64', env, projectDir);
     } } });
+  if (!options.dir && (!Array.isArray(artifacts) || !artifacts.length)) {
+    throw new Error('electron-builder 未生成安装包，请检查前面的打包和签名日志。');
+  }
+  return artifacts;
 }
-if (require.main === module) {
-  run().catch((error) => { console.error(error.message); process.exitCode = 1; });
+function runCli(args = process.argv.slice(2), execute = run) {
+  // A dependency can leave an unresolved promise without keeping Node alive.
+  // That must fail the packaging step rather than report success with no files.
+  const unfinished = () => { console.error('构建未完成便提前退出，请检查前面的打包和签名日志。'); process.exitCode = 1; };
+  process.once('beforeExit', unfinished);
+  return Promise.resolve().then(() => execute(args)).catch((error) => {
+    console.error(error.message); process.exitCode = 1;
+  }).finally(() => { process.removeListener('beforeExit', unfinished); });
 }
-module.exports = { run, parseArgs, buildEnvironment };
+if (require.main === module) runCli();
+module.exports = { run, runCli, parseArgs, buildEnvironment, clearEmptySigningEnvironment };

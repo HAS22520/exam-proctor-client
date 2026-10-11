@@ -72,12 +72,6 @@ jobs:
             csc_link: MAC_CSC_LINK
             csc_password: MAC_CSC_KEY_PASSWORD
     runs-on: ${{ matrix.runner }}
-    env:
-      CSC_LINK: ${{ secrets[matrix.csc_link] }}
-      CSC_KEY_PASSWORD: ${{ secrets[matrix.csc_password] }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -90,7 +84,14 @@ jobs:
       - run: npm test
       - run: npm run test:native
         if: matrix.platform == 'win'
-      - run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish=never
+      - name: Build installers
+        run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish=never
+        env:
+          CSC_LINK: ${{ secrets[matrix.csc_link] }}
+          CSC_KEY_PASSWORD: ${{ secrets[matrix.csc_password] }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - uses: actions/upload-artifact@v4
         with:
           name: HydroProctor-${{ inputs.version }}-${{ inputs.build_version }}-${{ matrix.platform }}-${{ matrix.arch }}

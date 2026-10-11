@@ -212,7 +212,7 @@ test('installed bootstrap selects cached ASAR entry and exposes its actual versi
       if (name === 'electron') return { app, dialog: { showErrorBox: (_title, message) => assert.fail(message) } };
       if (name === './update-cache') return require('../app/main/update-cache');
       if (name === './signed-archive') return require('../app/main/signed-archive');
-      if (name === './index' || name.endsWith('.asar/app/main/index.js')) {
+      if (name === './index' || name.endsWith(path.join('.asar', 'app', 'main', 'index.js'))) {
         loaded.push(name);
         if (fail) throw new Error('broken updated main');
         context.__hydroProctorRuntime.markReady(); resolve(); return {};
@@ -223,7 +223,7 @@ test('installed bootstrap selects cached ASAR entry and exposes its actual versi
     return { loaded, runtime: context.__hydroProctorRuntime, relaunch };
   }
   const updated = await boot();
-  assert.ok(updated.loaded[0].endsWith('.asar/app/main/index.js')); assert.equal(updated.runtime.source, 'asar');
+  assert.ok(updated.loaded[0].endsWith(path.join('.asar', 'app', 'main', 'index.js'))); assert.equal(updated.runtime.source, 'asar');
   assert.deepEqual({ ...updated.runtime.identity }, { version: '0.9.0', buildVersion: '2026101002', nativeNetworkVersion: 1 });
   const next = await release(f, { PROCTOR_CLIENT_BUILD_VERSION: '2026101003' }); await cache.stage(next, next.filename);
   // release() rewrites build outputs, restore the native identity once more.

@@ -47,6 +47,8 @@ Electron 客户端，使用 `HydroNext-proctor/1` 协议连接 OJ。支持 Windo
 
 若已有发行证书，可设置 `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`；公证再配置 `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`。Windows 签名使用 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`。这些均为可选项。
 
+未设置的可选签名 Secret 会被 Actions 展开为空字符串，构建脚本会清除这些空值，避免把仓库目录误当成证书文件。打包提前退出或未生成安装包时，构建步骤会直接报告失败；`--dir` 不要求生成安装包。
+
 ## 本地构建
 
 需要 Node.js 22.12+。在本客户端目录复制 `config/build.example.json` 为 `config/build.local.json`，按照 `_comments` 填写各项；注释字段不会进入安装包。公钥路径相对于配置文件，文件应放在仓库外。本地配置已被 Git 忽略，`.env` 不会自动加载。

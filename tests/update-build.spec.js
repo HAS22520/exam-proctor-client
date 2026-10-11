@@ -24,8 +24,8 @@ test('build fails without public trust, accepts dynamic version/origins, archive
   const result = await buildArchive(environment, root); const asar = require('@electron/asar');
   const pkg = JSON.parse(asar.extractFile(result.filename, 'package.json'));
   assert.equal(pkg.version, '1.2.3'); assert.equal(pkg.main, 'app/main/index.js');
-  assert.equal(asar.extractFile(result.filename, pkg.main).toString(), 'module.exports = 1;');
-  assert.ok(!asar.listPackage(result.filename).includes('/.env'));
+  assert.equal(asar.extractFile(result.filename, path.normalize(pkg.main)).toString(), 'module.exports = 1;');
+  assert.ok(!asar.listPackage(result.filename).includes(path.join(path.sep, '.env')));
   assert.equal(crypto.createHash('sha256').update(fs.readFileSync(result.filename)).digest('hex'), result.sha256);
 });
 test('updater really falls back, checks byte length/hash before publishing a download', async (t) => {
@@ -52,7 +52,7 @@ test('ASAR CLI reads relative public keys from JSON and uses environment overrid
   assert.equal(result.version, '1.2.4');
   const asar = require('@electron/asar');
   assert.equal(JSON.parse(asar.extractFile(result.filename, 'package.json')).version, '1.2.4');
-  assert.equal(JSON.parse(asar.extractFile(result.filename, 'app/generated/config.json')).debug.allowRoot, true);
+  assert.equal(JSON.parse(asar.extractFile(result.filename, path.join('app', 'generated', 'config.json'))).debug.allowRoot, true);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'updates/app-1.2.4-2026101001.json'))),
     { version: result.version, buildVersion: '2026101001', signed: false, size: result.size, sha256: result.sha256 });
   assert.ok(!asar.listPackage(result.filename).some((file) => /build\.local\.json|\.pem$/.test(file)));
