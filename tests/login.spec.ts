@@ -1,8 +1,7 @@
-import assert = require('node:assert/strict');
+import * as assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
-import loginSessionModule = require('../app/main/login-session');
-const { resetLogin, observeLogin } = loginSessionModule;
+import { observeLogin, resetLogin } from '../app/main/login-session';
 
 test('startup clears cookies, HTTP auth and stale service worker login caches before flushing cookies', async () => {
   const calls = [],

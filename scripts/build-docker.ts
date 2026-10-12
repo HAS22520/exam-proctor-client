@@ -1,3 +1,11 @@
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { buildEnvironment, parseArgs } from './build';
+import { prepare } from './prepare-build';
+import { applicationRoot, projectRoot, runtimePackage } from './project-layout';
+
 interface DockerDependencies {
   root?: string;
   env?: NodeJS.ProcessEnv;
@@ -7,21 +15,15 @@ interface DockerDependencies {
     options: import('node:child_process').SpawnSyncOptions,
   ) => { status: number | null; error?: Error };
 }
-import fs = require('node:fs');
-import os = require('node:os');
-import path = require('node:path');
-import { spawnSync } from 'node:child_process';
-import buildModule = require('./build');
-const { parseArgs, buildEnvironment } = buildModule;
-import prepareBuildModule = require('./prepare-build');
-const { prepare } = prepareBuildModule;
-const root = path.resolve(__dirname, '..');
+
+const root = projectRoot;
 
 function stageProject(projectDir: string, destination: string) {
-  const generated = path.join(projectDir, 'app/generated');
+  const compiled = applicationRoot(projectDir);
+  const generated = path.join(compiled, 'app/generated');
   // Recreate build outputs from this invocation's public configuration. Old
   // container-owned files may be unreadable and must not carry stale trust.
-  fs.cpSync(path.join(projectDir, 'app'), path.join(destination, 'app'), {
+  fs.cpSync(path.join(compiled, 'app'), path.join(destination, 'app'), {
     recursive: true,
     filter: (source) => source !== generated && !source.endsWith('.ts'),
   });
@@ -32,17 +34,22 @@ function stageProject(projectDir: string, destination: string) {
     'before-pack.js',
     'docker-build-entry.js',
     'build-native.js',
+    'project-layout.js',
     'unlock-firewall.ps1',
     'restore-network.bat',
   ]) {
-    fs.copyFileSync(path.join(projectDir, 'scripts', name), path.join(destination, 'scripts', name));
+    fs.copyFileSync(
+      path.join(name.endsWith('.js') ? compiled : projectDir, 'scripts', name),
+      path.join(destination, 'scripts', name),
+    );
   }
   fs.cpSync(path.join(projectDir, 'native'), path.join(destination, 'native'), { recursive: true });
   fs.mkdirSync(path.join(destination, 'config'));
   for (const name of ['exam-config.json', 'entitlements.mac.plist'])
     fs.copyFileSync(path.join(projectDir, 'config', name), path.join(destination, 'config', name));
-  for (const name of ['package.json', 'package-lock.json'])
-    fs.copyFileSync(path.join(projectDir, name), path.join(destination, name));
+  fs.copyFileSync(path.join(projectDir, 'package-lock.json'), path.join(destination, 'package-lock.json'));
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf8'));
+  fs.writeFileSync(path.join(destination, 'package.json'), JSON.stringify(runtimePackage(pkg), null, 2));
 }
 
 function dockerArguments(
@@ -160,4 +167,4 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-export = { run, stageProject, dockerArguments };
+export { run, stageProject, dockerArguments };

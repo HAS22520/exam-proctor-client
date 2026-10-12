@@ -1,5 +1,6 @@
-import fs = require('node:fs');
-import path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 function runtime(app: Pick<Electron.App, 'getVersion'>): NonNullable<typeof globalThis.__hydroProctorRuntime> {
   if (globalThis.__hydroProctorRuntime) return globalThis.__hydroProctorRuntime;
   // Development entry and old installations have no update bootstrap identity.
@@ -11,4 +12,4 @@ function runtime(app: Pick<Electron.App, 'getVersion'>): NonNullable<typeof glob
   }
   return { identity, markReady: () => {}, source: 'installed', failure: null };
 }
-export = { runtime };
+export { runtime };

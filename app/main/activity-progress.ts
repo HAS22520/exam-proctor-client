@@ -1,4 +1,5 @@
 import type { ActivityStatus } from './contracts';
+
 const stages: Record<string, [string, number, number]> = {
   identity: ['正在验证登录身份', 1000, 10000],
   challenge: ['正在验证客户端身份与版本', 1000, 10000],

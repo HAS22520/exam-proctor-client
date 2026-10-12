@@ -1,4 +1,8 @@
-import type { UploadProgress } from './contracts';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import type { UploadProgress, UploadReply } from './contracts';
+import { ProctorError, parseReply } from './protocol-errors';
+
 interface UploadOptions {
   session: Electron.Session;
   origin: string;
@@ -10,10 +14,6 @@ interface UploadOptions {
   timeoutMs?: number;
   createRequest?: (options: Electron.ClientRequestConstructorOptions) => Electron.ClientRequest;
 }
-import fs = require('node:fs');
-import crypto = require('node:crypto');
-import proctorAuthModule = require('./proctor-auth');
-const { ProctorError, parseReply } = proctorAuthModule;
 
 async function uploadFile({
   session,
@@ -59,7 +59,7 @@ async function uploadFile({
     responseStarted = false,
     sent = 0,
     input: fs.ReadStream;
-  return new Promise<any>((resolve, reject) => {
+  return new Promise<UploadReply>((resolve, reject) => {
     const progress = () => {
       if (ended) return;
       let value;
@@ -80,7 +80,7 @@ async function uploadFile({
     };
     const poll = setInterval(progress, 200);
     const timeout = setTimeout(() => fail(new ProctorError('Log upload timed out')), timeoutMs);
-    const finish = (error: Error | null, result?: unknown) => {
+    const finish = (error: Error | null, result?: UploadReply) => {
       if (ended) return;
       ended = true;
       clearInterval(poll);
@@ -154,4 +154,4 @@ async function uploadFile({
   });
 }
 
-export = { uploadFile };
+export { uploadFile };

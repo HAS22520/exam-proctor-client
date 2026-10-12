@@ -53,7 +53,7 @@ Electron 客户端，使用 `HydroNext-proctor/1` 协议连接 OJ。支持 Windo
 
 ## TypeScript 开发与编译
 
-`app/`、`scripts/` 和 `tests/` 的源码均为 TypeScript。应用和构建脚本禁止隐式 `any`；测试保留对部分 Electron API 的模拟，同时仍参与类型检查。修改 `.ts` 文件；旁边的 `.js` 是自动生成文件，已被 Git 忽略，不要手动编辑或提交。
+`app/`、`scripts/` 和 `tests/` 的源码均为 TypeScript。应用和构建脚本禁止隐式 `any`；测试保留对部分 Electron API 的模拟，同时仍参与类型检查。源码目录仅保留 `.ts` / `.mts`，不再生成旁边的 `.js`。编译产物统一写入被 Git 忽略的 `out/`，不要手动编辑或提交。
 
 ```bash
 npm ci
@@ -63,9 +63,17 @@ npm test           # 自动先编译，再运行现有回归测试
 npm run test:updates:electron  # 在 Electron Node 模式中测试 ASAR，不创建窗口
 ```
 
-`npm start`、安装包构建、Docker 构建和 ASAR 发布命令都自动先编译，原有参数保持不变。直接使用 `node scripts/…js` 或 `electron .` 时，须先执行 `npm run compile`。GitHub Actions 也会检查类型，并通过相同 npm 命令编译。
+`npm start`、安装包构建、Docker 构建和 ASAR 发布命令都自动先编译，原有参数保持不变。直接使用 `node out/scripts/…js` 或 `electron .` 时，须先执行 `npm run compile`。GitHub Actions 也会检查类型，并通过相同 npm 命令编译。
 
-编译输出放在源码旁边，以保留现有 `app/main/bootstrap.js`、preload 和 HTML 引用路径。安装包和签名 ASAR 只包含编译后的应用代码与资源，不包含 TypeScript 源码、构建脚本或测试。Docker 暂存目录使用已编译代码，继续隔离父仓库依赖和本地密钥。原生 WFP 组件仍使用 C++，日志解密工具仍使用 Python。
+每次编译先清空 `out/`，避免已经删除或移动的模块残留；只复制明确列出的公开资源，不复制本地配置、PEM 或旧的生成密钥。开发入口为 `out/app/main/bootstrap.js`，打包时以 `out/` 为应用根目录，保留安装包和 ASAR 内原有的 `app/main/bootstrap.js`、preload 和 HTML 引用路径。安装包和签名 ASAR 只包含编译后的应用代码与资源，不包含 TypeScript 源码、构建脚本或测试。Docker 暂存目录使用已编译代码，继续隔离父仓库依赖和本地密钥。原生 WFP 组件仍使用 C++，日志解密工具仍使用 Python。
+
+源码结构：
+
+- `app/main/`：Electron 生命周期、认证、网络、日志和更新；协议错误与通信层分别在 `protocol-errors.ts`、`protocol-transport.ts`，ASAR 文件操作统一使用 `archive-filesystem.ts`。
+- `app/types/`：配置、协议、日志、界面状态类型；`app/main/contracts.ts` 仅重导出类型。
+- `app/preload/`、`app/debug/`、`app/status/`：隔离的 IPC 桥和页面资源。
+- `scripts/compile.mts`：直接由 Node.js 的类型擦除运行的编译入口；`scripts/project-layout.ts` 统一开发与 Docker 的目录规则。
+- `tests/`：TypeScript 回归测试，运行编译后的 `out/tests/`。
 
 ## 本地构建
 

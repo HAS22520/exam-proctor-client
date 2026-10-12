@@ -1,17 +1,15 @@
-import assert = require('node:assert/strict');
-import fs = require('node:fs');
-import path = require('node:path');
-import crypto = require('node:crypto');
+import { projectRoot, runtimePackage } from '../scripts/project-layout';
+import * as assert from 'node:assert/strict';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { test } from 'node:test';
+import { validateConfig } from '../app/main/config-policy';
 import Updater = require('../app/main/updater');
-import configPolicyModule = require('../app/main/config-policy');
-const { validateConfig } = configPolicyModule;
-import prepareBuildModule = require('../scripts/prepare-build');
-const { prepare } = prepareBuildModule;
-import buildHotUpdateModule = require('../scripts/build-hot-update');
-const { buildArchive, run: buildHotUpdate } = buildHotUpdateModule;
-import helpersModule = require('./helpers');
-const { trust, workspace } = helpersModule;
+import { buildArchive, run as buildHotUpdate } from '../scripts/build-hot-update';
+import { prepare } from '../scripts/prepare-build';
+import { trust, workspace } from './helpers';
+
 const base: any = {
   exam: { targetUrl: 'https://oj.example.com' },
   updater: { versionUrl: 'https://oj.example.com/version.json', enabled: true },
@@ -180,7 +178,7 @@ test('unsigned ASAR never executes; manifest minimum version blocks proofs and r
   assert.ok(!fs.existsSync(path.join(directory, 'app.asar')));
 });
 test('native build configuration validates and installer/portable artifact names stay distinct', async () => {
-  const pkg = require('../package.json');
+  const pkg = runtimePackage(require(path.join(projectRoot, 'package.json')));
   const { validateConfiguration } = require('app-builder-lib/out/util/config/config');
   const { expandMacro } = require('app-builder-lib/out/util/macroExpander');
   const { DebugLogger } = require('builder-util');

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+
 contextBridge.exposeInMainWorld('waitingAPI', {
   status: () => ipcRenderer.invoke('exam:waiting-status'),
   onStatus: (callback: (status: import('../main/contracts').ActivityStatus) => void) =>

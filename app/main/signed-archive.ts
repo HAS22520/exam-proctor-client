@@ -1,12 +1,19 @@
-import type { UpdatePackage, UpdateAnchor } from './contracts';
-import path = require('node:path');
-import crypto = require('node:crypto');
-import proctorCryptoModule = require('./proctor-crypto');
-const { canonical, verify } = proctorCryptoModule;
-import buildVersionModule = require('./build-version');
-const { buildVersion } = buildVersionModule;
+import * as crypto from 'node:crypto';
+import { archiveFs as fs } from './archive-filesystem';
+import { buildVersion } from './build-version';
+import type { UpdateAnchor, UpdatePackage } from './contracts';
+import { canonical, verify } from './proctor-crypto';
+
+interface AsarEntry {
+  link?: string;
+  unpacked?: boolean;
+  files?: Record<string, AsarEntry>;
+  size?: number;
+  offset?: string;
+}
+
 // Electron's fs transparently mounts ASAR; original-fs reads the actual bytes.
-const fs: typeof import('node:fs') = process.versions.electron ? require('original-fs') : require('node:fs');
+
 const MAX_ARCHIVE = 240 * 1024 * 1024;
 const ENTRY = 'app/main/index.js';
 async function hashFile(filename: string, options: { start?: number; end?: number } = {}) {
@@ -35,12 +42,12 @@ function readArchive(filename: string) {
     const buffer = Buffer.alloc(jsonSize);
     if (fs.readSync(fd, buffer, 0, jsonSize, 16) !== jsonSize) throw new Error('ASAR 头不完整');
     const header = JSON.parse(buffer.toString('utf8')),
-      files = new Map();
+      files = new Map<string, { size: number; start: number }>();
     function walk(
       node: {
         files?: Record<
           string,
-          { link?: string; unpacked?: boolean; files?: Record<string, any>; size?: number; offset?: string }
+          { link?: string; unpacked?: boolean; files?: Record<string, AsarEntry>; size?: number; offset?: string }
         >;
       },
       prefix = '',
@@ -168,4 +175,4 @@ async function verifyArchive(filename: string, expected: UpdatePackage, anchor: 
     throw new Error('ASAR 不能更换信任密钥、白名单或调试权限，请使用完整安装包');
   return payload;
 }
-export = { verifyArchive, hashFile, readArchive, ENTRY };
+export { verifyArchive, hashFile, readArchive, ENTRY };

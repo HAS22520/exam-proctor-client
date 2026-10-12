@@ -1,4 +1,5 @@
 import type { AuditSink, ClientConfig } from './contracts';
+
 class NetworkGuard {
   declare allowedOrigins: string[];
   declare auditLogger: AuditSink | null;

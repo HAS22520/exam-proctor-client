@@ -1,38 +1,35 @@
-import type { ClientStatus, ClientConfig, Trust, LoginIdentity, ActivityStatus, TraceLevel } from './contracts';
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron';
-import fs = require('node:fs');
-import path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import deviceStoreModule = require('./device-store');
-const { ProtectedStore, prepareBootIdentity } = deviceStoreModule;
-import configPolicyModule = require('./config-policy');
-const { validateConfig } = configPolicyModule;
-import proctorControllerModule = require('./proctor-controller');
-const { ProctorController } = proctorControllerModule;
-import proctorAuthModule = require('./proctor-auth');
-const { identity, Transport, proctorErrorMessage, isNetworkError } = proctorAuthModule;
-import NetworkGuard = require('./network-guard');
-import AntiCheatGuard = require('./anti-cheat');
-import FirewallGuard = require('./firewall-guard');
-import Updater = require('./updater');
-import ProctorRequestGuard = require('./proctor-request-guard');
-import diagnosticsModule = require('./diagnostics');
-const { Diagnostics } = diagnosticsModule;
-import DebugConsole = require('./debug-console');
+import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from 'electron';
 import ActivityProgress = require('./activity-progress');
-import WaitingWindow = require('./waiting-window');
+import AntiCheatGuard = require('./anti-cheat');
+import { validateConfig } from './config-policy';
+import type { ActivityStatus, ClientConfig, ClientStatus, LoginIdentity, TraceLevel, Trust } from './contracts';
+import DebugConsole = require('./debug-console');
+import { ProtectedStore, prepareBootIdentity } from './device-store';
+import { Diagnostics } from './diagnostics';
 import ExamNetwork = require('./exam-network');
-import loginSessionModule = require('./login-session');
-const { resetLogin, observeLogin } = loginSessionModule;
-import runtimeModule = require('./runtime');
-const { runtime } = runtimeModule;
-import updateCacheModule = require('./update-cache');
-const { hasUnfinishedJournals } = updateCacheModule;
+import FirewallGuard = require('./firewall-guard');
+import { observeLogin, resetLogin } from './login-session';
+import NetworkGuard = require('./network-guard');
+import { Transport, identity, isNetworkError, proctorErrorMessage } from './proctor-auth';
+import { ProctorController } from './proctor-controller';
+import ProctorRequestGuard = require('./proctor-request-guard');
+import { runtime } from './runtime';
+import { hasUnfinishedJournals } from './update-cache';
+import Updater = require('./updater');
+import WaitingWindow = require('./waiting-window');
+
 const running = runtime(app);
 const diagnostics = new Diagnostics();
 const activity = new ActivityProgress({ onChange: publishActivity });
 const waitingWindow = new WaitingWindow(BrowserWindow);
-const trace = (level: TraceLevel, event: string, details: Record<string, any> = {}) => {
+const trace = (
+  level: TraceLevel,
+  event: string,
+  details: Record<string, unknown> & { phase?: string; url?: string; operation?: string } = {},
+) => {
   diagnostics.log(level, event, details);
   if (event === 'firewall.stage') activity.stage('network', details.phase);
   if (event === 'protocol.request') {
@@ -44,7 +41,7 @@ const debugConsole = new DebugConsole(BrowserWindow);
 
 app.setName('HydroProctorClient');
 let window: BrowserWindow,
-  controller: InstanceType<typeof ProctorController>,
+  controller: ProctorController,
   network: NetworkGuard,
   antiCheat: AntiCheatGuard,
   firewall: FirewallGuard,

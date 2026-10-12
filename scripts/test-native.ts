@@ -1,8 +1,10 @@
-import fs = require('node:fs');
-import os = require('node:os');
-import path = require('node:path');
 import { spawnSync } from 'node:child_process';
-const root = path.resolve(__dirname, '..');
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { projectRoot } from './project-layout';
+
+const root = projectRoot;
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hydro-policy-test-'));
 try {
   const output = path.join(directory, process.platform === 'win32' ? 'policy-test.exe' : 'policy-test');

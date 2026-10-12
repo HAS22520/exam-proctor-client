@@ -1,17 +1,16 @@
+import { spawn } from 'node:child_process';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { ActivityRunner, ClientError, Trace } from './contracts';
+import { atomicWrite } from './device-store';
+
 interface LegacyRuntime {
   platform?: NodeJS.Platform;
   exec?: typeof execute;
   trace?: Trace;
   activity?: ActivityRunner;
 }
-import type { ClientError } from './contracts';
-import type { Trace, ActivityRunner } from './contracts';
-import fs = require('node:fs');
-import path = require('node:path');
-import crypto = require('node:crypto');
-import { spawn } from 'node:child_process';
-import deviceStoreModule = require('./device-store');
-const { atomicWrite } = deviceStoreModule;
 
 function powerShellArgs(script: string) {
   const encoded = Buffer.from(script, 'utf16le').toString('base64');

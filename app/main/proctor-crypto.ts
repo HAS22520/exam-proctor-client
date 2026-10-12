@@ -1,5 +1,5 @@
+import * as crypto from 'node:crypto';
 import type { Trust } from './contracts';
-import crypto = require('node:crypto');
 
 const PROTOCOL = 'hydro-proctor/1';
 const LOG_MAGIC = 'HYDRO-PROCTOR-LOG/1';
@@ -52,20 +52,27 @@ function validateTrust(raw: Trust): Trust {
   };
 }
 
-function verifyEnvelope(response: any, key: crypto.KeyLike, expected: Record<string, unknown>, maxLifetime = 120000) {
-  const payload = response?.payload;
+// 类型断言只描述验签后的结果；签名、身份绑定和有效期校验必须全部保留。
+function verifyEnvelope<T extends object = Record<string, unknown>>(
+  response: unknown,
+  key: crypto.KeyLike,
+  expected: Record<string, unknown>,
+  maxLifetime = 120000,
+) {
+  const envelope = response as { payload?: Record<string, unknown>; signature?: unknown };
+  const payload = envelope?.payload;
   if (
     !payload ||
-    !verify(payload, response.signature, key) ||
+    !verify(payload, envelope.signature, key) ||
     Object.entries(expected).some(([field, value]) => canonical(payload[field]) !== canonical(value))
   ) {
     throw new Error('Server signature or identity mismatch');
   }
-  const expiry = Date.parse(payload.expiresAt);
+  const expiry = Date.parse(payload.expiresAt as string);
   if (!Number.isFinite(expiry) || expiry <= Date.now() || expiry > Date.now() + maxLifetime + 60000) {
     throw new Error('Server response expired or invalid');
   }
-  return payload;
+  return payload as T;
 }
 
-export = { PROTOCOL, LOG_MAGIC, canonical, digest, nonce, sign, verify, publicKey, validateTrust, verifyEnvelope };
+export { PROTOCOL, LOG_MAGIC, canonical, digest, nonce, sign, verify, publicKey, validateTrust, verifyEnvelope };

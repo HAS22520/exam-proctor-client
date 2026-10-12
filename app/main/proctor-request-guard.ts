@@ -1,12 +1,10 @@
 import type { ClientConfig } from './contracts';
-import proctorControllerModule = require('./proctor-controller');
-import proctorAccessModule = require('./proctor-access');
-const { accessTarget, stripProctorHeaders } = proctorAccessModule;
-import proctorAuthModule = require('./proctor-auth');
-const { proctorErrorMessage } = proctorAuthModule;
+import { accessTarget, stripProctorHeaders } from './proctor-access';
+import { proctorErrorMessage } from './proctor-auth';
+import type { ProctorController } from './proctor-controller';
 
 class ProctorRequestGuard {
-  declare controller: InstanceType<typeof proctorControllerModule.ProctorController>;
+  declare controller: ProctorController;
   declare config: { exam: Pick<ClientConfig['exam'], 'allowedOrigins'> };
   declare webContents: Pick<Electron.WebContents, 'id'> & Partial<Pick<Electron.WebContents, 'getURL'>>;
   declare isBlocked: () => boolean;

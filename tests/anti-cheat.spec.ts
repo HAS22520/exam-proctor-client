@@ -1,7 +1,7 @@
-import assert = require('node:assert/strict');
-import fs = require('node:fs');
-import path = require('node:path');
+import * as assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 

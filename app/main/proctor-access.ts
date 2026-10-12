@@ -1,6 +1,5 @@
+import { secureUrl } from './config-policy';
 import type { ProofRequest, RouteContext } from './contracts';
-import configPolicyModule = require('./config-policy');
-const { secureUrl } = configPolicyModule;
 
 function accessTarget(value: string) {
   const url = secureUrl(value);
@@ -53,13 +52,13 @@ function accessRequest(request: ProofRequest, source: RouteContext) {
     !request.path.startsWith('/') ||
     request.path.startsWith('//') ||
     !request.payload ||
-    !/^[a-f0-9]{24}$/.test(request.payload.tid || '')
+    !/^[a-f0-9]{24}$/.test((request.payload.tid as string) || '')
   )
     throw new Error('Invalid proctor access request');
   const url = new URL(request.path, source.origin);
   if (url.pathname !== request.path || url.search || url.hash || url.origin !== source.origin)
     throw new Error('Invalid proctor access path');
-  if (request.action === 'problem_view') url.searchParams.set('tid', request.payload.tid);
+  if (request.action === 'problem_view') url.searchParams.set('tid', request.payload.tid as string);
   const target = accessTarget(url.href);
   if (
     !target ||
@@ -79,4 +78,4 @@ function stripProctorHeaders(headers: Record<string, string>) {
   );
 }
 
-export = { accessTarget, accessRequest, stripProctorHeaders };
+export { accessTarget, accessRequest, stripProctorHeaders };

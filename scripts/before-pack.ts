@@ -1,7 +1,6 @@
-import prepareBuildModule = require('./prepare-build');
-const { prepare } = prepareBuildModule;
-import buildNativeModule = require('./build-native');
-const { buildNative } = buildNativeModule;
+import { buildNative } from './build-native';
+import { prepare } from './prepare-build';
+
 export = async (context: import('app-builder-lib').PackContext) => {
   const { version } = prepare();
   if (context.packager.appInfo.version !== version)

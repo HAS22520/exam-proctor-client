@@ -1,11 +1,9 @@
-import assert = require('node:assert/strict');
-import fs = require('node:fs');
-import path = require('node:path');
+import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { test } from 'node:test';
-import buildDockerModule = require('../scripts/build-docker');
-const { run, stageProject } = buildDockerModule;
-import helpersModule = require('./helpers');
-const { workspace, trust } = helpersModule;
+import { run, stageProject } from '../scripts/build-docker';
+import { trust, workspace } from './helpers';
 
 function fixture(t) {
   const root = workspace(t),

@@ -1,15 +1,13 @@
-import fs = require('node:fs');
-import path = require('node:path');
-import os = require('node:os');
-import crypto = require('node:crypto');
-import prepareBuildModule = require('./prepare-build');
-const { prepare } = prepareBuildModule;
-import buildModule = require('./build');
-const { buildEnvironment } = buildModule;
-import proctorCryptoModule = require('../app/main/proctor-crypto');
-const { sign, verify } = proctorCryptoModule;
-import signedArchiveModule = require('../app/main/signed-archive');
-const { ENTRY } = signedArchiveModule;
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { sign, verify } from '../app/main/proctor-crypto';
+import { ENTRY } from '../app/main/signed-archive';
+import { buildEnvironment } from './build';
+import { prepare } from './prepare-build';
+import { applicationRoot, projectRoot, runtimePackage } from './project-layout';
+
 const help = `Usage: npm run release:hot -- [--config FILE] [--sign-key FILE] [--help]
 
 --config FILE  Read build JSON; public key paths are relative to this file.
@@ -37,7 +35,7 @@ function readSigningKey(pem: string) {
   if (key.asymmetricKeyType !== 'ed25519') throw new Error('更新签名私钥必须是 Ed25519，不能使用日志解密的 RSA 私钥。');
   return key;
 }
-async function buildArchive(env = process.env, root = path.resolve(__dirname, '..')) {
+async function buildArchive(env = process.env, root = projectRoot) {
   // Validate before generating config, staging source or creating output files.
   const key = env.PROCTOR_UPDATE_PRIVATE_KEY ? readSigningKey(env.PROCTOR_UPDATE_PRIVATE_KEY) : null;
   const { version, buildVersion, trust, nativeNetworkVersion } = prepare(env, root);
@@ -50,14 +48,14 @@ async function buildArchive(env = process.env, root = path.resolve(__dirname, '.
   const output = path.join(root, 'updates');
   fs.mkdirSync(output, { recursive: true });
   try {
-    fs.cpSync(path.join(root, 'app'), path.join(staging, 'app'), {
+    fs.cpSync(path.join(applicationRoot(root), 'app'), path.join(staging, 'app'), {
       recursive: true,
       filter: (source) => !source.endsWith('.ts'),
     });
     const original = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     fs.writeFileSync(
       path.join(staging, 'package.json'),
-      JSON.stringify({ name: original.name, version, buildVersion, main: original.main }),
+      JSON.stringify({ name: original.name, version, buildVersion, main: runtimePackage(original).main }),
     );
     const filename = path.join(output, `app-${version}-${buildVersion}.asar`);
     if (env.PROCTOR_UPDATE_PRIVATE_KEY) {
@@ -143,4 +141,4 @@ if (require.main === module)
     console.error(error.message);
     process.exitCode = 1;
   });
-export = { buildArchive, run };
+export { buildArchive, run };

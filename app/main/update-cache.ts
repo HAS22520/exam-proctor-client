@@ -1,5 +1,10 @@
-import type { UpdatePackage } from './contracts';
-import type { ClientConfig, Trust, BuildIdentity } from './contracts';
+import * as path from 'node:path';
+import { archiveFs as fs } from './archive-filesystem';
+import { buildVersion } from './build-version';
+import type { BuildIdentity, ClientConfig, Trust, UpdatePackage } from './contracts';
+import { atomicWrite } from './device-store';
+import { verifyArchive } from './signed-archive';
+
 interface UpdateAnchor {
   trust: Trust;
   config: ClientConfig;
@@ -7,14 +12,7 @@ interface UpdateAnchor {
   electronVersion: string;
 }
 // Rename and inspect cached ASAR files without Electron's archive mounting.
-const fs: typeof import('node:fs') = process.versions.electron ? require('original-fs') : require('node:fs');
-import path = require('node:path');
-import deviceStoreModule = require('./device-store');
-const { atomicWrite } = deviceStoreModule;
-import buildVersionModule = require('./build-version');
-const { buildVersion } = buildVersionModule;
-import signedArchiveModule = require('./signed-archive');
-const { verifyArchive } = signedArchiveModule;
+
 function journalUpdateState(directory: string) {
   const journals = path.join(directory, 'journals');
   const counts = { open: 0, pending: 0, unreadable: 0 };
@@ -140,4 +138,4 @@ class UpdateCache {
     this.write('launch', null);
   }
 }
-export = { UpdateCache, hasUnfinishedJournals, journalUpdateState };
+export { UpdateCache, hasUnfinishedJournals, journalUpdateState };

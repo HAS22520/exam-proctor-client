@@ -1,18 +1,16 @@
-import assert = require('node:assert/strict');
-import crypto = require('node:crypto');
-import os = require('node:os');
-import path = require('node:path');
-import { test } from 'node:test';
+import * as assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import mountedFs = require('node:fs');
-const fs = process.versions.electron ? require('original-fs') : mountedFs;
-import prepareBuildModule = require('../scripts/prepare-build');
-const { prepare } = prepareBuildModule;
-import updateCacheModule = require('../app/main/update-cache');
-const { UpdateCache } = updateCacheModule;
+import * as crypto from 'node:crypto';
+import * as mountedFs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { test } from 'node:test';
+import { UpdateCache } from '../app/main/update-cache';
 import Updater = require('../app/main/updater');
-import helpersModule = require('./helpers');
-const { trust } = helpersModule;
+import { prepare } from '../scripts/prepare-build';
+import { trust } from './helpers';
+
+const fs = process.versions.electron ? require('original-fs') : mountedFs;
 
 async function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proctor-electron-update-'));

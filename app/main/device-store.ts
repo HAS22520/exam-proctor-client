@@ -1,3 +1,11 @@
+import { execFile } from 'node:child_process';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { DeviceIdentity } from './contracts';
+import { canonical, digest } from './proctor-crypto';
+
 interface BootOptions {
   platform?: NodeJS.Platform;
   exec?: (
@@ -8,14 +16,6 @@ interface BootOptions {
   ) => unknown;
   read?: (filename: string, encoding: 'utf8') => Promise<string>;
 }
-import type { DeviceIdentity } from './contracts';
-import crypto = require('node:crypto');
-import fs = require('node:fs');
-import path = require('node:path');
-import os = require('node:os');
-import { execFile } from 'node:child_process';
-import proctorCryptoModule = require('./proctor-crypto');
-const { canonical, digest } = proctorCryptoModule;
 
 function atomicWrite(filename: string, data: string | NodeJS.ArrayBufferView) {
   fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
@@ -134,4 +134,4 @@ function prepareBootIdentity({
   return bootPending;
 }
 
-export = { ProtectedStore, atomicWrite, deviceInfo, bootIdentity, prepareBootIdentity };
+export { ProtectedStore, atomicWrite, deviceInfo, bootIdentity, prepareBootIdentity };

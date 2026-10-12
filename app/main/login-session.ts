@@ -28,4 +28,4 @@ function observeLogin(session: Pick<Electron.Session, 'cookies'>, origins: strin
   });
 }
 
-export = { resetLogin, observeLogin };
+export { resetLogin, observeLogin };

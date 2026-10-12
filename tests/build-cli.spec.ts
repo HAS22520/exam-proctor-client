@@ -1,11 +1,10 @@
-import assert = require('node:assert/strict');
-import fs = require('node:fs');
-import path = require('node:path');
+import { projectRoot, runtimePackage } from '../scripts/project-layout';
+import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { test } from 'node:test';
-import buildModule = require('../scripts/build');
-const { run, parseArgs, buildEnvironment, clearEmptySigningEnvironment } = buildModule;
-import helpersModule = require('./helpers');
-const { trust, auth, workspace } = helpersModule;
+import { buildEnvironment, clearEmptySigningEnvironment, parseArgs, run } from '../scripts/build';
+import { auth, trust, workspace } from './helpers';
 
 function fixture(t) {
   const root = workspace(t);
@@ -123,11 +122,13 @@ test('check validates keys and origins before packaging; rejects conflicting tar
 });
 test('macOS packaging needs no developer account, profile files or native build', async (t) => {
   const { root, file, config } = fixture(t);
-  const pkg = require('../package.json');
+  const pkg = runtimePackage(require(path.join(projectRoot, 'package.json')));
   assert.equal(pkg.build.extraResources, undefined);
   assert.equal(pkg.build.mac.sign, undefined);
   assert.equal(pkg.build.afterSign, undefined);
-  assert.ok(pkg.build.win.extraResources.some((resource) => resource.to === 'native'));
+  const resources = pkg.build.win.extraResources;
+  assert.ok(Array.isArray(resources));
+  assert.ok(resources.some((resource) => typeof resource !== 'string' && resource.to === 'native'));
   fs.writeFileSync(
     file,
     JSON.stringify({
@@ -224,7 +225,7 @@ test('native build uses project root and dynamic version; beforePack keeps file-
         assert.equal(options.config.extraMetadata.version, '2.3.4');
         const { validateConfiguration } = require('app-builder-lib/out/util/config/config');
         const { DebugLogger } = require('builder-util');
-        await validateConfiguration({ ...require('../package.json').build, ...options.config }, new DebugLogger());
+        await validateConfiguration({ ...runtimePackage(require(path.join(projectRoot, 'package.json'))).build, ...options.config }, new DebugLogger());
         const targets = [...options.targets.entries()];
         assert.equal(targets[0][0].name, args[0] === '--win' ? 'windows' : 'mac');
         const architectures = [...targets[0][1].entries()];
@@ -285,7 +286,7 @@ test('electron-builder keeps the npm client isolated inside a Yarn workspace eve
     }),
   );
   fs.writeFileSync(path.join(parent, 'yarn.lock'), '__metadata:\n  version: 8\n');
-  const pkg = require('../package.json');
+  const pkg = runtimePackage(require(path.join(projectRoot, 'package.json')));
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(pkg));
   fs.writeFileSync(
     path.join(root, 'package-lock.json'),

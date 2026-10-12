@@ -1,12 +1,9 @@
-import assert = require('node:assert/strict');
-import fs = require('node:fs');
+import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
 import { test } from 'node:test';
-import diagnosticsModule = require('../app/main/diagnostics');
-const { Diagnostics, localTimestamp, redact } = diagnosticsModule;
-import proctorAuthModule = require('../app/main/proctor-auth');
-const { Transport } = proctorAuthModule;
-import helpersModule = require('./helpers');
-const { workspace } = helpersModule;
+import { Diagnostics, localTimestamp, redact } from '../app/main/diagnostics';
+import { Transport } from '../app/main/proctor-auth';
+import { workspace } from './helpers';
 
 test('diagnostic time includes the local UTC offset and preserves readable localhost routes', () => {
   const previous = process.env.TZ;

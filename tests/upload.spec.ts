@@ -1,12 +1,10 @@
-import assert = require('node:assert/strict');
+import * as assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import fs = require('node:fs');
-import path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { test } from 'node:test';
-import uploadTransportModule = require('../app/main/upload-transport');
-const { uploadFile } = uploadTransportModule;
-import helpersModule = require('./helpers');
-const { workspace } = helpersModule;
+import { uploadFile } from '../app/main/upload-transport';
+import { workspace } from './helpers';
 
 function fixture(t, mode = 'ok') {
   const directory = workspace(t),

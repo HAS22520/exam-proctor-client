@@ -1,15 +1,13 @@
-type ProtectedStore = typeof import('./device-store').ProtectedStore;
-import type { JournalBinding, JournalState } from './contracts';
-import crypto = require('node:crypto');
-import fs = require('node:fs');
-import path = require('node:path');
-import readline = require('node:readline');
+import * as crypto from 'node:crypto';
 import { once } from 'node:events';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as readline from 'node:readline';
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
-import deviceStoreModule = require('./device-store');
-const { atomicWrite, bootIdentity } = deviceStoreModule;
-import proctorCryptoModule = require('./proctor-crypto');
-const { canonical, digest, LOG_MAGIC } = proctorCryptoModule;
+import type { JournalBinding, JournalState } from './contracts';
+import { atomicWrite, bootIdentity } from './device-store';
+import type { ProtectedStore } from './device-store';
+import { LOG_MAGIC, canonical, digest } from './proctor-crypto';
 
 function decodeRecord(line: string, key: Buffer, binding: JournalBinding, seq: number, previousHash: string) {
   const sealed = JSON.parse(line);
@@ -29,7 +27,7 @@ function decodeRecord(line: string, key: Buffer, binding: JournalBinding, seq: n
 class AuditLogger {
   declare directory: string;
   declare binding: JournalBinding;
-  declare store: InstanceType<ProtectedStore>;
+  declare store: ProtectedStore;
   declare logPublicKey: string;
   declare keyId: string;
   declare statePath: string;
@@ -51,7 +49,7 @@ class AuditLogger {
   }: {
     directory: string;
     binding: JournalBinding;
-    protectedStore: InstanceType<ProtectedStore>;
+    protectedStore: ProtectedStore;
     logPublicKey: string;
     keyId: string;
     nowBoot?: number;

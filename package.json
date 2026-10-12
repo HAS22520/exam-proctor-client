@@ -4,21 +4,21 @@
   "packageManager": "npm@12.0.2",
   "workspaces": [],
   "description": "Hydro 监考客户端：设备认证、加密日志与跨平台考试环境",
-  "main": "app/main/bootstrap.js",
+  "main": "out/app/main/bootstrap.js",
   "scripts": {
-    "build": "node scripts/build.js",
-    "build:docker": "node scripts/build-docker.js",
-    "start": "node scripts/prepare-build.js && electron .",
-    "pack": "node scripts/build.js --dir",
-    "dist": "node scripts/build.js",
-    "release:hot": "node scripts/build-hot-update.js",
-    "test": "node --test tests/*.spec.js",
-    "test:updates:electron": "node scripts/test-update-runtime.js",
-    "keys:update": "node scripts/update-keys.js",
-    "build:native": "node scripts/build-native.js",
-    "test:native": "node scripts/test-native.js",
-    "compile": "tsc -p tsconfig.json && tsc -p tsconfig.tests.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
+    "build": "node out/scripts/build.js",
+    "build:docker": "node out/scripts/build-docker.js",
+    "start": "node out/scripts/prepare-build.js && electron .",
+    "pack": "node out/scripts/build.js --dir",
+    "dist": "node out/scripts/build.js",
+    "release:hot": "node out/scripts/build-hot-update.js",
+    "test": "node --test out/tests/*.spec.js",
+    "test:updates:electron": "node out/scripts/test-update-runtime.js",
+    "keys:update": "node out/scripts/update-keys.js",
+    "build:native": "node out/scripts/build-native.js",
+    "test:native": "node out/scripts/test-native.js",
+    "compile": "node --experimental-strip-types scripts/compile.mts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit && tsc -p tsconfig.tools.json",
     "prebuild": "npm run compile",
     "prebuild:docker": "npm run compile",
     "prestart": "npm run compile",
@@ -51,11 +51,11 @@
     "appId": "com.exam.proctor",
     "productName": "在线监考客户端",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "app": "out"
     },
     "files": [
       "app/**/*",
-      "!app/**/*.ts",
       "package.json"
     ],
     "win": {
@@ -110,7 +110,7 @@
       "entitlementsInherit": "config/entitlements.mac.plist",
       "minimumSystemVersion": "13.0"
     },
-    "beforePack": "./scripts/before-pack.js",
+    "beforePack": "./out/scripts/before-pack.js",
     "portable": {
       "artifactName": "HydroProctor-${version}-win-${arch}-portable.${ext}"
     }

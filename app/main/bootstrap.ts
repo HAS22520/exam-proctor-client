@@ -1,11 +1,11 @@
-// This loader always runs from the original installation, never the cached ASAR.
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { app, dialog } from 'electron';
-import fs = require('node:fs');
-import path = require('node:path');
-import updateCacheModule = require('./update-cache');
-const { UpdateCache } = updateCacheModule;
-import signedArchiveModule = require('./signed-archive');
-const { ENTRY } = signedArchiveModule;
+import { ENTRY } from './signed-archive';
+import { UpdateCache } from './update-cache';
+
+// This loader always runs from the original installation, never the cached ASAR.
+
 app.setName('HydroProctorClient');
 if (!app.requestSingleInstanceLock()) app.exit(0);
 else

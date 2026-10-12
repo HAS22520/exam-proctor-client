@@ -1,7 +1,9 @@
-import fs = require('node:fs');
-import path = require('node:path');
 import { spawnSync } from 'node:child_process';
-const root = path.resolve(__dirname, '..');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { projectRoot } from './project-layout';
+
+const root = projectRoot;
 
 function execute(command: string, args: string[], cwd: string) {
   const child = spawnSync(command, args, { cwd, stdio: 'inherit' });
@@ -74,4 +76,4 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
-export = { buildNative };
+export { buildNative };

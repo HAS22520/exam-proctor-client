@@ -1,12 +1,11 @@
-import fs = require('node:fs');
-import path = require('node:path');
-import configPolicyModule = require('../app/main/config-policy');
-const { validateConfig } = configPolicyModule;
-import deviceStoreModule = require('../app/main/device-store');
-const { atomicWrite } = deviceStoreModule;
-import buildVersionModule = require('../app/main/build-version');
-const { buildVersion: validateBuildVersion } = buildVersionModule;
-const root = path.resolve(__dirname, '..');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { buildVersion as validateBuildVersion } from '../app/main/build-version';
+import { validateConfig } from '../app/main/config-policy';
+import { atomicWrite } from '../app/main/device-store';
+import { applicationRoot, projectRoot } from './project-layout';
+
+const root = projectRoot;
 function prepare(env = process.env, buildRoot = root) {
   const raw = JSON.parse(fs.readFileSync(path.join(buildRoot, 'config/exam-config.json'), 'utf8'));
   const parseOrigins = (value: string | undefined, fallback: string[]) => (value ? JSON.parse(value) : fallback);
@@ -29,7 +28,7 @@ function prepare(env = process.env, buildRoot = root) {
     raw.debug = { allowRoot: env.PROCTOR_ALLOW_ROOT_DEBUG === 'true' };
   }
   const config = validateConfig(raw, trust);
-  const generated = path.join(buildRoot, 'app/generated');
+  const generated = path.join(applicationRoot(buildRoot), 'app/generated');
   const normalizedTrust = config.trust;
   delete config.trust;
   atomicWrite(path.join(generated, 'trust.json'), JSON.stringify(normalizedTrust, null, 2));
@@ -51,4 +50,4 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-export = { prepare };
+export { prepare };

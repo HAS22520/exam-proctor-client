@@ -1,19 +1,16 @@
-type UpdateCache = typeof import('./update-cache').UpdateCache;
-import type { ClientConfig, Trust, UpdateStatus, UpdateManifest, UpdatePackage } from './contracts';
-// Update archives are physical files, not Electron's virtual ASAR directories.
-const fs: typeof import('node:fs') = process.versions.electron ? require('original-fs') : require('node:fs');
-import path = require('node:path');
+import * as crypto from 'node:crypto';
+import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import crypto = require('node:crypto');
-import configPolicyModule = require('./config-policy');
-const { secureUrl, validateConfig } = configPolicyModule;
-import deviceStoreModule = require('./device-store');
-const { atomicWrite } = deviceStoreModule;
-import buildVersionModule = require('./build-version');
-const { buildVersion: validateBuildVersion } = buildVersionModule;
-import updateCacheModule = require('./update-cache');
-const { hasUnfinishedJournals, journalUpdateState } = updateCacheModule;
+import { archiveFs as fs } from './archive-filesystem';
+import { buildVersion as validateBuildVersion } from './build-version';
+import { secureUrl, validateConfig } from './config-policy';
+import type { ClientConfig, Trust, UpdateManifest, UpdatePackage, UpdateStatus } from './contracts';
+import { atomicWrite } from './device-store';
+import { hasUnfinishedJournals, journalUpdateState } from './update-cache';
+import type { UpdateCache } from './update-cache';
+
+// Update archives are physical files, not Electron's virtual ASAR directories.
 
 function compareVersions(a: string, b: string) {
   if (![a, b].every((value) => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value)))
@@ -32,7 +29,7 @@ class Updater {
   declare buildVersion: string;
   declare source: string;
   declare failure: { message: string } | null;
-  declare cache: Pick<InstanceType<UpdateCache>, 'stage'> | null;
+  declare cache: Pick<UpdateCache, 'stage'> | null;
   declare onStatus: (status: UpdateStatus) => void;
   declare fetch: typeof globalThis.fetch;
   declare minimumBlocked: boolean;
@@ -63,7 +60,7 @@ class Updater {
       buildVersion?: string;
       source?: string;
       failure?: { message: string };
-      cache?: Pick<InstanceType<UpdateCache>, 'stage'>;
+      cache?: Pick<UpdateCache, 'stage'>;
       onStatus?: (status: UpdateStatus) => void;
       fetch?: typeof globalThis.fetch;
     },

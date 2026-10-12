@@ -1,9 +1,9 @@
-import crypto = require('node:crypto');
-import fs = require('node:fs');
-import os = require('node:os');
-import path = require('node:path');
-import deviceStoreModule = require('../app/main/device-store');
-const { ProtectedStore } = deviceStoreModule;
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { ProtectedStore } from '../app/main/device-store';
+
 const auth = crypto.generateKeyPairSync('ed25519');
 const logs = crypto.generateKeyPairSync('rsa', { modulusLength: 3072 });
 const trust: any = {
@@ -53,4 +53,4 @@ function decryptLog(filename) {
     .split('\n')
     .map((line) => JSON.parse(line));
 }
-export = { auth, logs, trust, workspace, store, decryptLog };
+export { auth, logs, trust, workspace, store, decryptLog };

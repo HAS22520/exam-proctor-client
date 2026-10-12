@@ -1,15 +1,13 @@
-import assert = require('node:assert/strict');
-import fs = require('node:fs');
-import path = require('node:path');
-import { test } from 'node:test';
+import * as assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { PassThrough } from 'node:stream';
+import { test } from 'node:test';
 import FirewallGuard = require('../app/main/firewall-guard');
-import nativeNetworkModule = require('../app/main/native-network');
-const { NativeNetwork, endpoints } = nativeNetworkModule;
-import helpersModule = require('./helpers');
-const { workspace } = helpersModule;
 import LegacyFirewallGuard = require('../app/main/legacy-firewall-guard');
+import { NativeNetwork, endpoints } from '../app/main/native-network';
+import { workspace } from './helpers';
 
 function backend() {
   return {

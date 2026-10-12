@@ -1,3 +1,8 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { prepare } from './prepare-build';
+import { projectRoot } from './project-layout';
+
 type BuildInvocation = Omit<import('electron-builder').CliOptions, 'config'> & {
   config: import('electron-builder').Configuration & {
     beforePack: (context: import('app-builder-lib').PackContext) => Promise<void>;
@@ -20,11 +25,8 @@ interface BuildOptions {
   help?: boolean;
   'publish=never'?: boolean;
 }
-import fs = require('node:fs');
-import path = require('node:path');
-import prepareBuildModule = require('./prepare-build');
-const { prepare } = prepareBuildModule;
-const root = path.resolve(__dirname, '..');
+
+const root = projectRoot;
 const retiredFields = new Set(['macTeamId', 'macHostProfileFile', 'macExtensionProfileFile']);
 const help = `Usage: npm run build -- [--config FILE] [--win | --mac] [--x64 | --arm64] [--dir | --portable | --check]
 
@@ -208,4 +210,4 @@ function runCli(args = process.argv.slice(2), execute = run) {
     });
 }
 if (require.main === module) runCli();
-export = { run, runCli, parseArgs, buildEnvironment, clearEmptySigningEnvironment };
+export { run, runCli, parseArgs, buildEnvironment, clearEmptySigningEnvironment };

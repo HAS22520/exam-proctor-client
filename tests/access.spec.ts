@@ -1,16 +1,12 @@
-import assert = require('node:assert/strict');
+import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import proctorAccessModule = require('../app/main/proctor-access');
-const { accessTarget, accessRequest } = proctorAccessModule;
-import configPolicyModule = require('../app/main/config-policy');
-const { contextFromUrl } = configPolicyModule;
+import { contextFromUrl } from '../app/main/config-policy';
+import { accessRequest, accessTarget } from '../app/main/proctor-access';
+import { ProctorAuth, ProctorError } from '../app/main/proctor-auth';
+import { canonical, digest, verify } from '../app/main/proctor-crypto';
 import ProctorRequestGuard = require('../app/main/proctor-request-guard');
-import proctorAuthModule = require('../app/main/proctor-auth');
-const { ProctorAuth, ProctorError } = proctorAuthModule;
-import proctorCryptoModule = require('../app/main/proctor-crypto');
-const { canonical, digest, verify } = proctorCryptoModule;
-import helpersModule = require('./helpers');
-const { auth } = helpersModule;
+import { auth } from './helpers';
+
 const tid = '1234567890abcdef12345678',
   origin = 'https://oj.example.com';
 

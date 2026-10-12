@@ -17,7 +17,10 @@
     "useDefineForClassFields": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "noImplicitAny": true
+    "noImplicitAny": true,
+    "rootDir": ".",
+    "outDir": "out",
+    "noUnusedLocals": true
   },
   "include": [
     "app/**/*.ts",

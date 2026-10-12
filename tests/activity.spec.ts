@@ -1,9 +1,8 @@
-import assert = require('node:assert/strict');
+import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import ActivityProgress = require('../app/main/activity-progress');
 import FirewallGuard = require('../app/main/firewall-guard');
-import helpersModule = require('./helpers');
-const { workspace } = helpersModule;
+import { workspace } from './helpers';
 
 test('network activity explains an authentication wait, keeps elapsed time across stages, and returns to authentication', async () => {
   let now = 100,

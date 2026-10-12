@@ -1,41 +1,48 @@
-import type { DeviceIdentity, RouteContext, UploadProgress, ProofRequest, ClientError, Violation } from './contracts';
-type ProtectedStore = typeof import('./device-store').ProtectedStore;
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import AuditLogger = require('./audit-logger');
+import { contextFromUrl } from './config-policy';
+import type {
+  ActivityRunner,
+  ClientConfig,
+  ClientError,
+  ClientStatus,
+  DeviceIdentity,
+  LoginIdentity,
+  ProofRequest,
+  RouteContext,
+  SubmissionPayload,
+  Trace,
+  UploadProgress,
+  Violation,
+} from './contracts';
+import { atomicWrite } from './device-store';
+import type { ProtectedStore } from './device-store';
+import { accessRequest } from './proctor-access';
+import { ProctorAuth, Transport, identity, isNetworkError, proctorErrorMessage } from './proctor-auth';
+import { canonical, digest } from './proctor-crypto';
+
 interface ControllerRecord {
   login: LoginIdentity;
   context: RouteContext;
-  transport: InstanceType<typeof Transport>;
-  auth?: InstanceType<typeof ProctorAuth>;
+  transport: Transport;
+  auth?: ProctorAuth;
   journal?: AuditLogger;
   completed?: boolean;
 }
 interface ControllerOptions {
   config: Pick<ClientConfig, 'trust'> & { exam: Pick<ClientConfig['exam'], 'allowedOrigins'> };
   directory: string;
-  protectedStore: InstanceType<ProtectedStore>;
-  session: Pick<Electron.Session, 'fetch'>;
+  protectedStore: ProtectedStore;
+  session: Electron.Session;
   version: string;
   onIdentity?: (login: LoginIdentity | null) => Promise<unknown>;
   onStatus?: (status: ClientStatus) => void;
   trace?: Trace;
   activity?: ActivityRunner;
-  createTransport?: (origin: string, timeout?: number) => InstanceType<typeof Transport>;
+  createTransport?: (origin: string, timeout?: number) => Transport;
 }
-import type { ClientConfig, LoginIdentity, ActivityRunner } from './contracts';
-import type { ClientStatus, Trace } from './contracts';
-import fs = require('node:fs');
-import path = require('node:path');
-import crypto = require('node:crypto');
-import AuditLogger = require('./audit-logger');
-import deviceStoreModule = require('./device-store');
-const { atomicWrite } = deviceStoreModule;
-import proctorCryptoModule = require('./proctor-crypto');
-const { canonical, digest } = proctorCryptoModule;
-import configPolicyModule = require('./config-policy');
-const { contextFromUrl } = configPolicyModule;
-import proctorAuthModule = require('./proctor-auth');
-const { ProctorAuth, Transport, identity, proctorErrorMessage, isNetworkError } = proctorAuthModule;
-import proctorAccessModule = require('./proctor-access');
-const { accessRequest } = proctorAccessModule;
 
 function submission(request: ProofRequest, context: RouteContext, login: LoginIdentity) {
   if (
@@ -47,7 +54,7 @@ function submission(request: ProofRequest, context: RouteContext, login: LoginId
     !context.problem
   )
     throw new Error('Invalid proctor submission target');
-  const p = request.payload;
+  const p = request.payload as Partial<SubmissionPayload>;
   if (
     !p ||
     Object.keys(p).sort().join(',') !== 'code,fileHash,input,lang,pid,pretest' ||
@@ -68,7 +75,7 @@ function submission(request: ProofRequest, context: RouteContext, login: LoginId
   ) {
     throw new Error('Invalid proctor submission payload');
   }
-  return p;
+  return p as SubmissionPayload;
 }
 
 function requireOpenAttempt(record: ControllerRecord) {
@@ -86,8 +93,8 @@ function requireOpenAttempt(record: ControllerRecord) {
 class ProctorController {
   declare config: ControllerOptions['config'];
   declare directory: string;
-  declare protectedStore: InstanceType<ProtectedStore>;
-  declare electronSession: Pick<Electron.Session, 'fetch'>;
+  declare protectedStore: ProtectedStore;
+  declare electronSession: Electron.Session;
   declare version: string;
   declare onIdentity: ControllerOptions['onIdentity'];
   declare onStatus: ControllerOptions['onStatus'];
@@ -104,6 +111,7 @@ class ProctorController {
   declare proofPending: Promise<void>;
   declare uploadProgress: UploadProgress | null;
   declare identityCache: Map<string, { record: ControllerRecord; login: LoginIdentity; validUntil: number }>;
+  // 登录变化使旧的异步认证结果失效，避免串行任务恢复前一个账号的身份。
   declare identityEpoch: number;
   declare identityWork: Promise<void>;
   declare pendingIdentities: Map<string, Promise<ControllerRecord>>;
@@ -731,4 +739,4 @@ class ProctorController {
   }
 }
 
-export = { ProctorController, submission };
+export { ProctorController, submission };

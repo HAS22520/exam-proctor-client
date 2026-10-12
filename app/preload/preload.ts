@@ -1,5 +1,6 @@
-import type { ClientStatus, ActivityStatus, UpdateStatus } from '../main/contracts';
 import { contextBridge, ipcRenderer } from 'electron';
+import type { ActivityStatus, ClientStatus, UpdateStatus } from '../main/contracts';
+
 contextBridge.exposeInMainWorld('examAPI', {
   proctorHeaders: (request: unknown) => ipcRenderer.invoke('exam:proctor-headers', request),
   requestQuit: () => ipcRenderer.invoke('exam:request-quit'),

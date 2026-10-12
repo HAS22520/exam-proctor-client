@@ -1,5 +1,5 @@
+import * as net from 'node:net';
 import type { Trace } from './contracts';
-import net = require('node:net');
 
 class ExamNetwork {
   declare session: Pick<Electron.Session, 'setProxy' | 'closeAllConnections' | 'resolveHost'>;

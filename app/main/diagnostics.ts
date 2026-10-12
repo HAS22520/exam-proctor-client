@@ -1,7 +1,6 @@
-import type { ClientError } from './contracts';
-import type { DiagnosticEntry, DiagnosticSnapshot, TraceLevel } from './contracts';
-import fs = require('node:fs');
-import path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { ClientError, DiagnosticEntry, DiagnosticSnapshot, TraceLevel } from './contracts';
 
 const fields = new Set([
   'operation',
@@ -152,4 +151,4 @@ class Diagnostics {
   }
 }
 
-export = { Diagnostics, redact, localTimestamp };
+export { Diagnostics, redact, localTimestamp };

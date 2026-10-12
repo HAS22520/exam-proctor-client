@@ -1,4 +1,5 @@
 import type { ActivityStatus, ClientStatus, DiagnosticSnapshot } from '../app/main/contracts';
+
 declare global {
   interface Window {
     debugAPI: { logs(after: number): Promise<DiagnosticSnapshot>; devtools(): Promise<void> };

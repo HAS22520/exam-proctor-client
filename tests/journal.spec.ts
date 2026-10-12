@@ -1,12 +1,11 @@
-import assert = require('node:assert/strict');
-import fs = require('node:fs');
-import path = require('node:path');
+import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { test } from 'node:test';
 import AuditLogger = require('../app/main/audit-logger');
-import deviceStoreModule = require('../app/main/device-store');
-const { ProtectedStore } = deviceStoreModule;
-import helpersModule = require('./helpers');
-const { trust, workspace, store, decryptLog } = helpersModule;
+import { ProtectedStore } from '../app/main/device-store';
+import { decryptLog, store, trust, workspace } from './helpers';
+
 function fixture(t) {
   const directory = workspace(t),
     protectedStore = store(path.join(directory, 'secrets'));

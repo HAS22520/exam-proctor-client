@@ -1,17 +1,13 @@
-import assert = require('node:assert/strict');
-import fs = require('node:fs');
-import path = require('node:path');
+import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { test } from 'node:test';
-import proctorControllerModule = require('../app/main/proctor-controller');
-const { ProctorController } = proctorControllerModule;
-import proctorAuthModule = require('../app/main/proctor-auth');
-const { Transport } = proctorAuthModule;
-import updateCacheModule = require('../app/main/update-cache');
-const { hasUnfinishedJournals } = updateCacheModule;
-import proctorCryptoModule = require('../app/main/proctor-crypto');
-const { canonical, sign, digest, nonce, verify } = proctorCryptoModule;
-import helpersModule = require('./helpers');
-const { auth, trust, workspace, store, decryptLog } = helpersModule;
+import { Transport } from '../app/main/proctor-auth';
+import { ProctorController } from '../app/main/proctor-controller';
+import { canonical, digest, nonce, sign, verify } from '../app/main/proctor-crypto';
+import { hasUnfinishedJournals } from '../app/main/update-cache';
+import { auth, decryptLog, store, trust, workspace } from './helpers';
+
 const url = 'https://oj.example.com/d/exam/contest/1234567890abcdef12345678';
 function fixture(t) {
   const directory = workspace(t),

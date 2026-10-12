@@ -1,16 +1,12 @@
-import assert = require('node:assert/strict');
+import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import proctorAuthModule = require('../app/main/proctor-auth');
-const { ProctorAuth, Transport, identity, parseReply, proctorErrorMessage } = proctorAuthModule;
-import proctorCryptoModule = require('../app/main/proctor-crypto');
-const { canonical, sign, verify, digest, nonce, validateTrust } = proctorCryptoModule;
-import configPolicyModule = require('../app/main/config-policy');
-const { contextFromUrl, validateConfig } = configPolicyModule;
-import proctorControllerModule = require('../app/main/proctor-controller');
-const { submission } = proctorControllerModule;
+import { contextFromUrl, validateConfig } from '../app/main/config-policy';
 import NetworkGuard = require('../app/main/network-guard');
-import helpersModule = require('./helpers');
-const { auth, trust, workspace, store } = helpersModule;
+import { ProctorAuth, Transport, identity, parseReply, proctorErrorMessage } from '../app/main/proctor-auth';
+import { submission } from '../app/main/proctor-controller';
+import { canonical, digest, nonce, sign, validateTrust, verify } from '../app/main/proctor-crypto';
+import { auth, store, trust, workspace } from './helpers';
+
 const context = contextFromUrl('https://oj.example.com/d/exam/p/P100?tid=1234567890abcdef12345678');
 const login: any = { uid: 7, domainId: 'exam', pid: 100, proctorEnabled: true };
 const version = '1.0.0';
@@ -188,7 +184,7 @@ test('transport refuses redirects and non JSON replies without disclosing respon
     new Response('token-secret', { status: 302, headers: { location: '/login' } }),
     new Response('token-secret', { headers: { 'content-type': 'text/html' } }),
   ]) {
-    const transport = new Transport({ fetch: async () => response }, context.origin);
+    const transport = new Transport({ fetch: async () => response } as any, context.origin);
     await assert.rejects(transport.request('/contest/x'), (error: any) => !error.message.includes('token-secret'));
   }
 });
@@ -208,7 +204,7 @@ test('Hydro version rejection preserves params, emits a diagnostic code and prov
           }),
           { status: 403, headers: { 'content-type': 'application/json' } },
         ),
-    },
+    } as any,
     context.origin,
     15000,
     (...entry) => traces.push(entry),

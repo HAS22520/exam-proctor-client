@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import buildModule = require('./build');
-const { run } = buildModule;
+import { run } from './build';
 
 async function main() {
   const [major, minor] = process.versions.node.split('.').map(Number);

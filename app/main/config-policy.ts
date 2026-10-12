@@ -1,6 +1,5 @@
-import type { ClientConfig, Trust, RouteContext } from './contracts';
-import proctorCryptoModule = require('./proctor-crypto');
-const { validateTrust } = proctorCryptoModule;
+import type { ClientConfig, RouteContext, Trust } from './contracts';
+import { validateTrust } from './proctor-crypto';
 
 function secureUrl(value: string) {
   const url = new URL(value);
@@ -73,4 +72,4 @@ function contextFromUrl(value: string): RouteContext {
   };
 }
 
-export = { secureUrl, origins, validateConfig, contextFromUrl };
+export { secureUrl, origins, validateConfig, contextFromUrl };

@@ -36,8 +36,3 @@ hplog
 
 bun.lock
 config/build.local.json.lock
-
-# JavaScript emitted from the TypeScript sources (keeps installed paths stable)
-/app/**/*.js
-/scripts/*.js
-/tests/*.js

@@ -1,3 +1,17 @@
+import type {
+  DeviceIdentity,
+  HandshakePayload,
+  LoginIdentity,
+  RouteContext,
+  SessionIdentity,
+  SessionPayload,
+  Trust,
+} from './contracts';
+import { deviceInfo } from './device-store';
+import { PROTOCOL, canonical, digest, nonce, sign, verifyEnvelope } from './proctor-crypto';
+import { ProctorError, isNetworkError, parseReply, proctorErrorMessage } from './protocol-errors';
+import { Transport } from './protocol-transport';
+
 interface ProctorAuthOptions {
   transport: Transport;
   context: RouteContext;
@@ -8,200 +22,6 @@ interface ProctorAuthOptions {
   log?: (event: string) => void;
   attemptId?: string;
 }
-import type {
-  RouteContext,
-  LoginIdentity,
-  Trust,
-  DeviceIdentity,
-  SessionIdentity,
-  CompletedAttempt,
-} from './contracts';
-import type { Trace, ClientError, UploadProgress } from './contracts';
-import proctorCryptoModule = require('./proctor-crypto');
-const { PROTOCOL, canonical, digest, nonce, sign, verifyEnvelope } = proctorCryptoModule;
-import deviceStoreModule = require('./device-store');
-const { deviceInfo } = deviceStoreModule;
-
-class ProctorError extends Error {
-  declare status: number;
-  declare code: string;
-  declare publicMessage: string;
-
-  constructor(message: string, status = 0) {
-    super(message);
-    this.status = status;
-    if (/^(?:Proctor )?(?:client )?version mismatch\.?$/i.test(message)) {
-      this.code = 'PROCTOR_VERSION_MISMATCH';
-      this.publicMessage = '客户端版本不符合系统要求，认证已被拒绝。请安装符合 OJ 要求的客户端后重试。';
-    } else if (/^Proctor session expired or client version mismatch\.?$/i.test(message)) {
-      this.code = 'PROCTOR_SESSION_REJECTED';
-      this.publicMessage = '监考会话已过期或客户端版本不符合系统要求。请重新认证；若仍失败，请联系管理员确认所需版本。';
-    } else if (status === 403 && /^(?:ForbiddenError|Proctor request rejected)$/.test(message)) {
-      this.publicMessage =
-        'OJ 拒绝了监考认证（HTTP 403），服务端未提供具体原因。请管理员检查客户端版本、比赛报名及访问权限。';
-    } else if (message === 'Attend the contest before starting proctoring.') {
-      this.code = 'PROCTOR_ATTEND_REQUIRED';
-      this.publicMessage = '请先报名／参加当前比赛，再验证监考客户端。';
-    }
-  }
-  get retryable() {
-    return !this.status || this.status === 429 || this.status >= 500 || /in progress|retry/i.test(this.message);
-  }
-}
-
-function proctorErrorMessage(error: ClientError, version?: string) {
-  if (error.code === 'PROCTOR_VERSION_MISMATCH' && version) {
-    return `客户端版本不符合系统要求（当前：${version}），认证已被拒绝。请安装符合 OJ 要求的客户端后重试。`;
-  }
-  if (error.publicMessage) return error.publicMessage;
-  if (isNetworkError(error))
-    return error.code === 'NETWORK_OJ_UNREACHABLE'
-      ? error.message
-      : '无法连接 OJ，当前认证尚未完成。请检查网络，关闭代理软件的系统代理／TUN／Fake-IP 模式后重试；监考日志已保留。';
-  return '认证失败，请检查登录账号、客户端版本及认证密钥，或查看调试控制台中的具体原因。';
-}
-
-function isNetworkError(error: ClientError) {
-  return (
-    /^(?:NETWORK_|DNS_|FILTER_FAILED|HELPER_EXITED|ETIMEDOUT|ECONN|ENOTFOUND)/.test(error.code || '') ||
-    ['TimeoutError', 'AbortError'].includes(error.name) ||
-    /net::ERR_|fetch failed|Failed to fetch/i.test(error.message)
-  );
-}
-
-function parseReply(raw: string, status: number, type: string) {
-  if (status >= 300 && status < 400) throw new ProctorError('Login or redirect requires attention', status);
-  if (!type.includes('application/json')) throw new ProctorError('Server did not return protocol JSON', status);
-  if (raw.length > 1024 * 1024) throw new ProctorError('Protocol response too large', 400);
-  const data = JSON.parse(raw);
-  const serverError = data?.error;
-  if (status < 200 || status >= 300 || serverError) {
-    // Hydro puts the detailed reason in params; message may only be ForbiddenError.
-    const param =
-      Array.isArray(serverError?.params) &&
-      serverError.params.find((value: unknown) => typeof value === 'string' && value.trim());
-    const reason =
-      param ||
-      (typeof serverError === 'string'
-        ? serverError
-        : typeof serverError?.message === 'string' && serverError.message) ||
-      'Proctor request rejected';
-    throw new ProctorError(String(reason).trim().slice(0, 300), status);
-  }
-  return data;
-}
-
-class Transport {
-  declare session: Pick<Electron.Session, 'fetch'>;
-  declare origin: string;
-  declare timeoutMs: number;
-  declare trace: Trace;
-
-  constructor(session: Transport['session'], origin: string, timeoutMs = 15000, trace: Trace = () => {}) {
-    Object.assign(this, { session, origin, timeoutMs, trace });
-  }
-
-  async request(
-    path: string,
-    {
-      method = 'POST',
-      body,
-      headers = {},
-      timeoutMs = this.timeoutMs,
-      operation,
-    }: {
-      method?: string;
-      body?: BodyInit;
-      headers?: Record<string, string>;
-      timeoutMs?: number;
-      operation?: string;
-    } = {},
-  ) {
-    const url = new URL(path, this.origin);
-    if (url.origin !== this.origin || !path.startsWith('/') || path.startsWith('//'))
-      throw new Error('Invalid protocol target');
-    const started = Date.now();
-    const details = { url: url.href, method, operation };
-    this.trace('info', 'protocol.request', details);
-    try {
-      const signal = AbortSignal.timeout(timeoutMs);
-      const response = await this.session.fetch(url.href, {
-        method,
-        redirect: 'manual',
-        credentials: 'include',
-        cache: 'no-store',
-        signal,
-        headers: { Accept: 'application/json', Origin: this.origin, ...headers },
-        body,
-      });
-      const type = response.headers.get('content-type') || '';
-      if (response.status >= 300 && response.status < 400)
-        throw new ProctorError('Login or redirect requires attention', response.status);
-      if (!type.includes('application/json'))
-        throw new ProctorError('Server did not return protocol JSON', response.status);
-      const raw = await response.text();
-      const result = parseReply(raw, response.status, type);
-      this.trace('info', 'protocol.response', {
-        ...details,
-        status: response.status,
-        durationMs: Date.now() - started,
-      });
-      return result;
-    } catch (error) {
-      this.trace('error', 'protocol.failed', {
-        ...details,
-        status: error.status,
-        name: error.name,
-        code: error.code,
-        message: error.message,
-        durationMs: Date.now() - started,
-      });
-      throw error;
-    }
-  }
-
-  json(path: string, body: any, headers?: Record<string, string>) {
-    const operation = ['challenge', 'handshake', 'refresh', 'finish'].includes(body?.operation)
-      ? body.operation
-      : undefined;
-    return this.request(path, {
-      operation,
-      body: JSON.stringify(body),
-      headers: { 'Content-Type': 'application/json', ...headers },
-    });
-  }
-
-  async upload(
-    path: string,
-    options: {
-      filename: string;
-      uploadName: string;
-      headers: Record<string, string>;
-      onProgress?: (progress: UploadProgress) => void;
-    },
-  ) {
-    const started = Date.now();
-    this.trace('info', 'protocol.upload-start');
-    try {
-      const result = await require('./upload-transport').uploadFile({
-        session: this.session,
-        origin: this.origin,
-        path,
-        ...options,
-      });
-      this.trace('info', 'protocol.upload-complete', { durationMs: Date.now() - started });
-      return result;
-    } catch (error) {
-      this.trace('error', 'protocol.upload-failed', {
-        name: error.name,
-        status: error.status,
-        message: error.message,
-        durationMs: Date.now() - started,
-      });
-      throw error;
-    }
-  }
-}
 
 async function identity(transport: Transport, context: RouteContext, trust: Trust): Promise<LoginIdentity> {
   const clientNonce = nonce();
@@ -210,7 +30,7 @@ async function identity(transport: Transport, context: RouteContext, trust: Trus
     ...(context.tid ? { tid: context.tid } : {}),
     ...(context.problem ? { problem: context.problem } : {}),
   });
-  const payload = verifyEnvelope(response, trust.authPublicKey, {
+  const payload = verifyEnvelope<LoginIdentity>(response, trust.authPublicKey, {
     protocol: PROTOCOL,
     action: 'identity',
     keyId: trust.keyId,
@@ -278,10 +98,11 @@ class ProctorAuth {
     };
   }
 
-  accept(response: any, previousAttempt?: string) {
+  accept(reply: unknown, previousAttempt?: string) {
+    const response = reply as { token?: string };
     if (typeof response.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(response.token))
       throw new Error('Invalid session token');
-    const payload = verifyEnvelope(
+    const payload = verifyEnvelope<SessionPayload>(
       response,
       this.trust.authPublicKey,
       { ...this.expected('session'), tokenHash: digest(response.token) },
@@ -319,7 +140,7 @@ class ProctorAuth {
       publicKey: this.device.publicKey,
       deviceInfo: info,
     });
-    const payload = verifyEnvelope(response, this.trust.authPublicKey, {
+    const payload = verifyEnvelope<HandshakePayload>(response, this.trust.authPublicKey, {
       ...this.expected('handshake'),
       origin: this.context.origin,
       clientNonce,
@@ -419,4 +240,4 @@ class ProctorAuth {
   }
 }
 
-export = { ProctorAuth, Transport, ProctorError, identity, parseReply, proctorErrorMessage, isNetworkError };
+export { ProctorAuth, Transport, ProctorError, identity, parseReply, proctorErrorMessage, isNetworkError };

@@ -1,13 +1,15 @@
-import fs = require('node:fs');
-import path = require('node:path');
-import crypto = require('node:crypto');
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { projectRoot } from './project-layout';
+
 function run(args = process.argv.slice(2)) {
   if (args.length !== 2 || args[0] !== '--out-dir' || !args[1].trim())
     throw new Error('Usage: npm run keys:update -- --out-dir <private directory outside repository>');
   const directory = path.resolve(args[1]),
     privateFile = path.join(directory, 'update-private.pem'),
     publicFile = path.join(directory, 'update-public.pem');
-  const relative = path.relative(path.resolve(__dirname, '..'), directory);
+  const relative = path.relative(projectRoot, directory);
   if (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
     throw new Error('Keep update signing keys outside the client repository');
   if (fs.existsSync(privateFile) || fs.existsSync(publicFile))
@@ -26,4 +28,4 @@ if (require.main === module) {
     process.exitCode = 1;
   }
 }
-export = { run };
+export { run };

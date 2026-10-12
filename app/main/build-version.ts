@@ -10,4 +10,4 @@ function buildVersion(value: unknown) {
     throw new Error('buildVersion 日期无效');
   return value;
 }
-export = { buildVersion };
+export { buildVersion };

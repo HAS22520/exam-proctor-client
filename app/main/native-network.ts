@@ -1,3 +1,9 @@
+import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as net from 'node:net';
+import * as path from 'node:path';
+import type { Trace } from './contracts';
+
 interface NativeOptions {
   platform?: NodeJS.Platform;
   spawnProcess?: typeof spawn;
@@ -6,12 +12,8 @@ interface NativeOptions {
   onFailure?: (error: Error) => void;
   now?: () => number;
 }
-import type { Trace } from './contracts';
-import fs = require('node:fs');
-import path = require('node:path');
-import net = require('node:net');
+
 const dns = require('node:dns').promises;
-import { spawn } from 'node:child_process';
 
 const messages: Record<string, string> = {
   ADMIN_REQUIRED: '请关闭软件，右键点击监考客户端，选择“以管理员身份运行”后重新打开。',
@@ -32,7 +34,10 @@ function failure(code: string, detail = '') {
 function executable(resources: string = process.resourcesPath) {
   const name = 'hydro-network.exe';
   const packaged = resources && path.join(resources, 'native', name);
-  return packaged && fs.existsSync(packaged) ? packaged : path.resolve(__dirname, '../../build/native', name);
+  if (packaged && fs.existsSync(packaged)) return packaged;
+  // 开发代码在 out/app/main，原生程序仍在工程 build/native；安装版优先用 resources。
+  const development = path.resolve(__dirname, '../../../build/native', name);
+  return fs.existsSync(development) ? development : path.resolve(__dirname, '../../build/native', name);
 }
 
 async function endpoints(
@@ -216,4 +221,4 @@ class NativeNetwork {
     this.child?.stdin.end();
   }
 }
-export = { NativeNetwork, endpoints, executable, failure };
+export { NativeNetwork, endpoints, executable, failure };

@@ -1,7 +1,7 @@
-import type { ClientConfig, AuditSink } from './contracts';
-import { globalShortcut, screen } from 'electron';
 import { execFile } from 'node:child_process';
-import path = require('node:path');
+import * as path from 'node:path';
+import { globalShortcut, screen } from 'electron';
+import type { AuditSink, ClientConfig } from './contracts';
 
 class AntiCheatGuard {
   declare window: Electron.BrowserWindow;
@@ -38,7 +38,7 @@ class AntiCheatGuard {
     this.logger?.logViolation({ source: 'ANTI_CHEAT', type, target, detail: '' });
   }
 
-  listen(emitter: import('node:events').EventEmitter, event: string, callback: (...args: any[]) => void) {
+  listen(emitter: import('node:events').EventEmitter, event: string, callback: (...args: unknown[]) => void) {
     emitter.on(event, callback);
     this.listeners.push(() => emitter.removeListener(event, callback));
   }

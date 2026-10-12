@@ -1,3 +1,9 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { ActivityRunner, AuditSink, ClientConfig, Trace } from './contracts';
+import LegacyFirewallGuard = require('./legacy-firewall-guard');
+import { NativeNetwork, endpoints, failure } from './native-network';
+
 interface FirewallRuntime {
   platform?: NodeJS.Platform;
   trace?: Trace;
@@ -9,12 +15,6 @@ interface FirewallRuntime {
   legacy?: FirewallGuard['legacy'];
   exec?: ConstructorParameters<typeof LegacyFirewallGuard>[3]['exec'];
 }
-import type { ClientConfig, AuditSink, Trace, ActivityRunner } from './contracts';
-import fs = require('node:fs');
-import path = require('node:path');
-import nativeNetworkModule = require('./native-network');
-const { NativeNetwork, endpoints, failure } = nativeNetworkModule;
-import LegacyFirewallGuard = require('./legacy-firewall-guard');
 
 class FirewallGuard {
   declare config: { exam?: Pick<ClientConfig['exam'], 'allowedOrigins'> };
@@ -28,8 +28,7 @@ class FirewallGuard {
   declare verifyConnectivity: () => Promise<unknown>;
   declare pending: Promise<unknown>;
   declare native:
-    | (Pick<InstanceType<typeof NativeNetwork>, 'active' | 'check' | 'lock' | 'unlock' | 'close'> &
-        Partial<Pick<InstanceType<typeof NativeNetwork>, 'healthy'>>)
+    | (Pick<NativeNetwork, 'active' | 'check' | 'lock' | 'unlock' | 'close'> & Partial<Pick<NativeNetwork, 'healthy'>>)
     | null;
   declare legacy: Pick<LegacyFirewallGuard, 'statePath' | 'recover'> | null;
   declare statePath: string;
