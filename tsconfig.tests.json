@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noImplicitAny": false
+  },
+  "include": [
+    "tests/**/*.ts",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "updates",
+    "build",
+    "app/generated"
+  ]
+}

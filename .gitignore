@@ -32,6 +32,12 @@ app.asar
 config/build.local.json
 config/pem
 config/pem-local
+hplog
 
 bun.lock
 config/build.local.json.lock
+
+# JavaScript emitted from the TypeScript sources (keeps installed paths stable)
+/app/**/*.js
+/scripts/*.js
+/tests/*.js

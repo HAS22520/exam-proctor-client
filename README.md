@@ -51,6 +51,22 @@ Electron 客户端，使用 `HydroNext-proctor/1` 协议连接 OJ。支持 Windo
 
 未设置的可选签名 Secret 会被 Actions 展开为空字符串，构建脚本会清除这些空值，避免把仓库目录误当成证书文件。打包提前退出或未生成安装包时，构建步骤会直接报告失败；`--dir` 不要求生成安装包。
 
+## TypeScript 开发与编译
+
+`app/`、`scripts/` 和 `tests/` 的源码均为 TypeScript。应用和构建脚本禁止隐式 `any`；测试保留对部分 Electron API 的模拟，同时仍参与类型检查。修改 `.ts` 文件；旁边的 `.js` 是自动生成文件，已被 Git 忽略，不要手动编辑或提交。
+
+```bash
+npm ci
+npm run typecheck  # 检查应用、构建脚本和测试的类型，不生成文件
+npm run compile    # 编译生成 Electron 和 Node 使用的 CommonJS JavaScript
+npm test           # 自动先编译，再运行现有回归测试
+npm run test:updates:electron  # 在 Electron Node 模式中测试 ASAR，不创建窗口
+```
+
+`npm start`、安装包构建、Docker 构建和 ASAR 发布命令都自动先编译，原有参数保持不变。直接使用 `node scripts/…js` 或 `electron .` 时，须先执行 `npm run compile`。GitHub Actions 也会检查类型，并通过相同 npm 命令编译。
+
+编译输出放在源码旁边，以保留现有 `app/main/bootstrap.js`、preload 和 HTML 引用路径。安装包和签名 ASAR 只包含编译后的应用代码与资源，不包含 TypeScript 源码、构建脚本或测试。Docker 暂存目录使用已编译代码，继续隔离父仓库依赖和本地密钥。原生 WFP 组件仍使用 C++，日志解密工具仍使用 Python。
+
 ## 本地构建
 
 需要 Node.js 22.12+。在本客户端目录复制 `config/build.example.json` 为 `config/build.local.json`，按照 `_comments` 填写各项；注释字段不会进入安装包。公钥路径相对于配置文件，文件应放在仓库外。本地配置已被 Git 忽略，`.env` 不会自动加载。
@@ -92,9 +108,10 @@ Windows 原生构建需 Visual Studio Build Tools 的 C++ 桌面开发组件，�
 
 ### WSL／Linux 使用 Docker 构建 Windows
 
-需要 Docker daemon 访问权限，无需宿主机 Wine 或 MinGW：
+需要 Docker daemon 访问权限，并先在宿主机安装本客户端的 TypeScript 构建依赖；无需宿主机 Wine 或 MinGW：
 
 ```bash
+npm ci
 npm run build:docker -- --config config/build.local.json --win --x64 --check
 npm run build:docker -- --config config/build.local.json --win --x64
 # 可追加 --portable 或 --dir

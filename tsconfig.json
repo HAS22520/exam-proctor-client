@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable",
+      "DOM.AsyncIterable"
+    ],
+    "types": [
+      "node"
+    ],
+    "strict": false,
+    "noEmitOnError": true,
+    "useDefineForClassFields": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noImplicitAny": true
+  },
+  "include": [
+    "app/**/*.ts",
+    "scripts/**/*.ts",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "updates",
+    "build",
+    "app/generated",
+    "tests"
+  ]
+}

@@ -16,7 +16,20 @@
     "test:updates:electron": "node scripts/test-update-runtime.js",
     "keys:update": "node scripts/update-keys.js",
     "build:native": "node scripts/build-native.js",
-    "test:native": "node scripts/test-native.js"
+    "test:native": "node scripts/test-native.js",
+    "compile": "tsc -p tsconfig.json && tsc -p tsconfig.tests.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
+    "prebuild": "npm run compile",
+    "prebuild:docker": "npm run compile",
+    "prestart": "npm run compile",
+    "prepack": "npm run compile",
+    "predist": "npm run compile",
+    "prerelease:hot": "npm run compile",
+    "pretest": "npm run compile",
+    "pretest:updates:electron": "npm run compile",
+    "prekeys:update": "npm run compile",
+    "prebuild:native": "npm run compile",
+    "pretest:native": "npm run compile"
   },
   "keywords": [
     "proctor",
@@ -28,9 +41,11 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@electron/asar": "3.4.1",
+    "@types/node": "22.19.7",
     "electron": "44.7.0",
     "electron-builder": "26.15.3",
-    "@electron/asar": "3.4.1"
+    "typescript": "5.8.3"
   },
   "build": {
     "appId": "com.exam.proctor",
@@ -40,6 +55,7 @@
     },
     "files": [
       "app/**/*",
+      "!app/**/*.ts",
       "package.json"
     ],
     "win": {

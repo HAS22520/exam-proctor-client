@@ -1,0 +1,163 @@
+interface DockerDependencies {
+  root?: string;
+  env?: NodeJS.ProcessEnv;
+  spawn?: (
+    command: string,
+    args: string[],
+    options: import('node:child_process').SpawnSyncOptions,
+  ) => { status: number | null; error?: Error };
+}
+import fs = require('node:fs');
+import os = require('node:os');
+import path = require('node:path');
+import { spawnSync } from 'node:child_process';
+import buildModule = require('./build');
+const { parseArgs, buildEnvironment } = buildModule;
+import prepareBuildModule = require('./prepare-build');
+const { prepare } = prepareBuildModule;
+const root = path.resolve(__dirname, '..');
+
+function stageProject(projectDir: string, destination: string) {
+  const generated = path.join(projectDir, 'app/generated');
+  // Recreate build outputs from this invocation's public configuration. Old
+  // container-owned files may be unreadable and must not carry stale trust.
+  fs.cpSync(path.join(projectDir, 'app'), path.join(destination, 'app'), {
+    recursive: true,
+    filter: (source) => source !== generated && !source.endsWith('.ts'),
+  });
+  fs.mkdirSync(path.join(destination, 'scripts'));
+  for (const name of [
+    'build.js',
+    'prepare-build.js',
+    'before-pack.js',
+    'docker-build-entry.js',
+    'build-native.js',
+    'unlock-firewall.ps1',
+    'restore-network.bat',
+  ]) {
+    fs.copyFileSync(path.join(projectDir, 'scripts', name), path.join(destination, 'scripts', name));
+  }
+  fs.cpSync(path.join(projectDir, 'native'), path.join(destination, 'native'), { recursive: true });
+  fs.mkdirSync(path.join(destination, 'config'));
+  for (const name of ['exam-config.json', 'entitlements.mac.plist'])
+    fs.copyFileSync(path.join(projectDir, 'config', name), path.join(destination, 'config', name));
+  for (const name of ['package.json', 'package-lock.json'])
+    fs.copyFileSync(path.join(projectDir, name), path.join(destination, name));
+}
+
+function dockerArguments(
+  stage: string,
+  projectDir: string,
+  env: NodeJS.ProcessEnv,
+  options: ReturnType<typeof parseArgs>,
+) {
+  const cache = path.join(projectDir, '.docker-cache'),
+    output = path.join(projectDir, 'dist');
+  if ([stage, cache, output].some((value) => value.includes(',')))
+    throw new Error('Docker bind mount paths cannot contain commas');
+  const args = ['run', '--rm', '--platform', 'linux/amd64', '--workdir', '/project'];
+  if (process.getuid) args.push('--user', `${process.getuid()}:${process.getgid()}`);
+  for (const [source, target] of [
+    [stage, '/project'],
+    [cache, '/cache'],
+    [output, '/output'],
+  ]) {
+    args.push('--mount', `type=bind,source=${source},target=${target}`);
+  }
+  // The container entrypoint owns dependencies; no host node_modules or private PEM files are mounted.
+  const variables = {
+    ELECTRON_CACHE: '/cache/electron',
+    ELECTRON_BUILDER_CACHE: '/cache/builder',
+    npm_config_cache: '/cache/npm',
+    WINEPREFIX: '/cache/wine',
+    USE_SYSTEM_WINE: 'true',
+    XDG_CACHE_HOME: '/cache',
+  };
+  for (const [name, value] of Object.entries(variables)) args.push('--env', `${name}=${value}`);
+  for (const name of Object.keys(env).filter((name) => name.startsWith('PROCTOR_') && name !== 'PROCTOR_BUILDER_IMAGE'))
+    args.push('--env', name);
+  args.push(
+    '--entrypoint',
+    'node',
+    env.PROCTOR_BUILDER_IMAGE || 'hydro-proctor-builder:22-wine-wfp',
+    'scripts/docker-build-entry.js',
+    '--win',
+    '--x64',
+  );
+  if (options.portable) args.push('--portable');
+  if (options.dir) args.push('--dir');
+  return args;
+}
+
+function run(args = process.argv.slice(2), dependencies: DockerDependencies = {}) {
+  const options = parseArgs(args);
+  if (options.help) {
+    console.log(
+      'npm run build:docker -- --config config/build.local.json [--portable | --dir]\nLocal Windows x64 build using electronuserland/builder:22-wine. GitHub Actions use native runners.',
+    );
+    return;
+  }
+  if (options.mac || options.arm64) throw new Error('Docker builds support Windows x64 only');
+  const projectDir = dependencies.root || root;
+  const env = buildEnvironment(options.config, dependencies.env || process.env);
+  const result = prepare(env, projectDir);
+  if (options.check) {
+    console.log(`Validated Docker proctor build ${result.version}`);
+    return;
+  }
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'hydro-proctor-docker-'));
+  try {
+    stageProject(projectDir, stage);
+    for (const name of ['.docker-cache', 'dist']) fs.mkdirSync(path.join(projectDir, name), { recursive: true });
+    const publicEnv = {
+      PROCTOR_KEY_ID: result.trust.keyId,
+      PROCTOR_AUTH_PUBLIC_KEY: result.trust.authPublicKey,
+      PROCTOR_LOG_PUBLIC_KEY: result.trust.logPublicKey,
+      PROCTOR_UPDATE_PUBLIC_KEY: result.trust.updatePublicKey || '',
+      PROCTOR_CLIENT_VERSION: result.version,
+      PROCTOR_CLIENT_BUILD_VERSION: result.buildVersion,
+      PROCTOR_ALLOWED_ORIGINS: JSON.stringify(result.trust.allowedOrigins),
+      PROCTOR_UPDATE_ORIGINS: JSON.stringify(result.trust.updateOrigins),
+      PROCTOR_TARGET_URL: result.config.exam.targetUrl,
+      PROCTOR_VERSION_URL: result.config.updater.versionUrl || '',
+      PROCTOR_ALLOW_ROOT_DEBUG: String(result.config.debug.allowRoot),
+      ...(env.PROCTOR_BUILDER_IMAGE ? { PROCTOR_BUILDER_IMAGE: env.PROCTOR_BUILDER_IMAGE } : {}),
+    };
+    if (!env.PROCTOR_BUILDER_IMAGE) {
+      const image = (dependencies.spawn || spawnSync)(
+        'docker',
+        [
+          'build',
+          '--platform',
+          'linux/amd64',
+          '--tag',
+          'hydro-proctor-builder:22-wine-wfp',
+          '--file',
+          path.join(stage, 'native/windows/Dockerfile'),
+          stage,
+        ],
+        { stdio: 'inherit' },
+      );
+      if (image.error || image.status !== 0)
+        throw new Error('Docker native builder image failed; check daemon access and MinGW installation');
+    }
+    const child = (dependencies.spawn || spawnSync)('docker', dockerArguments(stage, projectDir, publicEnv, options), {
+      stdio: 'inherit',
+      env: { ...process.env, ...publicEnv },
+    });
+    if (child.error) throw new Error(`Cannot run Docker: ${child.error.message}`);
+    if (child.status !== 0)
+      throw new Error('Docker build failed. Check Docker daemon access and the container output above.');
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
+}
+if (require.main === module) {
+  try {
+    run();
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
+}
+export = { run, stageProject, dockerArguments };
