@@ -13,6 +13,34 @@ import { trust } from './helpers';
 
 const fs = process.versions.electron ? require('original-fs') : mountedFs;
 
+function inspectMountedArchive(filename: string, loadEntry = false): { isDirectory: boolean, entry?: string } {
+    // Electron 将已挂载的 ASAR 缓存到进程退出；Windows 会因此锁住归档文件。
+    // 在独立的无窗口进程中验证虚拟目录及 require，退出后才能重命名、迁移和清理。
+    const probe = spawnSync(
+        process.execPath,
+        [
+            '-e',
+            `const fs = require('node:fs');
+            const path = require('node:path');
+            const result = { isDirectory: fs.statSync(process.argv[1]).isDirectory() };
+            if (process.argv[2] === 'load') {
+                result.entry = require(path.join(process.argv[1], 'app', 'main', 'index.js'));
+            }
+            console.log(JSON.stringify(result));`,
+            filename,
+            loadEntry ? 'load' : 'stat',
+        ],
+        {
+            encoding: 'utf8',
+            timeout: 10000,
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        },
+    );
+    assert.equal(probe.error, undefined);
+    assert.equal(probe.status, 0, probe.stderr);
+    return JSON.parse(probe.stdout.toString());
+}
+
 async function fixture(t) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proctor-electron-update-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -106,7 +134,7 @@ test('Electron 在 ASAR 虚拟目录环境中暂存、清理并激活签名更�
     cache.stage = async (info, filename) => {
         downloaded = filename;
         assert.equal(fs.statSync(filename).isFile(), true);
-        assert.equal(mountedFs.statSync(filename).isDirectory(), true);
+        assert.equal(inspectMountedArchive(filename).isDirectory, true);
         await stage(info, filename);
     };
     await updater.check();
@@ -121,7 +149,10 @@ test('Electron 在 ASAR 虚拟目录环境中暂存、清理并激活签名更�
     const pending = cache.read('pending');
     assert.equal(fs.statSync(cache.filename(pending)).isFile(), true);
     assert.equal((await cache.select()).buildVersion, '2026101002');
-    assert.equal(require(path.join(cache.filename(pending), 'app', 'main', 'index.js')), 'updated application');
+    assert.deepEqual(inspectMountedArchive(cache.filename(pending), true), {
+        isDirectory: true,
+        entry: 'updated application',
+    });
     const migrated = `${directory}-migrated`;
     t.after(() => fs.rmSync(migrated, { recursive: true, force: true }));
     fs.mkdirSync(migrated);
