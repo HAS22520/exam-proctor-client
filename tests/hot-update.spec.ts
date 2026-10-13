@@ -3,11 +3,11 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { buildVersion } from '../app/main/build-version';
-import { validateConfig } from '../app/main/config-policy';
-import { readArchive, verifyArchive } from '../app/main/signed-archive';
-import { UpdateCache, hasUnfinishedJournals, journalUpdateState } from '../app/main/update-cache';
-import Updater = require('../app/main/updater');
+import { buildVersion } from '../app/main/updates/build-version';
+import { validateConfig } from '../app/main/security/config-policy';
+import { readArchive, verifyArchive } from '../app/main/updates/signed-archive';
+import { UpdateCache, hasUnfinishedJournals, journalUpdateState } from '../app/main/updates/update-cache';
+import Updater = require('../app/main/updates/updater');
 import { buildArchive } from '../scripts/build-hot-update';
 import { prepare } from '../scripts/prepare-build';
 import { trust, workspace } from './helpers';
@@ -390,6 +390,7 @@ test('installed bootstrap selects cached ASAR entry and exposes its actual versi
     let relaunch = 0;
     const app: any = {
       setName: () => {},
+      setPath: () => {},
       requestSingleInstanceLock: () => true,
       getPath: () => f.directory,
       whenReady: async () => {},
@@ -399,9 +400,11 @@ test('installed bootstrap selects cached ASAR entry and exposes its actual versi
       exit: () => resolve(),
     };
     context.require = (name) => {
+      if (name === './storage') return { configureStorage: () => ({ directory: f.directory, previous: f.directory }), migrateStorage: async () => {} };
+      if (name === './windows/dialog-service') return { DialogService: class {} };
       if (name === 'electron') return { app, dialog: { showErrorBox: (_title, message) => assert.fail(message) } };
-      if (name === './update-cache') return require('../app/main/update-cache');
-      if (name === './signed-archive') return require('../app/main/signed-archive');
+      if (name === './updates/update-cache') return require('../app/main/updates/update-cache');
+      if (name === './updates/signed-archive') return require('../app/main/updates/signed-archive');
       if (name === './index' || name.endsWith(path.join('.asar', 'app', 'main', 'index.js'))) {
         loaded.push(name);
         if (fail) throw new Error('broken updated main');
@@ -459,9 +462,9 @@ test('full client sources build a signed portable-code archive validated against
   );
   for (const entry of [
     'app/main/index.js',
-    'app/debug/preload.js',
-    'app/status/upload-preload.js',
-    'app/status/waiting-preload.js',
+    'app/preload/debug.js',
+    'app/preload/upload.js',
+    'app/preload/waiting.js',
   ]) {
     assert.ok(archive.files.has(entry), `Compiled entry missing: ${entry}`);
   }

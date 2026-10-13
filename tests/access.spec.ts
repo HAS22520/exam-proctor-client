@@ -1,10 +1,10 @@
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { contextFromUrl } from '../app/main/config-policy';
-import { accessRequest, accessTarget } from '../app/main/proctor-access';
-import { ProctorAuth, ProctorError } from '../app/main/proctor-auth';
-import { canonical, digest, verify } from '../app/main/proctor-crypto';
-import ProctorRequestGuard = require('../app/main/proctor-request-guard');
+import { contextFromUrl } from '../app/main/security/config-policy';
+import { accessRequest, accessTarget } from '../app/main/proctor/proctor-access';
+import { ProctorAuth, ProctorError } from '../app/main/proctor/proctor-auth';
+import { canonical, digest, verify } from '../app/main/proctor/proctor-crypto';
+import ProctorRequestGuard = require('../app/main/proctor/proctor-request-guard');
 import { auth } from './helpers';
 
 const tid = '1234567890abcdef12345678',

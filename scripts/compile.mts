@@ -3,13 +3,15 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
+import { generateIcons } from './generate-icons.mts';
 
 // 直接用 Node 擦除入口类型，干净源码目录无需保留任何 JavaScript 启动脚本。
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'out');
 fs.rmSync(output, { recursive: true, force: true });
-for (const config of ['tsconfig.json', 'tsconfig.tests.json']) {
+for (const config of ['tsconfig.json', 'tsconfig.tests.json', 'tsconfig.renderer.json']) {
   const child = spawnSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', config], {
     cwd: root,
     stdio: 'inherit',
@@ -46,6 +48,23 @@ fs.mkdirSync(path.join(output, 'config'), { recursive: true });
 for (const name of ['exam-config.json', 'build.example.json', 'entitlements.mac.plist']) {
   fs.copyFileSync(path.join(root, 'config', name), path.join(output, 'config', name));
 }
+fs.copyFileSync(path.join(root, 'config/installer.nsh'), path.join(output, 'config/installer.nsh'));
+generateIcons(root, output);
+// React 和页面依赖完全打入 bundle；sandbox preload 只保留 electron 的内置 require。
+await build({
+  absWorkingDir: root,
+  entryPoints: ['upload', 'waiting', 'console', 'dialog'].map((page) => `app/renderer/entries/${page}.tsx`),
+  outdir: path.join(output, 'app/renderer/entries'),
+  bundle: true, platform: 'browser', format: 'iife', target: 'chrome148',
+  minify: true, legalComments: 'eof', define: { 'process.env.NODE_ENV': '"production"' },
+});
+await build({
+  absWorkingDir: root,
+  entryPoints: ['preload', 'upload', 'waiting', 'debug', 'dialog'].map((bridge) => `app/preload/${bridge}.ts`),
+  outdir: path.join(output, 'app/preload'),
+  bundle: true, platform: 'browser', format: 'cjs', external: ['electron'], target: 'chrome148',
+  loader: { '.css': 'text' }, minify: true, legalComments: 'eof', define: { 'process.env.NODE_ENV': '"production"' },
+});
 fs.cpSync(path.join(root, 'native'), path.join(output, 'native'), { recursive: true });
 fs.copyFileSync(path.join(root, 'package-lock.json'), path.join(output, 'package-lock.json'));
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));

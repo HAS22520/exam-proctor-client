@@ -5,8 +5,9 @@ import * as mountedFs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { UpdateCache } from '../app/main/update-cache';
-import Updater = require('../app/main/updater');
+import { UpdateCache } from '../app/main/updates/update-cache';
+import { migrateStorage } from '../app/main/storage';
+import Updater = require('../app/main/updates/updater');
 import { prepare } from '../scripts/prepare-build';
 import { trust } from './helpers';
 
@@ -122,6 +123,13 @@ test(
     assert.equal(fs.statSync(cache.filename(pending)).isFile(), true);
     assert.equal((await cache.select()).buildVersion, '2026101002');
     assert.equal(require(path.join(cache.filename(pending), 'app', 'main', 'index.js')), 'updated application');
+    const migrated = `${directory}-migrated`;
+    t.after(() => fs.rmSync(migrated, { recursive: true, force: true }));
+    fs.mkdirSync(migrated);
+    await migrateStorage(directory, migrated);
+    const destination = path.join(migrated, 'updates', path.basename(cache.filename(pending)));
+    assert.equal(fs.statSync(destination).isFile(), true);
+    assert.deepEqual(fs.readFileSync(destination), fs.readFileSync(cache.filename(pending)));
     cache.ready();
     assert.equal(cache.read('launch'), null);
   },

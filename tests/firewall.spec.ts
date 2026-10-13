@@ -4,9 +4,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
-import FirewallGuard = require('../app/main/firewall-guard');
-import LegacyFirewallGuard = require('../app/main/legacy-firewall-guard');
-import { NativeNetwork, endpoints } from '../app/main/native-network';
+import FirewallGuard = require('../app/main/network/firewall-guard');
+import LegacyFirewallGuard = require('../app/main/network/legacy-firewall-guard');
+import { NativeNetwork, endpoints } from '../app/main/network/native-network';
 import { workspace } from './helpers';
 
 function backend() {

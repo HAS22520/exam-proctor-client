@@ -1,27 +1,29 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from 'electron';
-import ActivityProgress = require('./activity-progress');
-import AntiCheatGuard = require('./anti-cheat');
-import { validateConfig } from './config-policy';
+import ActivityProgress = require('./diagnostics/activity-progress');
+import AntiCheatGuard = require('./security/anti-cheat');
+import { validateConfig } from './security/config-policy';
 import type { ActivityStatus, ClientConfig, ClientStatus, LoginIdentity, TraceLevel, Trust } from './contracts';
-import DebugConsole = require('./debug-console');
-import { ProtectedStore, prepareBootIdentity } from './device-store';
-import { Diagnostics } from './diagnostics';
-import ExamNetwork = require('./exam-network');
-import FirewallGuard = require('./firewall-guard');
-import { observeLogin, resetLogin } from './login-session';
-import NetworkGuard = require('./network-guard');
-import { Transport, identity, isNetworkError, proctorErrorMessage } from './proctor-auth';
-import { ProctorController } from './proctor-controller';
-import ProctorRequestGuard = require('./proctor-request-guard');
+import DebugConsole = require('./windows/debug-console');
+import { ProtectedStore, prepareBootIdentity } from './audit/device-store';
+import { Diagnostics } from './diagnostics/diagnostics';
+import ExamNetwork = require('./network/exam-network');
+import FirewallGuard = require('./network/firewall-guard');
+import { observeLogin, resetLogin } from './security/login-session';
+import NetworkGuard = require('./network/network-guard');
+import { Transport, identity, isNetworkError, proctorErrorMessage } from './proctor/proctor-auth';
+import { ProctorController } from './proctor/proctor-controller';
+import ProctorRequestGuard = require('./proctor/proctor-request-guard');
 import { runtime } from './runtime';
-import { hasUnfinishedJournals } from './update-cache';
-import Updater = require('./updater');
-import WaitingWindow = require('./waiting-window');
+import { DialogService } from './windows/dialog-service';
+import { localPreferences, pageFile, requireLocalFrame, secureLocalPage, windowIcon } from './windows/local-page';
+import { hasUnfinishedJournals } from './updates/update-cache';
+import Updater = require('./updates/updater');
+import WaitingWindow = require('./windows/waiting-window');
 
 const running = runtime(app);
+const prompts = new DialogService({ BrowserWindow, ipcMain, dialog });
 const diagnostics = new Diagnostics();
 const activity = new ActivityProgress({ onChange: publishActivity });
 const waitingWindow = new WaitingWindow(BrowserWindow);
@@ -75,8 +77,8 @@ process.on('uncaughtExceptionMonitor', (error) => diagnostics.error('process.unc
 const directory = app.getPath('userData');
 if (!running.singleInstanceLocked && !app.requestSingleInstanceLock()) app.exit(0);
 app.on('second-instance', () => {
-  // A native message box owns focus until it resolves. Never refocus its parent.
-  if (dialogDepth) return;
+  // 弹窗拥有焦点时，只激活弹窗，避免主窗口抢回焦点。
+  if (dialogDepth) { prompts.focus(); return; }
   const target = uploadWindow && !uploadWindow.isDestroyed() ? uploadWindow : window || waitingWindow.window;
   if (target && !target.isDestroyed()) {
     target.restore();
@@ -98,12 +100,12 @@ function applyWindowFocus() {
 async function showExamDialog(options: Electron.MessageBoxOptions, owner = window) {
   dialogDepth++;
   try {
-    // Remove blur/refocus listeners before the native dialog can blur its parent.
+    // 在弹窗使父窗口失焦前解除强制抢焦点；取消后再按监考状态恢复。
     applyWindowFocus();
     owner.restore();
     owner.show();
     owner.focus();
-    return await dialog.showMessageBox(owner, options);
+    return await prompts.show(options, owner);
   } finally {
     dialogDepth--;
     applyWindowFocus();
@@ -193,13 +195,7 @@ function ipcContext(event: Electron.IpcMainInvokeEvent) {
 }
 
 function uploadContext(event: Electron.IpcMainInvokeEvent) {
-  if (
-    !uploadWindow ||
-    event.sender !== uploadWindow.webContents ||
-    event.senderFrame !== uploadWindow.webContents.mainFrame ||
-    event.senderFrame.url !== pathToFileURL(path.join(__dirname, '../status/upload.html')).href
-  )
-    throw new Error('Upload IPC requires the native progress window');
+  requireLocalFrame(uploadWindow, 'upload', event);
 }
 
 function publishStatus(status: ClientStatus) {
@@ -240,6 +236,7 @@ async function showUploadWindow() {
     minWidth: 430,
     minHeight: 560,
     title: '结束监考 · 上传日志',
+    icon: windowIcon,
     parent: window,
     modal: true,
     show: false,
@@ -248,19 +245,19 @@ async function showUploadWindow() {
     autoHideMenuBar: true,
     resizable: false,
     webPreferences: {
-      preload: path.join(__dirname, '../status/upload-preload.js'),
+      ...localPreferences('upload'),
+      partition: 'proctor-upload',
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
       devTools: false,
     },
   });
-  uploadWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  uploadWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  secureLocalPage(uploadWindow);
   uploadWindow.on('close', (event) => {
     if (!quitting) event.preventDefault();
   });
-  await uploadWindow.loadFile(path.join(__dirname, '../status/upload.html'));
+  await uploadWindow.loadFile(pageFile('upload'));
   uploadWindow.show();
   uploadWindow.focus();
 }
@@ -483,7 +480,7 @@ app
     } catch (error) {
       privilegeGuard.close();
       if (error.code !== 'ADMIN_REQUIRED') throw error;
-      await dialog.showMessageBox({
+      await prompts.show({
         type: 'warning',
         title: '需要管理员权限',
         message: '请使用管理员模式打开监考客户端',
@@ -502,7 +499,7 @@ app
       waitingWindow.context(event);
       return activity.snapshot();
     });
-    // Show a native status window only when preparation takes long enough to be
+    // Show a local React status window only when preparation takes long enough to be
     // noticeable. Network recovery still finishes before any OJ page is loaded.
     preparationTimer = setTimeout(
       () => waitingWindow.show().catch((error) => diagnostics.error('startup.progress-failed', error)),
@@ -570,6 +567,7 @@ app
       width: 1280,
       height: 800,
       title: config.exam.title,
+      icon: windowIcon,
       autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(__dirname, '../preload/preload.js'),
@@ -798,7 +796,11 @@ app
     clearTimeout(preparationTimer);
     waitingWindow.close();
     diagnostics.error('startup.failed', error);
-    dialog.showErrorBox('客户端启动失败', error.message);
+    try {
+      await prompts.show({ type: 'error', title: '客户端启动失败', message: '客户端启动失败', detail: error.message, buttons: ['关闭软件'] });
+    } catch (promptError) {
+      diagnostics.error('startup.prompt-failed', promptError);
+    }
     try {
       if (recoveryReady) await firewall?.unlock();
     } catch (restoreError) {

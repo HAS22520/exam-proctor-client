@@ -2,10 +2,10 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { Transport } from '../app/main/proctor-auth';
-import { ProctorController } from '../app/main/proctor-controller';
-import { canonical, digest, nonce, sign, verify } from '../app/main/proctor-crypto';
-import { hasUnfinishedJournals } from '../app/main/update-cache';
+import { Transport } from '../app/main/proctor/proctor-auth';
+import { ProctorController } from '../app/main/proctor/proctor-controller';
+import { canonical, digest, nonce, sign, verify } from '../app/main/proctor/proctor-crypto';
+import { hasUnfinishedJournals } from '../app/main/updates/update-cache';
 import { auth, decryptLog, store, trust, workspace } from './helpers';
 
 const url = 'https://oj.example.com/d/exam/contest/1234567890abcdef12345678';
@@ -135,7 +135,7 @@ function fixture(t) {
         assert.equal(
           proof.payload.payloadHash,
           digest(
-            require('../app/main/proctor-crypto').canonical({
+            require('../app/main/proctor/proctor-crypto').canonical({
               filename: file.name,
               size: bytes.length,
               sha256: digest(bytes),
@@ -243,7 +243,7 @@ test('completed handshake is a terminal state, avoids repeat handshakes, and ano
   assert.equal(hasUnfinishedJournals(path.dirname(f.options.directory)), true);
 });
 test('simultaneous identity requests for the same account and route share one handshake and activity', async (t) => {
-  const ActivityProgress = require('../app/main/activity-progress');
+  const ActivityProgress = require('../app/main/diagnostics/activity-progress');
   const f = fixture(t),
     events = [],
     progress = new ActivityProgress({ onChange: (value) => events.push(value) });

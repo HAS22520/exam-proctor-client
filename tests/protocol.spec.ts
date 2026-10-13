@@ -1,10 +1,10 @@
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { contextFromUrl, validateConfig } from '../app/main/config-policy';
-import NetworkGuard = require('../app/main/network-guard');
-import { ProctorAuth, Transport, identity, parseReply, proctorErrorMessage } from '../app/main/proctor-auth';
-import { submission } from '../app/main/proctor-controller';
-import { canonical, digest, nonce, sign, validateTrust, verify } from '../app/main/proctor-crypto';
+import { contextFromUrl, validateConfig } from '../app/main/security/config-policy';
+import NetworkGuard = require('../app/main/network/network-guard');
+import { ProctorAuth, Transport, identity, parseReply, proctorErrorMessage } from '../app/main/proctor/proctor-auth';
+import { submission } from '../app/main/proctor/proctor-controller';
+import { canonical, digest, nonce, sign, validateTrust, verify } from '../app/main/proctor/proctor-crypto';
 import { auth, store, trust, workspace } from './helpers';
 
 const context = contextFromUrl('https://oj.example.com/d/exam/p/P100?tid=1234567890abcdef12345678');

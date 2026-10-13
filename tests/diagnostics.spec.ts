@@ -1,8 +1,8 @@
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { test } from 'node:test';
-import { Diagnostics, localTimestamp, redact } from '../app/main/diagnostics';
-import { Transport } from '../app/main/proctor-auth';
+import { Diagnostics, localTimestamp, redact } from '../app/main/diagnostics/diagnostics';
+import { Transport } from '../app/main/proctor/proctor-auth';
 import { workspace } from './helpers';
 
 test('diagnostic time includes the local UTC offset and preserves readable localhost routes', () => {

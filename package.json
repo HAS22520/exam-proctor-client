@@ -18,7 +18,7 @@
     "build:native": "node out/scripts/build-native.js",
     "test:native": "node out/scripts/test-native.js",
     "compile": "node --experimental-strip-types scripts/compile.mts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit && tsc -p tsconfig.tools.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit && tsc -p tsconfig.tools.json && tsc -p tsconfig.renderer.json",
     "prebuild": "npm run compile",
     "prebuild:docker": "npm run compile",
     "prestart": "npm run compile",
@@ -42,9 +42,15 @@
   "license": "ISC",
   "devDependencies": {
     "@electron/asar": "3.4.1",
+    "@resvg/resvg-js": "2.6.2",
     "@types/node": "22.19.7",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
     "electron": "44.7.0",
     "electron-builder": "26.15.3",
+    "esbuild": "0.25.2",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "typescript": "5.8.3"
   },
   "build": {
@@ -56,6 +62,10 @@
     },
     "files": [
       "app/**/*",
+      "!app/renderer/components/**/*",
+      "!app/renderer/hooks/**/*",
+      "!app/renderer/lib/**/*",
+      "!app/renderer/pages/**/*",
       "package.json"
     ],
     "win": {
@@ -90,13 +100,17 @@
             "hydro-network.exe"
           ]
         }
-      ]
+      ],
+      "icon": "out/icons/icon.ico"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
-      "artifactName": "HydroProctor-${version}-win-${arch}-setup.${ext}"
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "HydroProctor-${version}-win-${arch}-setup.${ext}",
+      "runAfterFinish": false,
+      "createDesktopShortcut": true,
+      "include": "config/installer.nsh"
     },
     "artifactName": "HydroProctor-${version}-${os}-${arch}.${ext}",
     "mac": {
@@ -108,7 +122,8 @@
       "hardenedRuntime": true,
       "entitlements": "config/entitlements.mac.plist",
       "entitlementsInherit": "config/entitlements.mac.plist",
-      "minimumSystemVersion": "13.0"
+      "minimumSystemVersion": "13.0",
+      "icon": "out/icons/icon.icns"
     },
     "beforePack": "./out/scripts/before-pack.js",
     "portable": {

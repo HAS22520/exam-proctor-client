@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { buildEnvironment, parseArgs } from './build';
 import { prepare } from './prepare-build';
-import { applicationRoot, projectRoot, runtimePackage } from './project-layout';
+import { applicationRoot, includeApplicationFile, projectRoot, runtimePackage } from './project-layout';
 
 interface DockerDependencies {
   root?: string;
@@ -25,7 +25,7 @@ function stageProject(projectDir: string, destination: string) {
   // container-owned files may be unreadable and must not carry stale trust.
   fs.cpSync(path.join(compiled, 'app'), path.join(destination, 'app'), {
     recursive: true,
-    filter: (source) => source !== generated && !source.endsWith('.ts'),
+    filter: (source) => source !== generated && includeApplicationFile(source, path.join(compiled, 'app')),
   });
   fs.mkdirSync(path.join(destination, 'scripts'));
   for (const name of [
@@ -45,8 +45,9 @@ function stageProject(projectDir: string, destination: string) {
   }
   fs.cpSync(path.join(projectDir, 'native'), path.join(destination, 'native'), { recursive: true });
   fs.mkdirSync(path.join(destination, 'config'));
-  for (const name of ['exam-config.json', 'entitlements.mac.plist'])
+  for (const name of ['exam-config.json', 'entitlements.mac.plist', 'installer.nsh'])
     fs.copyFileSync(path.join(projectDir, 'config', name), path.join(destination, 'config', name));
+  fs.cpSync(path.join(compiled, 'icons'), path.join(destination, 'icons'), { recursive: true });
   fs.copyFileSync(path.join(projectDir, 'package-lock.json'), path.join(destination, 'package-lock.json'));
   const pkg = JSON.parse(fs.readFileSync(path.join(projectDir, 'package.json'), 'utf8'));
   fs.writeFileSync(path.join(destination, 'package.json'), JSON.stringify(runtimePackage(pkg), null, 2));

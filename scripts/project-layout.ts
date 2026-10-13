@@ -23,9 +23,19 @@ function runtimePackage(pkg: RuntimeMetadata): RuntimeMetadata {
   if (pkg.build) {
     const directories = { ...pkg.build.directories };
     delete directories.app;
-    result.build = { ...pkg.build, directories, beforePack: './scripts/before-pack.js' };
+    result.build = { ...pkg.build, directories, beforePack: './scripts/before-pack.js',
+      win: { ...pkg.build.win, icon: pkg.build.win?.icon?.replace(/^out\//, '') },
+      mac: { ...pkg.build.mac, icon: pkg.build.mac?.icon?.replace(/^out\//, '') },
+    };
   }
   return result;
 }
 
 export { applicationRoot, projectRoot, runtimePackage };
+
+/** 页面逻辑已经打入入口 bundle；不向发布包复制未打包的 React 测试模块。 */
+export function includeApplicationFile(source: string, appRoot: string) {
+  const relative = path.relative(appRoot, source).split(path.sep);
+  return !(relative[0] === 'renderer' && ['components', 'hooks', 'lib', 'pages'].includes(relative[1]))
+    && !/\.(?:ts|tsx|map)$/.test(source);
+}

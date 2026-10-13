@@ -2,8 +2,8 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import AuditLogger = require('../app/main/audit-logger');
-import { ProtectedStore } from '../app/main/device-store';
+import AuditLogger = require('../app/main/audit/audit-logger');
+import { ProtectedStore } from '../app/main/audit/device-store';
 import { decryptLog, store, trust, workspace } from './helpers';
 
 function fixture(t) {

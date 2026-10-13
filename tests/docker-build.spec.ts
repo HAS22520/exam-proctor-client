@@ -51,6 +51,7 @@ test('Docker stages only build sources, injects public configuration and isolate
       assert.deepEqual(fs.readdirSync(stage).sort(), [
         'app',
         'config',
+        'icons',
         'native',
         'package-lock.json',
         'package.json',
@@ -59,9 +60,10 @@ test('Docker stages only build sources, injects public configuration and isolate
       assert.deepEqual(fs.readdirSync(path.join(stage, 'config')).sort(), [
         'entitlements.mac.plist',
         'exam-config.json',
+        'installer.nsh',
       ]);
       assert.ok(!fs.existsSync(path.join(stage, 'node_modules')));
-      assert.ok(fs.existsSync(path.join(stage, 'app/debug/console.html')));
+      assert.ok(fs.existsSync(path.join(stage, 'app/renderer/console.html')));
       assert.equal(fs.existsSync(path.join(stage, 'app/generated')), false);
       assert.equal(options.env.PROCTOR_AUTH_PUBLIC_KEY, trust.authPublicKey);
       assert.equal(options.env.PROCTOR_CLIENT_VERSION, '2.3.4');
@@ -85,7 +87,7 @@ test('Docker staging omits generated configuration from previous builds', (t) =>
   fs.writeFileSync(path.join(f.root, 'app/generated/trust.json'), 'stale trust');
   stageProject(f.root, destination);
   assert.equal(fs.existsSync(path.join(destination, 'app/generated')), false);
-  assert.ok(fs.existsSync(path.join(destination, 'app/debug/preload.js')));
+  assert.ok(fs.existsSync(path.join(destination, 'app/preload/debug.js')));
 });
 
 test('Docker validates before launching, supports pinned images and cleans staging on failure', (t) => {

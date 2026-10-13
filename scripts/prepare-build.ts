@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { buildVersion as validateBuildVersion } from '../app/main/build-version';
-import { validateConfig } from '../app/main/config-policy';
-import { atomicWrite } from '../app/main/device-store';
+import { buildVersion as validateBuildVersion } from '../app/main/updates/build-version';
+import { validateConfig } from '../app/main/security/config-policy';
+import { atomicWrite } from '../app/main/audit/device-store';
 import { applicationRoot, projectRoot } from './project-layout';
 
 const root = projectRoot;

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true
+  },
+  "include": [
+    "app/renderer/**/*.ts",
+    "app/renderer/**/*.tsx",
+    "app/preload/**/*.ts",
+    "types/renderer.d.ts",
+    "types/assets.d.ts"
+  ]
+}

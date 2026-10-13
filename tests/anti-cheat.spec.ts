@@ -36,7 +36,7 @@ function fixture(platform) {
     },
   };
   const module: any = { exports: {} };
-  runInNewContext(fs.readFileSync(path.resolve(__dirname, '../app/main/anti-cheat.js'), 'utf8'), {
+  runInNewContext(fs.readFileSync(path.resolve(__dirname, '../app/main/security/anti-cheat.js'), 'utf8'), {
     module,
     require: (name) => mocks[name] || require(name),
     process: { platform, pid: 999 },

@@ -31,7 +31,7 @@ test('TypeScript sources stay free of JS; compiled assets and development/instal
   for (const entry of [
     'app/main/bootstrap.js',
     'app/preload/preload.js',
-    'app/status/upload.html',
+    'app/renderer/upload.html',
     'scripts/restore-network.bat',
   ]) {
     assert.ok(fs.existsSync(path.join(output, entry)), `Compiled resource missing: ${entry}`);
@@ -40,6 +40,7 @@ test('TypeScript sources stay free of JS; compiled assets and development/instal
     'build.example.json',
     'entitlements.mac.plist',
     'exam-config.json',
+    'installer.nsh',
   ]);
   assert.equal(fs.existsSync(path.join(output, '.env')), false);
   assert.equal(files(path.join(output, 'app')).some((file) => /\.pem$/.test(file)), false);

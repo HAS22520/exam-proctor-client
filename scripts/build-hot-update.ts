@@ -2,11 +2,11 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { sign, verify } from '../app/main/proctor-crypto';
-import { ENTRY } from '../app/main/signed-archive';
+import { sign, verify } from '../app/main/proctor/proctor-crypto';
+import { ENTRY } from '../app/main/updates/signed-archive';
 import { buildEnvironment } from './build';
 import { prepare } from './prepare-build';
-import { applicationRoot, projectRoot, runtimePackage } from './project-layout';
+import { applicationRoot, includeApplicationFile, projectRoot, runtimePackage } from './project-layout';
 
 const help = `Usage: npm run release:hot -- [--config FILE] [--sign-key FILE] [--help]
 
@@ -50,7 +50,7 @@ async function buildArchive(env = process.env, root = projectRoot) {
   try {
     fs.cpSync(path.join(applicationRoot(root), 'app'), path.join(staging, 'app'), {
       recursive: true,
-      filter: (source) => !source.endsWith('.ts'),
+      filter: (source) => includeApplicationFile(source, path.join(applicationRoot(root), 'app')),
     });
     const original = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     fs.writeFileSync(

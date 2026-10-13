@@ -1,7 +1,7 @@
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bootIdentity, prepareBootIdentity } from '../app/main/device-store';
-import { digest } from '../app/main/proctor-crypto';
+import { bootIdentity, prepareBootIdentity } from '../app/main/audit/device-store';
+import { digest } from '../app/main/proctor/proctor-crypto';
 
 test('Windows boot identity is prepared asynchronously once and cached for journal recovery', async () => {
   let callback,

@@ -1,6 +1,6 @@
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import ExamNetwork = require('../app/main/exam-network');
+import ExamNetwork = require('../app/main/network/exam-network');
 
 test('the exam partition uses direct connections and discards pooled proxy sockets before loading', async () => {
   const calls = [];

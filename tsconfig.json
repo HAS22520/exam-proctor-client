@@ -20,10 +20,12 @@
     "noImplicitAny": true,
     "rootDir": ".",
     "outDir": "out",
-    "noUnusedLocals": true
+    "noUnusedLocals": true,
+    "jsx": "react-jsx"
   },
   "include": [
     "app/**/*.ts",
+    "app/**/*.tsx",
     "scripts/**/*.ts",
     "types/**/*.d.ts"
   ],

@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ProtectedStore } from '../app/main/device-store';
+import { ProtectedStore } from '../app/main/audit/device-store';
 
 const auth = crypto.generateKeyPairSync('ed25519');
 const logs = crypto.generateKeyPairSync('rsa', { modulusLength: 3072 });

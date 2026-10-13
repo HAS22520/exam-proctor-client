@@ -11,9 +11,9 @@ records/
 *.log
 
 # 构建输出
-dist/
-out/
-build/
+/dist/
+/out/
+/build/
 
 # 本地环境
 .npmrc
@@ -23,7 +23,7 @@ Thumbs.db
 
 # Generated build trust and releases
 app/generated/
-updates/
+/updates/
 app.asar
 *.dmg
 *.exe
@@ -36,3 +36,6 @@ hplog
 
 bun.lock
 config/build.local.json.lock
+
+# Development runtime data
+.proctor-data/

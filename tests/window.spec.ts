@@ -267,15 +267,24 @@ async function fixture(t, options: any = {}) {
             ? '{}'
             : fs.readFileSync(file, ...args),
     },
-    './config-policy': { validateConfig: (value) => value },
-    './device-store': { ProtectedStore: Guard, prepareBootIdentity: async () => 'boot-id' },
-    './proctor-controller': { ProctorController: Controller },
-    './network-guard': Guard,
-    './anti-cheat': Guard,
-    './proctor-auth': require('../app/main/proctor-auth'),
-    './firewall-guard': Guard,
-    './updater': Guard,
-    './proctor-request-guard': Guard,
+    './security/config-policy': { validateConfig: (value) => value },
+    './audit/device-store': { ProtectedStore: Guard, prepareBootIdentity: async () => 'boot-id' },
+    './proctor/proctor-controller': { ProctorController: Controller },
+    './network/network-guard': Guard,
+    './security/anti-cheat': Guard,
+    './proctor/proctor-auth': require('../app/main/proctor/proctor-auth'),
+    './network/firewall-guard': Guard,
+    './updates/updater': Guard,
+    './proctor/proctor-request-guard': Guard,
+    './windows/local-page': require('../app/main/windows/local-page'),
+    './windows/dialog-service': { DialogService: class {
+      constructor(private dependencies) {}
+      focus() {}
+      show(value, owner?) {
+        if (value.title === '客户端启动失败') { errors.push({ title: value.title, message: value.detail }); return Promise.resolve({ response: 0 }); }
+        return this.dependencies.dialog.showMessageBox(owner, value);
+      }
+    } },
     './runtime': {
       runtime: () => ({
         identity: { version: '1.0.0', buildVersion: '2026101001' },
@@ -283,18 +292,18 @@ async function fixture(t, options: any = {}) {
         source: 'installed',
       }),
     },
-    './update-cache': require('../app/main/update-cache'),
-    './login-session': require('../app/main/login-session'),
-    './diagnostics': require('../app/main/diagnostics'),
-    './debug-console': require('../app/main/debug-console'),
-    './activity-progress': require('../app/main/activity-progress'),
-    './waiting-window': require('../app/main/waiting-window'),
-    './exam-network': require('../app/main/exam-network'),
+    './updates/update-cache': require('../app/main/updates/update-cache'),
+    './security/login-session': require('../app/main/security/login-session'),
+    './diagnostics/diagnostics': require('../app/main/diagnostics/diagnostics'),
+    './windows/debug-console': require('../app/main/windows/debug-console'),
+    './diagnostics/activity-progress': require('../app/main/diagnostics/activity-progress'),
+    './windows/waiting-window': require('../app/main/windows/waiting-window'),
+    './network/exam-network': require('../app/main/network/exam-network'),
   };
   const source = path.resolve(__dirname, '../app/main/index.js');
   if (options.platform === 'darwin') {
-    const FirewallGuard = require('../app/main/firewall-guard');
-    mocks['./firewall-guard'] = class extends FirewallGuard {
+    const FirewallGuard = require('../app/main/network/firewall-guard');
+    mocks['./network/firewall-guard'] = class extends FirewallGuard {
       constructor(config, logger, directory, runtime) {
         super(config, logger, directory, { ...runtime, platform: 'darwin' });
       }
@@ -402,10 +411,10 @@ test('ending requires explicit log reminder and only the native main frame can e
     exit = f.handlers.get('exam:upload-exit');
   assert.equal(read(f.event(upload)).upload.percent, 50);
   assert.throws(() => exit(f.event(upload)), /处理中/);
-  assert.throws(() => exit(f.event(main)), /native progress window/);
+  assert.throws(() => exit(f.event(main)), /trusted local main frame/);
   assert.throws(
     () => read({ sender: upload.webContents, senderFrame: { url: upload.webContents.mainFrame.url } }),
-    /native progress window/,
+    /trusted local main frame/,
   );
   f.releaseFinish(true);
   await ending;
@@ -461,7 +470,7 @@ test('an ordinary user gets a native recovery prompt for a failed main page, wit
   assert.equal(f.startupSteps.filter((step) => step === 'load-page').length, 2);
 });
 test('background authentication and the page bridge retain a version-specific Chinese error', async (t) => {
-  const { ProctorError } = require('../app/main/proctor-auth');
+  const { ProctorError } = require('../app/main/proctor/proctor-auth');
   const f = await fixture(t),
     main = f.windows[0];
   const error = new ProctorError('Proctor client version mismatch.', 403);
@@ -507,7 +516,7 @@ test('slow startup recovery exposes native progress before the exam loads and cl
     assert.equal(read(event).kind, 'network');
     assert.equal(read(event).stage, 'restore');
     assert.equal(read(event).busy, true);
-    assert.throws(() => read({ ...event, senderFrame: { url: event.senderFrame.url } }), /native progress window/);
+    assert.throws(() => read({ ...event, senderFrame: { url: event.senderFrame.url } }), /trusted local main frame/);
   } finally {
     release();
   }
@@ -599,15 +608,15 @@ test('only signed root debug opens the native console and logout revokes its IPC
   const history = read(f.event(console), 0);
   assert.ok(history.entries.some((entry) => entry.event === 'startup.ready'));
   assert.ok(history.file.endsWith('.log'));
-  assert.throws(() => read(f.event(f.windows[0]), 0), /native console/);
+  assert.throws(() => read(f.event(f.windows[0]), 0), /trusted local main frame/);
   assert.throws(
     () => read({ sender: console.webContents, senderFrame: { url: console.webContents.mainFrame.url } }, 0),
-    /native console/,
+    /trusted local main frame/,
   );
   assert.throws(() => read(f.event(console), -1), /cursor/);
   await f.controller.options.onIdentity(null);
   assert.equal(console.isDestroyed(), true);
-  assert.throws(() => read(f.event(console), 0), /native console/);
+  assert.throws(() => read(f.event(console), 0), /trusted local main frame/);
 });
 
 test('console requires build opt-in and a root identity that has not expired', async (t) => {

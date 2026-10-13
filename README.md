@@ -53,27 +53,32 @@ Electron 客户端，使用 `HydroNext-proctor/1` 协议连接 OJ。支持 Windo
 
 ## TypeScript 开发与编译
 
-`app/`、`scripts/` 和 `tests/` 的源码均为 TypeScript。应用和构建脚本禁止隐式 `any`；测试保留对部分 Electron API 的模拟，同时仍参与类型检查。源码目录仅保留 `.ts` / `.mts`，不再生成旁边的 `.js`。编译产物统一写入被 Git 忽略的 `out/`，不要手动编辑或提交。
+`app/`、`scripts/` 和 `tests/` 的源码均为 TypeScript。React 页面和 preload 使用 TypeScript `strict` 模式；应用和构建脚本禁止隐式 `any`；测试保留对部分 Electron API 的模拟，同时仍参与类型检查。源码目录仅保留 `.ts` / `.tsx` / `.mts`，不再生成旁边的 `.js`。编译产物统一写入被 Git 忽略的 `out/`，不要手动编辑或提交。
 
 ```bash
 npm ci
 npm run typecheck  # 检查应用、构建脚本和测试的类型，不生成文件
-npm run compile    # 编译生成 Electron 和 Node 使用的 CommonJS JavaScript
+npm run compile    # 编译主进程，打包 React/preload，并生成各平台图标
 npm test           # 自动先编译，再运行现有回归测试
 npm run test:updates:electron  # 在 Electron Node 模式中测试 ASAR，不创建窗口
 ```
 
 `npm start`、安装包构建、Docker 构建和 ASAR 发布命令都自动先编译，原有参数保持不变。直接使用 `node out/scripts/…js` 或 `electron .` 时，须先执行 `npm run compile`。GitHub Actions 也会检查类型，并通过相同 npm 命令编译。
 
-每次编译先清空 `out/`，避免已经删除或移动的模块残留；只复制明确列出的公开资源，不复制本地配置、PEM 或旧的生成密钥。开发入口为 `out/app/main/bootstrap.js`，打包时以 `out/` 为应用根目录，保留安装包和 ASAR 内原有的 `app/main/bootstrap.js`、preload 和 HTML 引用路径。安装包和签名 ASAR 只包含编译后的应用代码与资源，不包含 TypeScript 源码、构建脚本或测试。Docker 暂存目录使用已编译代码，继续隔离父仓库依赖和本地密钥。原生 WFP 组件仍使用 C++，日志解密工具仍使用 Python。
+每次编译先清空 `out/`，避免已经删除或移动的模块残留；只复制明确列出的公开资源，不复制本地配置、PEM 或旧的生成密钥。开发入口为 `out/app/main/bootstrap.js`，打包时以 `out/` 为应用根目录，保留安装包和 ASAR 内稳定的 `app/main/bootstrap.js` 与 `app/main/index.js` 入口。安装包和签名 ASAR 只包含编译后的应用代码与资源，不包含 TypeScript 源码、构建脚本或测试。Docker 暂存目录使用已编译代码，继续隔离父仓库依赖和本地密钥。原生 WFP 组件仍使用 C++，日志解密工具仍使用 Python。
 
 源码结构：
 
-- `app/main/`：Electron 生命周期、认证、网络、日志和更新；协议错误与通信层分别在 `protocol-errors.ts`、`protocol-transport.ts`，ASAR 文件操作统一使用 `archive-filesystem.ts`。
-- `app/types/`：配置、协议、日志、界面状态类型；`app/main/contracts.ts` 仅重导出类型。
-- `app/preload/`、`app/debug/`、`app/status/`：隔离的 IPC 桥和页面资源。
-- `scripts/compile.mts`：直接由 Node.js 的类型擦除运行的编译入口；`scripts/project-layout.ts` 统一开发与 Docker 的目录规则。
-- `tests/`：TypeScript 回归测试，运行编译后的 `out/tests/`。
+- `app/main/`：仅保留生命周期入口、运行身份及数据目录策略；业务按 `proctor/`（认证及请求证明）、`audit/`（加密日志与设备身份）、`network/`（网络策略）、`updates/`（签名 ASAR）、`security/`、`diagnostics/` 和 `windows/` 分组。
+- `app/renderer/`：React 内置界面，`pages/` 放页面，`components/` 放共享组件，`hooks/` 放订阅与拖动逻辑，`lib/` 放纯状态格式化函数，`entries/` 为打包入口，`styles/`、`assets/` 放样式和图标。远程 OJ 网页保持服务端原实现。
+- `app/preload/`：按考试浮窗、上传、等待、调试和弹窗拆分的隔离 IPC 桥；远程 OJ 不会获得私有调试／更新桥。
+- `app/types/`：配置、协议、日志、界面状态与弹窗类型；`app/main/contracts.ts` 仅重导出类型。
+- `scripts/compile.mts`：Node.js 类型擦除入口，先用 TypeScript 检查并编译，再用 esbuild 将 React 和 preload 依赖打入 bundle；`scripts/project-layout.ts` 统一工程、Docker 与发布文件规则。
+- `scripts/generate-icons.mts`：从 `app/renderer/assets/icon.svg` 生成 PNG、多尺寸 ICO 和 ICNS；无需额外图标制作工具。图案沿用 Hydro 的蓝色与水流意象，加入 H 与监考盾形。
+- `config/installer.nsh`：Windows 安装完成页及保留监考数据的卸载规则。
+- `tests/`：TypeScript 回归测试。React 静态渲染、IPC 模拟和状态测试均不启动浏览器，不进行 Playwright 等 UI 验收。
+
+Windows 提示框统一使用本地 React 窗口，包括管理员权限提示、退出选择、认证／页面错误和更新重启确认。打开弹窗前解除主窗口抢焦点行为，关闭或取消后按考试状态恢复；macOS 仍可使用系统提示框。所有本地页面限制导航、网络访问和 IPC 来源，React 不包含 Node 权限。
 
 ## 本地构建
 
@@ -96,6 +101,8 @@ npm ci && npm run build -- --config config/build.local.json --mac --arm64
 ```
 
 Windows 原生构建需 Visual Studio Build Tools 的 C++ 桌面开发组件，并在 x64 Developer Command Prompt／PowerShell 中运行。Mac 需安装 Command Line Tools，以提供打包、签名工具。
+
+Windows 安装向导允许选择安装目录，安装完成后需点击“完成”，不会自动运行软件。随后到桌面右键监考客户端，选择“以管理员身份运行”；普通权限启动会显示 React 提示并要求关闭重开。安装包更新和卸载保留 `data/`，以免丢失尚未上传的证据；移动安装位置时应同时搬迁整个 `data/`，不要删除它来修复认证问题。
 
 输出位于 `dist/`。`--check` 只验证并生成配置；`--dir` 生成解包目录；`--help` 查看参数。`npm run dist` 与 `build` 等价，`npm run pack` 生成解包目录，`npm start` 用于开发。`package.json` 的 npm 声明和空 `workspaces` 用于隔离 Hydro 父仓库的依赖扫描，应保留。
 
@@ -140,7 +147,15 @@ npm run build:docker -- --config config/build.local.json --win --x64
 
 Windows 在上传前解除网络限制，恢复失败时仍尝试上传并显示警告；macOS 直接准备日志。两种退出操作均不会代交代码。成功结束后，原账号能否再次参加同场比赛由服务端决定；另一账号独立认证，不复用原账号令牌或日志。
 
-用户数据目录为 Windows 的 `%APPDATA%\HydroProctorClient`、macOS 的 `~/Library/Application Support/HydroProctorClient`。实时日志以 AES-GCM 存入 `journals/`，密钥由 Windows DPAPI／macOS Keychain 保护；最终 `.hplog` 使用 OJ 日志公钥封装。不能保护密钥时拒绝启动，不回退明文。
+运行数据统一放在用户选择的安装位置：
+
+- Windows 安装版：`<安装目录>\data`；便携版：原始便携 EXE 所在目录的 `data`，不放在临时解包目录。
+- macOS：`.app` 同级的 `<应用名称>.data`。数据不写进 `.app`，以保留签名完整性；推荐将应用复制到 `~/Applications` 或其他可写安装位置后启动，不能直接在只读 DMG 内运行。
+- 开发环境：客户端工程内被忽略的 `.proctor-data/`。
+
+设备身份、监考日志、更新缓存和诊断记录位于上述目录的 `state/` 内；Chromium 会话／缓存位于 `state/browser/`，临时文件和崩溃记录位于同级的 `temp/`、`crashes/` 等子目录。目录不可写时明确提示并停止，不回退到 AppData。首次启动新版完整安装包时，从旧 Windows `%APPDATA%\HydroProctorClient` 或 macOS `~/Library/Application Support/HydroProctorClient` 复制设备密钥、日志、配置、更新缓存与旧防火墙恢复状态，并迁移考试页面 Local Storage／IndexedDB 中的草稿（不迁移登录 Cookie）；迁移先在同磁盘暂存整个持久状态，再通过单次原子重命名发布；原数据保留，迁移失败或异常退出不会混用半份身份。已有独立设备数据的安装位置不会合并旧身份。
+
+实时日志以 AES-GCM 存入 `journals/`，密钥由 Windows DPAPI／macOS Keychain 保护；最终 `.hplog` 使用 OJ 日志公钥封装。不能保护密钥时拒绝启动，不回退明文。
 
 异常退出后自动续写，记录客户端重启与异常事件；检测到系统启动标识变化时记录系统重启。损坏尾部保留备份，中段损坏拒绝续写。上传回执丢失时查询文件 SHA-256 确认。日志不包含代码正文、会话令牌或私钥，禁止通过删除本机数据解决认证、补传或更新问题。
 
@@ -150,7 +165,7 @@ Windows 在上传前解除网络限制，恢复失败时仍尝试上传并显示
 
 Windows 客户端会话直接连接 OJ，不继承系统 HTTP／SOCKS 代理，也不修改 Windows 的代理设置。WFP 地址来自客户端浏览器的 DNS 缓存及实际连接 IP，避免 CDN 地址与独立 DNS 查询不一致。启用过滤后会再次验证 OJ 的签名身份响应；连接失败则撤销本次策略，保留日志并提示重试。TUN／Fake-IP 代理属于系统路由或 DNS 设置，客户端直连不能替代关闭它们；考前应确认关闭这些模式后仍能访问 OJ。
 
-OJ 页面加载失败时，原生提示框提供重试、返回首页和退出入口。连接或认证失败后浮窗不再显示“已认证”；重新验证成功后清除错误提示。头像源等外部资源需列入 `allowedOrigins` 才能加载。WebSocket 成功升级（HTTP 101）只记录信息日志。
+OJ 页面加载失败时，提示框提供重试、返回首页和退出入口。连接或认证失败后浮窗不再显示“已认证”；重新验证成功后清除错误提示。头像源等外部资源需列入 `allowedOrigins` 才能加载。WebSocket 成功升级（HTTP 101）只记录信息日志。
 
 正常退出撤销临时策略；原生辅助进程监测客户端退出和心跳，失联时退出，由系统清理动态规则。网络组件异常会撤销客户端认证，不能以未启用限制的状态继续考试。进度提示显示阶段、实际等待时间和参考耗时。
 
@@ -178,7 +193,7 @@ npm run release:hot -- --config config/build.local.json --sign-key /path/outside
 
 `--sign-key` 必须是对应的更新**私钥**，不能使用更新公钥或 OJ 的认证／日志私钥。产物为 `updates/app-<version>-<buildVersion>.asar` 及构建信息 JSON。将 ASAR 上传 OJ「更新设置」，填写一致的版本与构建编号；构建信息 JSON 不是完整的远端更新清单。未签名归档会被客户端拒绝。
 
-同一份 JS／HTML ASAR 适用于 Windows 和 Mac；不包含 Electron 或 Windows WFP 辅助程序。更换 Electron、原生组件、密钥、白名单或调试权限时重新分发完整包。加载器验证签名、文件哈希、版本、构建编号及运行时兼容性，不覆盖原安装目录；新版本启动失败会回退。
+同一份 JS／HTML ASAR 适用于 Windows 和 Mac；不包含 Electron 或 Windows WFP 辅助程序。更换 Electron、原生组件、密钥、白名单、调试权限、安装器、系统图标或启动加载器／数据目录策略时重新分发完整包。本次 React 迁移后的首次部署应使用完整安装包，后续页面与业务代码仍可通过签名 ASAR 更新。加载器验证签名、文件哈希、版本、构建编号及运行时兼容性，不覆盖原安装目录；新版本启动失败会回退。
 
 存在未结束或待上传日志时，可查看更新状态，但需先上传并结束所有监考才能安装 ASAR 和重启。此检查包含其他账号的日志。浮窗显示阻止原因、当前版本、更新进度，并允许拖动和收起。
 

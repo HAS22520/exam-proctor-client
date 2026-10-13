@@ -1,7 +1,7 @@
 import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
-import ActivityProgress = require('../app/main/activity-progress');
-import FirewallGuard = require('../app/main/firewall-guard');
+import ActivityProgress = require('../app/main/diagnostics/activity-progress');
+import FirewallGuard = require('../app/main/network/firewall-guard');
 import { workspace } from './helpers';
 
 test('network activity explains an authentication wait, keeps elapsed time across stages, and returns to authentication', async () => {
@@ -120,7 +120,7 @@ test('unchanged firewall protection and recovery with no saved state do not star
 });
 test('preparation finishing during native progress page loading cannot leave a late window on screen', async () => {
   const { EventEmitter } = require('node:events');
-  const WaitingWindow = require('../app/main/waiting-window');
+  const WaitingWindow = require('../app/main/windows/waiting-window');
   let release;
   class Window extends EventEmitter {
     declare webContents: any;
@@ -130,6 +130,7 @@ test('preparation finishing during native progress page loading cannot leave a l
       super();
       this.webContents = new EventEmitter();
       this.webContents.setWindowOpenHandler = () => {};
+      this.webContents.session = { webRequest: { onBeforeRequest: () => {} } };
     }
     loadFile() {
       return new Promise((resolve) => {

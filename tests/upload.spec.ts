@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { uploadFile } from '../app/main/upload-transport';
+import { uploadFile } from '../app/main/proctor/upload-transport';
 import { workspace } from './helpers';
 
 function fixture(t, mode = 'ok') {
