@@ -13,6 +13,53 @@ function files(directory: string): string[] {
     });
 }
 
+test('安装向导在写入新版前引导卸载，取消或登记未移除时停止安装', () => {
+    const installer = fs.readFileSync(path.join(projectRoot, 'config/installer.nsh'), 'utf8');
+    const templates = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates/nsis');
+    const wizard = fs.readFileSync(path.join(templates, 'assistedInstaller.nsh'), 'utf8');
+    // 验证真实 builder 的调用位置，避免把卸载提示接到程序文件已被覆盖之后。
+    assert.ok(wizard.indexOf('!insertmacro customPageAfterChangeDir') < wizard.indexOf('!insertmacro MUI_PAGE_INSTFILES'));
+    assert.match(installer, /Page custom proctorUninstallBeforeInstall/);
+    assert.match(installer, /proctorUninstallRegistered HKLM allusers/);
+    assert.match(installer, /proctorUninstallRegistered HKCU currentuser/);
+    const commands = installer.split('\n').filter((line) => line.trim().startsWith('ExecWait '));
+    assert.equal(commands.length, 1);
+    assert.doesNotMatch(commands[0], /(?:\/S|--updated)\s/);
+    assert.match(commands[0], /\/KEEP_APP_DATA \/\$\{MODE\} _\?=\$proctorOldDirectory'/);
+    assert.match(installer, /MB_OKCANCEL[^\n]+\/SD IDCANCEL IDOK \+3\s+SetErrorLevel 1\s+Quit/);
+    assert.match(installer, /\$proctorOldExitCode != 0[\s\S]*?SetErrorLevel 2\s+Quit/);
+    const afterExit = installer.slice(installer.indexOf('Delete "$proctorOldTemporary"'));
+    assert.match(afterExit, /ReadRegStr[^\n]+UninstallString/);
+    assert.match(afterExit, /ReadRegStr[^\n]+InstallLocation/);
+    assert.match(afterExit, /原客户端尚未完成卸载[\s\S]*?SetErrorLevel 2\s+Quit/);
+    // 重装仍沿用已有的数据保留逻辑，不把未上传的监考证据当作程序文件删除。
+    assert.match(installer, /\$R1 != "data"/);
+});
+
+test('重装使用新安装包的可见卸载器，并在卸载期间让出前台窗口', () => {
+    const installer = fs.readFileSync(path.join(projectRoot, 'config/installer.nsh'), 'utf8');
+    assert.match(installer, /SilentUnInstall normal/);
+    assert.match(installer, /!macro customUnInit[\s\S]*?--proctor-interactive-uninstall[\s\S]*?SetSilent normal/);
+    assert.match(installer, /File "\/oname=\$PLUGINSDIR[^\n]+" "\$\{UNINSTALLER_OUT_FILE\}"/);
+    assert.doesNotMatch(installer, /CopyFiles[^\n]+proctorOldUninstaller/);
+    assert.match(installer, /ExecWait[^\n]+--proctor-interactive-uninstall/);
+    const launch = installer.indexOf('ExecWait ');
+    const hide = installer.search(/ShowWindow \$HWNDPARENT \$\{SW_HIDE\}/);
+    assert.ok(hide >= 0 && hide < launch);
+    assert.ok(installer.search(/ShowWindow \$HWNDPARENT \$\{SW_SHOW\}/) > launch);
+    assert.ok(installer.indexOf('BringToFront') > launch);
+    assert.match(installer, /\$proctorOldLaunchFailed == "1"[\s\S]*?SetErrorLevel 2\s+Quit/);
+});
+
+test('已有安装禁止静默重装，全用户安装卸载前检查管理员权限', () => {
+    const installer = fs.readFileSync(path.join(projectRoot, 'config/installer.nsh'), 'utf8');
+    assert.match(installer, /!macro customInit\s+\$\{If\} \$\{Silent\}/);
+    assert.match(installer, /proctorRequireInteractive HKLM/);
+    assert.match(installer, /proctorRequireInteractive HKCU/);
+    assert.match(installer, /\$\{IfNot\} \$\{UAC_IsAdmin\}[\s\S]*?SetErrorLevel 2\s+Quit/);
+    assert.doesNotMatch(installer, /DeleteRegKey/);
+});
+
 test('TypeScript 源码不含 JS，编译资源及开发和安装入口使用独立根目录', () => {
     for (const directory of ['app', 'scripts', 'tests']) {
         assert.deepEqual(
