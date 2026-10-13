@@ -2,314 +2,314 @@ import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { atomicWrite } from '../audit/device-store';
+import type { ClientConfig, Trust, UpdateManifest, UpdatePackage, UpdateStatus } from '../contracts';
+import { secureUrl, validateConfig } from '../security/config-policy';
 import { archiveFs as fs } from './archive-filesystem';
 import { buildVersion as validateBuildVersion } from './build-version';
-import { secureUrl, validateConfig } from '../security/config-policy';
-import type { ClientConfig, Trust, UpdateManifest, UpdatePackage, UpdateStatus } from '../contracts';
-import { atomicWrite } from '../audit/device-store';
-import { hasUnfinishedJournals, journalUpdateState } from './update-cache';
 import type { UpdateCache } from './update-cache';
+import { hasUnfinishedJournals, journalUpdateState } from './update-cache';
 
 // 更新归档按实际文件处理，不作为 Electron 虚拟 ASAR 目录操作。
 
 function compareVersions(a: string, b: string) {
-  if (![a, b].every((value) => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value)))
-    throw new Error('更新版本无效');
-  const left = a.split('.').map(Number),
-    right = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] > right[i] ? 1 : -1;
-  return 0;
+    if (![a, b].every((value) => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value))) {
+        throw new Error('更新版本无效');
+    }
+    const left = a.split('.').map(Number);
+    const right = b.split('.').map(Number);
+    for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] > right[i] ? 1 : -1;
+    return 0;
 }
 
 class Updater {
-  declare config: ClientConfig;
-  declare directory: string;
-  declare trust: Trust;
-  declare version: string;
-  declare buildVersion: string;
-  declare source: string;
-  declare failure: { message: string } | null;
-  declare cache: Pick<UpdateCache, 'stage'> | null;
-  declare onStatus: (status: UpdateStatus) => void;
-  declare fetch: typeof globalThis.fetch;
-  declare minimumBlocked: boolean;
-  declare state: UpdateStatus;
-  declare policyPath: string;
-  declare installerUrl: string;
-  declare installerWarning: string;
-  declare checkPending: Promise<UpdateManifest> | null;
-  declare manifest: UpdateManifest;
-  declare busy: boolean;
+    declare config: ClientConfig;
+    declare directory: string;
+    declare trust: Trust;
+    declare version: string;
+    declare buildVersion: string;
+    declare source: string;
+    declare failure: { message: string } | null;
+    declare cache: Pick<UpdateCache, 'stage'> | null;
+    declare onStatus: (status: UpdateStatus) => void;
+    declare fetch: typeof globalThis.fetch;
+    declare minimumBlocked: boolean;
+    declare state: UpdateStatus;
+    declare policyPath: string;
+    declare installerUrl: string;
+    declare installerWarning: string;
+    declare checkPending: Promise<UpdateManifest> | null;
+    declare manifest: UpdateManifest;
+    declare busy: boolean;
 
-  constructor(
-    config: ClientConfig,
-    {
-      directory,
-      trust,
-      version,
-      buildVersion = '',
-      source = 'installed',
-      failure,
-      cache,
-      onStatus = () => {},
-      fetch = globalThis.fetch,
-    }: {
-      directory: string;
-      trust: Trust;
-      version: string;
-      buildVersion?: string;
-      source?: string;
-      failure?: { message: string };
-      cache?: Pick<UpdateCache, 'stage'>;
-      onStatus?: (status: UpdateStatus) => void;
-      fetch?: typeof globalThis.fetch;
-    },
-  ) {
-    Object.assign(this, {
-      config,
-      directory,
-      trust,
-      version,
-      buildVersion,
-      source,
-      failure,
-      cache,
-      onStatus,
-      fetch,
-      minimumBlocked: false,
-    });
-    this.state = { phase: 'idle', available: false, message: '尚未检查更新' };
-    this.policyPath = path.join(directory, 'updates', 'policy.json');
-    try {
-      const policy = JSON.parse(fs.readFileSync(this.policyPath, 'utf8'));
-      this.minimumBlocked = !!policy.minClientVersion && compareVersions(version, policy.minClientVersion) < 0;
-    } catch {
-      /* 可选缓存损坏不会阻止启动。 */
-    }
-  }
-
-  snapshot() {
-    const journals = journalUpdateState(this.directory);
-    return {
-      ...this.state,
-      enabled: this.config.updater.enabled,
-      source: this.source,
-      rollback: this.failure?.message || '',
-      blocked: journals.blocked,
-      blockedReason: journals.message,
-      journalCounts: { open: journals.open, pending: journals.pending, unreadable: journals.unreadable },
-      version: this.version,
-      buildVersion: this.buildVersion,
-      minimumBlocked: this.minimumBlocked,
-      installerUrl: this.installerUrl || '',
-      installerWarning: this.installerWarning || '',
-      canHotUpdate: !!this.cache && !!this.manifest?.hotUpdate?.asarUrl && this.state.available,
-    };
-  }
-  publish(state: Partial<UpdateStatus>) {
-    Object.assign(this.state, state);
-    this.onStatus(this.snapshot());
-  }
-
-  url(value: string, base?: string | URL) {
-    const url = secureUrl(new URL(value, base || this.config.updater.versionUrl).href);
-    if (!this.config.updater.allowedOrigins.includes(url.origin))
-      throw Object.assign(new Error(`更新地址不在编译时白名单内：${url.origin}`), {
-        code: 'UPDATE_ORIGIN_DENIED',
-      });
-    return url;
-  }
-
-  async response(value: string, maxBytes: number) {
-    let url = this.url(value);
-    const signal = AbortSignal.timeout(Math.max(4000, Math.min(120000, this.config.updater.timeoutMs || 30000)));
-    for (let count = 0; count < 6; count++) {
-      const response = await this.fetch(url, { redirect: 'manual', signal, credentials: 'omit', cache: 'no-store' });
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get('location');
-        if (!location) throw new Error('更新重定向缺少目标地址');
-        url = this.url(location, url);
-        continue;
-      }
-      if (!response.ok || !response.body) throw new Error('更新下载失败');
-      if (Number(response.headers.get('content-length') || 0) > maxBytes) throw new Error('更新文件超过大小限制');
-      return response;
-    }
-    throw new Error('更新重定向次数过多');
-  }
-
-  async json(primary: string, fallback?: string) {
-    let last;
-    for (const url of [...new Set([primary, fallback].filter(Boolean))]) {
-      try {
-        const response = await this.response(url, 256 * 1024);
-        const chunks = [];
-        let size = 0;
-        for await (const chunk of response.body) {
-          size += chunk.length;
-          if (size > 256 * 1024) throw new Error('更新 JSON 超过大小限制');
-          chunks.push(Buffer.from(chunk));
-        }
-        return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      } catch (error) {
-        last = error;
-      }
-    }
-    throw last || new Error('未配置更新地址');
-  }
-
-  async downloadPackage(
-    info: Omit<UpdatePackage, 'version'>,
-    destination: string,
-    progress: (percent: number) => void = () => {},
-  ) {
-    if (
-      !Number.isSafeInteger(info.size) ||
-      info.size < 1 ||
-      info.size > 240 * 1024 * 1024 ||
-      !/^[a-f0-9]{64}$/.test(info.sha256 || '')
-    )
-      throw new Error('更新完整性元数据无效');
-    let last;
-    for (const url of [...new Set([info.asarUrl, info.fallbackUrl].filter(Boolean))]) {
-      const temp = `${destination}.tmp`;
-      try {
-        const response = await this.response(url, info.size);
-        let size = 0;
-        const hash = crypto.createHash('sha256');
-        const source = Readable.from(
-          (async function* () {
-            for await (const chunk of response.body) {
-              size += chunk.length;
-              if (size > info.size) throw new Error('更新文件大小不匹配');
-              hash.update(chunk);
-              progress(Math.floor((size * 100) / info.size));
-              yield chunk;
-            }
-          })(),
-        );
-        await pipeline(source, fs.createWriteStream(temp, { mode: 0o600 }));
-        if (size !== info.size || hash.digest('hex') !== info.sha256) throw new Error('更新文件完整性校验失败');
-        fs.renameSync(temp, destination);
-        return destination;
-      } catch (error) {
-        fs.rmSync(temp, { force: true });
-        last = error;
-      }
-    }
-    throw last || new Error('未配置更新包地址');
-  }
-
-  async check({ force = false }: { force?: boolean } = {}) {
-    if (!force && this.config.updater.checkOnStartup === false) return;
-    if (this.checkPending) return this.checkPending;
-    if (this.busy) return this.manifest;
-    this.checkPending = this.readManifest().finally(() => {
-      this.checkPending = null;
-    });
-    return this.checkPending;
-  }
-
-  async readManifest() {
-    this.publish({ phase: 'checking', message: '正在检查更新' });
-    try {
-      const manifest = await this.json(this.config.updater.versionUrl, this.config.updater.fallbackVersionUrl);
-      compareVersions(manifest.version, this.version);
-      this.minimumBlocked = !!manifest.minClientVersion && compareVersions(this.version, manifest.minClientVersion) < 0;
-      atomicWrite(
-        this.policyPath,
-        JSON.stringify({
-          version: manifest.version,
-          buildVersion: manifest.buildVersion || '',
-          minClientVersion: manifest.minClientVersion || '',
-        }),
-      );
-      if (manifest.config?.url) {
-        const remote = await this.json(manifest.config.url, manifest.config.fallbackUrl);
-        const validated = validateConfig({ ...this.config, ...remote, debug: this.config.debug }, this.trust);
-        delete validated.trust;
-        atomicWrite(path.join(this.directory, 'config', 'exam-config.json'), JSON.stringify(validated));
-      }
-      this.manifest = manifest;
-      const platform = manifest.fullUpdate?.platforms?.[process.platform]?.[process.arch];
-      const info = platform || (process.platform === 'win32' && process.arch === 'x64' ? manifest.fullUpdate : null);
-      const candidate = info?.installerUrl || info?.portableUrl;
-      this.installerUrl = '';
-      this.installerWarning = '';
-      if (candidate)
-        try {
-          this.installerUrl = this.url(candidate).href;
-        } catch (error) {
-          if (error.code !== 'UPDATE_ORIGIN_DENIED') throw error;
-          // 可选安装包链接异常不能阻止有效清单和 ASAR 更新。
-          // 禁用相应下载按钮，不能绕过白名单。
-          this.installerWarning = `安装包地址未加入更新白名单，已禁用安装包下载：${new URL(candidate, this.config.updater.versionUrl).origin}`;
-        }
-      let newer;
-      try {
-        newer = validateBuildVersion(manifest.buildVersion) > validateBuildVersion(this.buildVersion);
-      } catch {
-        this.publish({
-          phase: 'incompatible',
-          available: false,
-          message: '本机或更新清单缺少有效 buildVersion，请安装支持构建编号的完整客户端',
+    constructor(
+        config: ClientConfig,
+        {
+            directory,
+            trust,
+            version,
+            buildVersion = '',
+            source = 'installed',
+            failure,
+            cache,
+            onStatus = () => {},
+            fetch = globalThis.fetch,
+        }: {
+            directory: string;
+            trust: Trust;
+            version: string;
+            buildVersion?: string;
+            source?: string;
+            failure?: { message: string };
+            cache?: Pick<UpdateCache, 'stage'>;
+            onStatus?: (status: UpdateStatus) => void;
+            fetch?: typeof globalThis.fetch;
+        },
+    ) {
+        Object.assign(this, {
+            config,
+            directory,
+            trust,
+            version,
+            buildVersion,
+            source,
+            failure,
+            cache,
+            onStatus,
+            fetch,
+            minimumBlocked: false,
         });
-        return manifest;
-      }
-      this.publish({
-        phase: newer ? 'available' : 'current',
-        available: newer,
-        latestVersion: manifest.version,
-        latestBuildVersion: manifest.buildVersion,
-        message: this.minimumBlocked
-          ? '当前版本低于最低版本要求，请更新'
-          : newer
-            ? `发现新版本 ${manifest.version} · 构建 ${manifest.buildVersion}`
-            : '已是最新构建',
-      });
-      return manifest;
-    } catch (error) {
-      this.publish({ phase: 'failed', message: `更新检查失败：${error.message}` });
-      throw error;
+        this.state = { phase: 'idle', available: false, message: '尚未检查更新' };
+        this.policyPath = path.join(directory, 'updates', 'policy.json');
+        try {
+            const policy = JSON.parse(fs.readFileSync(this.policyPath, 'utf8'));
+            this.minimumBlocked = !!policy.minClientVersion && compareVersions(version, policy.minClientVersion) < 0;
+        } catch {
+            /* 可选缓存损坏不会阻止启动。 */
+        }
     }
-  }
 
-  async stage() {
-    if (this.busy) throw new Error('更新正在处理中');
-    if (this.checkPending) await this.checkPending;
-    const manifest = this.manifest;
-    if (!this.cache || !this.state.available || !manifest?.hotUpdate?.asarUrl) throw new Error('此更新需要完整安装包');
-    if (hasUnfinishedJournals(this.directory)) throw new Error('仍有未结束或待上传的监考日志，请上传完成后再更新');
-    const hot = manifest.hotUpdate;
-    if (
-      hot.version !== manifest.version ||
-      validateBuildVersion(manifest.buildVersion) <= validateBuildVersion(this.buildVersion)
-    )
-      throw new Error('更新包版本不匹配');
-    const info = { version: manifest.version, buildVersion: manifest.buildVersion, size: hot.size, sha256: hot.sha256 };
-    const destination = path.join(this.directory, 'updates', `download-${crypto.randomBytes(12).toString('hex')}.asar`);
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    this.busy = true;
-    try {
-      this.publish({ phase: 'downloading', percent: 0, message: '正在下载 ASAR 更新' });
-      await this.downloadPackage(hot, destination, (percent) => {
-        if (this.state.percent !== percent) this.publish({ percent });
-      });
-      this.publish({ phase: 'verifying', message: '正在验证发布签名与应用文件' });
-      await this.cache.stage(info, destination);
-      this.publish({ phase: 'ready', percent: 100, message: '更新已验证，重启后生效' });
-      return info;
-    } catch (error) {
-      this.publish({ phase: 'failed', message: `更新未应用：${error.message}` });
-      throw error;
-    } finally {
-      this.busy = false;
-      fs.rmSync(destination, { force: true });
+    snapshot() {
+        const journals = journalUpdateState(this.directory);
+        return {
+            ...this.state,
+            enabled: this.config.updater.enabled,
+            source: this.source,
+            rollback: this.failure?.message || '',
+            blocked: journals.blocked,
+            blockedReason: journals.message,
+            journalCounts: { open: journals.open, pending: journals.pending, unreadable: journals.unreadable },
+            version: this.version,
+            buildVersion: this.buildVersion,
+            minimumBlocked: this.minimumBlocked,
+            installerUrl: this.installerUrl || '',
+            installerWarning: this.installerWarning || '',
+            canHotUpdate: !!this.cache && !!this.manifest?.hotUpdate?.asarUrl && this.state.available,
+        };
     }
-  }
+
+    publish(state: Partial<UpdateStatus>) {
+        Object.assign(this.state, state);
+        this.onStatus(this.snapshot());
+    }
+
+    url(value: string, base?: string | URL) {
+        const url = secureUrl(new URL(value, base || this.config.updater.versionUrl).href);
+        if (!this.config.updater.allowedOrigins.includes(url.origin)) {
+            throw Object.assign(new Error(`更新地址不在编译时白名单内：${url.origin}`), {
+                code: 'UPDATE_ORIGIN_DENIED',
+            });
+        }
+        return url;
+    }
+
+    async response(value: string, maxBytes: number) {
+        let url = this.url(value);
+        const signal = AbortSignal.timeout(Math.max(4000, Math.min(120000, this.config.updater.timeoutMs || 30000)));
+        for await (const count of Array.from({ length: 6 }, (_, index) => index)) {
+            const response = await this.fetch(url, { redirect: 'manual', signal, credentials: 'omit', cache: 'no-store' });
+            if ([301, 302, 303, 307, 308].includes(response.status)) {
+                const location = response.headers.get('location');
+                if (!location) throw new Error('更新重定向缺少目标地址');
+                url = this.url(location, url);
+                if (count === 5) break;
+                continue;
+            }
+            if (!response.ok || !response.body) throw new Error('更新下载失败');
+            if (Number(response.headers.get('content-length') || 0) > maxBytes) throw new Error('更新文件超过大小限制');
+            return response;
+        }
+        throw new Error('更新重定向次数过多');
+    }
+
+    async json(primary: string, fallback?: string) {
+        let last;
+        for await (const url of [...new Set([primary, fallback].filter(Boolean))]) {
+            try {
+                const response = await this.response(url, 256 * 1024);
+                const chunks = [];
+                let size = 0;
+                for await (const chunk of response.body) {
+                    size += chunk.length;
+                    if (size > 256 * 1024) throw new Error('更新 JSON 超过大小限制');
+                    chunks.push(Buffer.from(chunk));
+                }
+                return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            } catch (error) {
+                last = error;
+            }
+        }
+        throw last || new Error('未配置更新地址');
+    }
+
+    async downloadPackage(info: Omit<UpdatePackage, 'version'>, destination: string, progress: (percent: number) => void = () => {}) {
+        if (
+            !Number.isSafeInteger(info.size)
+            || info.size < 1
+            || info.size > 240 * 1024 * 1024
+            || !/^[a-f0-9]{64}$/.test(info.sha256 || '')
+        ) {
+            throw new Error('更新完整性元数据无效');
+        }
+        let last;
+        for await (const url of [...new Set([info.asarUrl, info.fallbackUrl].filter(Boolean))]) {
+            const temp = `${destination}.tmp`;
+            try {
+                const response = await this.response(url, info.size);
+                let size = 0;
+                const hash = crypto.createHash('sha256');
+                const source = Readable.from(
+                    (async function* () {
+                        for await (const chunk of response.body) {
+                            size += chunk.length;
+                            if (size > info.size) throw new Error('更新文件大小不匹配');
+                            hash.update(chunk);
+                            progress(Math.floor((size * 100) / info.size));
+                            yield chunk;
+                        }
+                    })(),
+                );
+                await pipeline(source, fs.createWriteStream(temp, { mode: 0o600 }));
+                if (size !== info.size || hash.digest('hex') !== info.sha256) throw new Error('更新文件完整性校验失败');
+                fs.renameSync(temp, destination);
+                return destination;
+            } catch (error) {
+                fs.rmSync(temp, { force: true });
+                last = error;
+            }
+        }
+        throw last || new Error('未配置更新包地址');
+    }
+
+    async check({ force = false }: { force?: boolean } = {}) {
+        if (!force && this.config.updater.checkOnStartup === false) return undefined;
+        if (this.checkPending) return this.checkPending;
+        if (this.busy) return this.manifest;
+        this.checkPending = this.readManifest().finally(() => {
+            this.checkPending = null;
+        });
+        return this.checkPending;
+    }
+
+    async readManifest() {
+        this.publish({ phase: 'checking', message: '正在检查更新' });
+        try {
+            const manifest = await this.json(this.config.updater.versionUrl, this.config.updater.fallbackVersionUrl);
+            compareVersions(manifest.version, this.version);
+            this.minimumBlocked = !!manifest.minClientVersion && compareVersions(this.version, manifest.minClientVersion) < 0;
+            atomicWrite(
+                this.policyPath,
+                JSON.stringify({
+                    version: manifest.version,
+                    buildVersion: manifest.buildVersion || '',
+                    minClientVersion: manifest.minClientVersion || '',
+                }),
+            );
+            if (manifest.config?.url) {
+                const remote = await this.json(manifest.config.url, manifest.config.fallbackUrl);
+                const validated = validateConfig({ ...this.config, ...remote, debug: this.config.debug }, this.trust);
+                delete validated.trust;
+                atomicWrite(path.join(this.directory, 'config', 'exam-config.json'), JSON.stringify(validated));
+            }
+            this.manifest = manifest;
+            const platform = manifest.fullUpdate?.platforms?.[process.platform]?.[process.arch];
+            const info = platform || (process.platform === 'win32' && process.arch === 'x64' ? manifest.fullUpdate : null);
+            const candidate = info?.installerUrl || info?.portableUrl;
+            this.installerUrl = '';
+            this.installerWarning = '';
+            if (candidate) {
+                try {
+                    this.installerUrl = this.url(candidate).href;
+                } catch (error) {
+                    if (error.code !== 'UPDATE_ORIGIN_DENIED') throw error;
+                    // 可选安装包链接异常不能阻止有效清单和 ASAR 更新。
+                    // 禁用相应下载按钮，不能绕过白名单。
+                    this.installerWarning = `安装包地址未加入更新白名单，已禁用安装包下载：${new URL(candidate, this.config.updater.versionUrl).origin}`;
+                }
+            }
+            let newer;
+            try {
+                newer = validateBuildVersion(manifest.buildVersion) > validateBuildVersion(this.buildVersion);
+            } catch {
+                this.publish({
+                    phase: 'incompatible',
+                    available: false,
+                    message: '本机或更新清单缺少有效 buildVersion，请安装支持构建编号的完整客户端',
+                });
+                return manifest;
+            }
+            this.publish({
+                phase: newer ? 'available' : 'current',
+                available: newer,
+                latestVersion: manifest.version,
+                latestBuildVersion: manifest.buildVersion,
+                message: this.minimumBlocked
+                    ? '当前版本低于最低版本要求，请更新'
+                    : newer
+                        ? `发现新版本 ${manifest.version} · 构建 ${manifest.buildVersion}`
+                        : '已是最新构建',
+            });
+            return manifest;
+        } catch (error) {
+            this.publish({ phase: 'failed', message: `更新检查失败：${error.message}` });
+            throw error;
+        }
+    }
+
+    async stage() {
+        if (this.busy) throw new Error('更新正在处理中');
+        if (this.checkPending) await this.checkPending;
+        const manifest = this.manifest;
+        if (!this.cache || !this.state.available || !manifest?.hotUpdate?.asarUrl) throw new Error('此更新需要完整安装包');
+        if (hasUnfinishedJournals(this.directory)) throw new Error('仍有未结束或待上传的监考日志，请上传完成后再更新');
+        const hot = manifest.hotUpdate;
+        if (hot.version !== manifest.version || validateBuildVersion(manifest.buildVersion) <= validateBuildVersion(this.buildVersion)) {
+            throw new Error('更新包版本不匹配');
+        }
+        const info = { version: manifest.version, buildVersion: manifest.buildVersion, size: hot.size, sha256: hot.sha256 };
+        const destination = path.join(this.directory, 'updates', `download-${crypto.randomBytes(12).toString('hex')}.asar`);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        this.busy = true;
+        try {
+            this.publish({ phase: 'downloading', percent: 0, message: '正在下载 ASAR 更新' });
+            await this.downloadPackage(hot, destination, (percent) => {
+                if (this.state.percent !== percent) this.publish({ percent });
+            });
+            this.publish({ phase: 'verifying', message: '正在验证发布签名与应用文件' });
+            await this.cache.stage(info, destination);
+            this.publish({ phase: 'ready', percent: 100, message: '更新已验证，重启后生效' });
+            return info;
+        } catch (error) {
+            this.publish({ phase: 'failed', message: `更新未应用：${error.message}` });
+            throw error;
+        } finally {
+            this.busy = false;
+            fs.rmSync(destination, { force: true });
+        }
+    }
 }
 
 namespace Updater {
-  export const compare = compareVersions;
+    export const compare = compareVersions;
 }
 export = Updater;

@@ -45,6 +45,10 @@ test('内存和磁盘诊断对凭据、查询参数、密钥及未允许字段�
     }
 });
 
+test('诊断将连续 ASCII 控制字符合并为单空格，并保留原有 Unicode 内容', () => {
+    assert.equal(redact('\0\t\nA\x7F\x85B\x01\x02C🧪'), ' A\x7F\x85B C🧪');
+});
+
 test('诊断限制历史数量，并记录失败操作的耗时', async () => {
     const logger = new Diagnostics();
     for (let i = 0; i < 1005; i++) logger.log('info', 'tick');

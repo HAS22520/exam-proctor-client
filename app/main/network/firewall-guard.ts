@@ -22,19 +22,14 @@ class FirewallGuard {
     declare verifyConnectivity: () => Promise<unknown>;
     declare pending: Promise<unknown>;
     declare native:
-        | (Pick<NativeNetwork, 'active' | 'check' | 'lock' | 'unlock' | 'close'> & Partial<Pick<NativeNetwork, 'healthy'>>)
-        | null;
+        (Pick<NativeNetwork, 'active' | 'check' | 'lock' | 'unlock' | 'close'> & Partial<Pick<NativeNetwork, 'healthy'>>) | null;
 
     declare auditRecorded: boolean;
     declare cancelled: boolean;
     declare lockPending: Promise<boolean> | null;
     declare restorePending: Promise<void> | null;
 
-    constructor(
-        config: FirewallGuard['config'],
-        logger: AuditSink | null,
-        runtime: FirewallRuntime = {},
-    ) {
+    constructor(config: FirewallGuard['config'], logger: AuditSink | null, runtime: FirewallRuntime = {}) {
         Object.assign(this, { config, logger, isLocked: false });
         this.platform = runtime.platform || process.platform;
         this.trace = runtime.trace || (() => {});
