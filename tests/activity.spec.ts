@@ -2,7 +2,6 @@ import * as assert from 'node:assert/strict';
 import { test } from 'node:test';
 import ActivityProgress = require('../app/main/diagnostics/activity-progress');
 import FirewallGuard = require('../app/main/network/firewall-guard');
-import { workspace } from './helpers';
 
 test('network activity explains an authentication wait, keeps elapsed time across stages, and returns to authentication', async () => {
   let now = 100,
@@ -65,7 +64,7 @@ test('queued firewall recovery does not replace the running lock indicator until
   const progress = new ActivityProgress(),
     statuses = [];
   progress.onChange = (value) => statuses.push(value);
-  const guard = new FirewallGuard({}, null, workspace(t), { platform: 'win32', activity: progress.run.bind(progress) });
+  const guard = new FirewallGuard({}, null, { platform: 'win32', activity: progress.run.bind(progress) });
   let release;
   guard.native = {
     active: false,
@@ -87,12 +86,12 @@ test('queued firewall recovery does not replace the running lock indicator until
   assert.equal(progress.snapshot(), null);
   assert.ok(statuses.some((value) => value?.stage === 'restore'));
 });
-test('unchanged firewall protection and recovery with no saved state do not start a waiting indicator or another command', async (t) => {
+test('unchanged firewall protection and recovery with no active policy do not start a waiting indicator or another command', async (t) => {
   const progress = new ActivityProgress(),
     statuses = [];
   progress.onChange = (value) => statuses.push(value);
   let commands = 0;
-  const guard = new FirewallGuard({ exam: { allowedOrigins: ['https://oj.example.com'] } }, null, workspace(t), {
+  const guard = new FirewallGuard({ exam: { allowedOrigins: ['https://oj.example.com'] } }, null, {
     platform: 'win32',
     activity: progress.run.bind(progress),
     native: {

@@ -32,7 +32,6 @@ test('TypeScript sources stay free of JS; compiled assets and development/instal
     'app/main/bootstrap.js',
     'app/preload/preload.js',
     'app/renderer/upload.html',
-    'scripts/restore-network.bat',
   ]) {
     assert.ok(fs.existsSync(path.join(output, entry)), `Compiled resource missing: ${entry}`);
   }
@@ -44,6 +43,7 @@ test('TypeScript sources stay free of JS; compiled assets and development/instal
   ]);
   assert.equal(fs.existsSync(path.join(output, '.env')), false);
   assert.equal(files(path.join(output, 'app')).some((file) => /\.pem$/.test(file)), false);
+  assert.equal(files(output).some((file) => /\.(?:ps1|bat)$/.test(file)), false);
 });
 
 test('Docker stages the compiled application from the source project without TS, local config or stale trust', (t) => {
@@ -55,6 +55,7 @@ test('Docker stages the compiled application from the source project without TS,
   );
   assert.ok(fs.existsSync(path.join(destination, 'scripts/project-layout.js')));
   assert.equal(fs.existsSync(path.join(destination, 'app/generated')), false);
+  assert.equal(files(destination).some((file) => /\.(?:ps1|bat)$/.test(file)), false);
   const pkg = JSON.parse(fs.readFileSync(path.join(destination, 'package.json'), 'utf8'));
   assert.equal(pkg.main, 'app/main/bootstrap.js');
   assert.ok(fs.existsSync(path.join(destination, pkg.main)));

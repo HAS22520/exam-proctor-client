@@ -276,7 +276,9 @@ async function fixture(t, options: any = {}) {
     './network/network-guard': Guard,
     './security/anti-cheat': Guard,
     './proctor/proctor-auth': require('../app/main/proctor/proctor-auth'),
-    './network/firewall-guard': Guard,
+    './network/firewall-guard': class extends Guard {
+      constructor(config, logger, runtime = {}) { super(config, logger, undefined, runtime); }
+    },
     './updates/updater': Guard,
     './proctor/proctor-request-guard': Guard,
     './windows/local-page': require('../app/main/windows/local-page'),
@@ -308,8 +310,8 @@ async function fixture(t, options: any = {}) {
   if (options.platform === 'darwin') {
     const FirewallGuard = require('../app/main/network/firewall-guard');
     mocks['./network/firewall-guard'] = class extends FirewallGuard {
-      constructor(config, logger, directory, runtime) {
-        super(config, logger, directory, { ...runtime, platform: 'darwin' });
+      constructor(config, logger, runtime) {
+        super(config, logger, { ...runtime, platform: 'darwin' });
       }
     };
   }

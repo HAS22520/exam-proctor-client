@@ -86,14 +86,6 @@
       ],
       "extraResources": [
         {
-          "from": "scripts",
-          "to": "scripts",
-          "filter": [
-            "unlock-firewall.ps1",
-            "restore-network.bat"
-          ]
-        },
-        {
           "from": "build/native",
           "to": "native",
           "filter": [

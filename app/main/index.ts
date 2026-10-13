@@ -412,7 +412,7 @@ async function requestExit() {
         await showExamDialog({
           type: 'warning',
           message: '日志已保留，系统网络尚未确认恢复',
-          detail: '守护进程会继续恢复。必要时请以管理员身份运行随包 restore-network.bat；保留客户端数据。',
+          detail: 'WFP 临时规则会在网络辅助进程退出后由系统清理。请保留客户端数据；若仍无法联网，请退出客户端后检查系统网络设置。',
         });
       }
       completeExit();
@@ -443,7 +443,7 @@ async function requestExit() {
           restored = true;
         } catch (error) {
           networkWarning =
-            '系统网络尚未确认恢复。守护进程会继续恢复；必要时请以管理员身份运行随包 restore-network.bat。';
+            '系统网络尚未确认恢复。WFP 临时规则会在网络辅助进程退出后由系统清理；若仍无法联网，请退出客户端后检查系统网络设置。';
           diagnostics.error('exit.network-recovery-deferred', error);
           // Seal evidence and attempt the allowlisted OJ upload even if Windows
           // recovery fails. Do not resume the exam or trigger another UAC loop.
@@ -495,9 +495,9 @@ app
       const menu = Menu?.getApplicationMenu();
       if (menu?.items[0]) menu.items[0].label = productName;
     }
-    // Check the process token before loading the OJ, recovering old rules or
-    // opening protected windows. No automatic PowerShell elevation is used.
-    const privilegeGuard = new FirewallGuard({}, null, directory);
+    // Check the process token before loading the OJ or opening protected windows.
+    // The native helper never requests automatic elevation.
+    const privilegeGuard = new FirewallGuard({}, null);
     try {
       await privilegeGuard.checkPrivileges();
     } catch (error) {
@@ -540,7 +540,7 @@ app
         controller?.logViolation(item);
       },
     };
-    firewall = new FirewallGuard(config, logger, directory, {
+    firewall = new FirewallGuard(config, logger, {
       trace,
       activity: activity.run.bind(activity),
       lookup: (host: string) => examNetwork.lookup(host),

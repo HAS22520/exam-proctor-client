@@ -61,7 +61,7 @@ export async function restoreBrowserProfile(directory: string, browser: string) 
 export async function migrateStorage(previous: string, directory: string) {
   const marker = path.join(directory, 'migration.json');
   if (path.resolve(previous) === path.resolve(directory) || fs.existsSync(marker)) return;
-  const names = ['secrets', 'journals', 'updates', 'config', 'diagnostics', 'network-state.json'];
+  const names = ['secrets', 'journals', 'updates', 'config', 'diagnostics'];
   const existing = names.filter((name) => fs.existsSync(path.join(directory, name)));
   // 禁止把两组设备身份/日志混合。已有新目录数据说明此安装已开始独立运行。
   if (existing.length) return;

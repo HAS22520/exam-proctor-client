@@ -37,12 +37,11 @@ test('migration preserves device ciphertext, resumable journals and raw ASAR, re
   fs.mkdirSync(path.join(old, 'Partitions/hydro-exam/Local Storage'), { recursive: true });
   fs.writeFileSync(path.join(old, 'Partitions/hydro-exam/Local Storage/draft'), 'unfinished draft');
   fs.writeFileSync(path.join(old, 'Partitions/hydro-exam/Cookies'), 'old login');
-  fs.writeFileSync(path.join(old, 'network-state.json'), '{"restore":true}');
   fs.mkdirSync(next);
   await migrateStorage(old, next);
   assert.equal(fs.readFileSync(path.join(next, 'browser/Partitions/hydro-exam/Local Storage/draft'), 'utf8'), 'unfinished draft');
   assert.equal(fs.existsSync(path.join(next, 'browser/Partitions/hydro-exam/Cookies')), false);
-  for (const name of ['secrets/device.bin', 'journals/attempt/state.json', 'updates/application.asar', 'network-state.json'])
+  for (const name of ['secrets/device.bin', 'journals/attempt/state.json', 'updates/application.asar'])
     assert.deepEqual(fs.readFileSync(path.join(next, name)), fs.readFileSync(path.join(old, name)));
   fs.writeFileSync(path.join(next, 'secrets/device.bin'), 'new identity');
   await migrateStorage(old, next);
