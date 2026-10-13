@@ -51,18 +51,21 @@ export class DialogService {
         if (!window.isDestroyed()) window.destroy();
         resolve(value);
       };
-      this.pending.set(window.webContents, { window, model, settle });
-      window.on('closed', () => settle({ response: model.cancelId, checkboxChecked: !!model.checkboxChecked }));
-      // Show after content is loaded, then explicitly give the modal focus.
-      window.loadFile(pageFile('dialog')).then(() => {
-        if (!settled && !window.isDestroyed()) { window.show(); window.focus(); }
-      }).catch((error) => {
+      const fail = (error: Error) => {
         if (settled) return;
         settled = true;
         this.pending.delete(window.webContents);
         if (!window.isDestroyed()) window.destroy();
         reject(error);
-      });
+      };
+      this.pending.set(window.webContents, { window, model, settle });
+      window.on('closed', () => settle({ response: model.cancelId, checkboxChecked: !!model.checkboxChecked }));
+      window.webContents.once('render-process-gone', () => fail(new Error('提示页面进程已退出，请重试。')));
+      window.webContents.once('preload-error', () => fail(new Error('提示页面通信桥加载失败，请重试。')));
+      // Show after content is loaded, then explicitly give the modal focus.
+      window.loadFile(pageFile('dialog')).then(() => {
+        if (!settled && !window.isDestroyed()) { window.show(); window.focus(); }
+      }).catch(fail);
     });
   }
 }

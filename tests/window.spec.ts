@@ -806,4 +806,14 @@ test('build opt-in to root debugging does not exempt ordinary exam accounts from
   assert.equal(status.allowRootDebug, true);
 });
 
+test('controller authentication failures are pushed to the floating panel immediately with the same state returned by IPC', async (t) => {
+  const f = await fixture(t), main = f.windows[0];
+  f.controller.options.onStatus({ authenticated: false, phase: 'authentication-error', message: '客户端版本不匹配' });
+  const pushed = main.sent.filter((item) => item.channel === 'exam:client-status').at(-1).value;
+  assert.equal(pushed.authenticated, false);
+  assert.equal(pushed.message, '客户端版本不匹配');
+  assert.equal(pushed.allowRootDebug, false);
+  assert.equal(f.handlers.get('exam:status')(f.event(main)).message, pushed.message);
+});
+
 export {};

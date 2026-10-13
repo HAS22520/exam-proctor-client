@@ -2,7 +2,7 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { configureStorage, dataDirectory, migrateStorage } from '../app/main/storage';
+import { configureStorage, dataDirectory, migrateStorage, restoreBrowserProfile } from '../app/main/storage';
 import { workspace } from './helpers';
 
 test('installation data resolves beside installed and portable executables, outside signed macOS bundles', () => {
@@ -19,7 +19,7 @@ test('storage config redirects application, Chromium, temp, logs and crashes; re
   const app: any = { isPackaged: true, getPath: (name) => name === 'exe' ? path.join(directory, 'client.exe') : '/old-data', setPath: (name, value) => paths.set(name, value) };
   const result = configureStorage(app, {}, 'win32');
   assert.equal(result.previous, '/old-data');
-  assert.equal(paths.size, 4);
+  assert.equal(paths.size, 5);
   for (const value of paths.values()) assert.equal(path.relative(result.root, value).startsWith('..'), false);
   app.getPath = (name) => name === 'exe' ? path.join(directory, 'occupied', 'client.exe') : '/old-data';
   fs.writeFileSync(path.join(directory, 'occupied'), 'file');
@@ -52,6 +52,21 @@ test('migration preserves device ciphertext, resumable journals and raw ASAR, re
   fs.writeFileSync(path.join(independent, 'secrets/device.bin'), 'different identity');
   await migrateStorage(old, independent);
   assert.equal(fs.existsSync(path.join(independent, 'journals')), false);
+});
+
+test('browser partition migration commits before creating sessions, retries after restart and preserves existing browser data', async (t) => {
+  const root = workspace(t), state = path.join(root, 'state'), browser = path.join(root, 'browser');
+  fs.mkdirSync(path.join(state, 'browser/Partitions/hydro-exam'), { recursive: true });
+  fs.mkdirSync(browser);
+  fs.writeFileSync(path.join(state, 'browser/Partitions/hydro-exam/draft'), 'saved draft');
+  await restoreBrowserProfile(state, browser);
+  assert.equal(fs.readFileSync(path.join(browser, 'Partitions/hydro-exam/draft'), 'utf8'), 'saved draft');
+  assert.equal(fs.existsSync(path.join(state, 'browser/Partitions')), false);
+  await restoreBrowserProfile(state, browser);
+  fs.mkdirSync(path.join(state, 'browser/Partitions/hydro-exam'), { recursive: true });
+  fs.writeFileSync(path.join(state, 'browser/Partitions/hydro-exam/draft'), 'older backup');
+  await restoreBrowserProfile(state, browser);
+  assert.equal(fs.readFileSync(path.join(browser, 'Partitions/hydro-exam/draft'), 'utf8'), 'saved draft');
 });
 
 test('a failed migration publishes no partial identity or logs and leaves the original files untouched', async (t) => {

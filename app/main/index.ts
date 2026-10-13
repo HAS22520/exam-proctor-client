@@ -149,6 +149,7 @@ async function applyIdentity(login: LoginIdentity | null) {
       if (window.webContents.isDevToolsOpened()) window.webContents.closeDevTools();
     }
   }
+  publishClientStatus();
   const uid = login?.uid ?? controller?.current?.login.uid;
   const ongoing = [...(controller?.records.values() || [])].some(
     (record) => record.login.uid === uid && record.journal?.state.phase === 'open',
@@ -198,6 +199,16 @@ function uploadContext(event: Electron.IpcMainInvokeEvent) {
   requireLocalFrame(uploadWindow, 'upload', event);
 }
 
+function statusSnapshot(freshUpdates = false): ClientStatus {
+  return { ...latestStatus, activity: activity.snapshot(),
+    update: freshUpdates ? updates?.snapshot() : latestStatus.update,
+    debug, root, exitReady, allowRootDebug: !!config?.debug?.allowRoot };
+}
+
+function publishClientStatus() {
+  if (window && !window.isDestroyed()) window.webContents.send('exam:client-status', statusSnapshot());
+}
+
 function publishStatus(status: ClientStatus) {
   latestStatus = {
     ...status,
@@ -208,6 +219,7 @@ function publishStatus(status: ClientStatus) {
     exitReady,
     networkMode: firewall?.mode || 'unavailable',
   };
+  publishClientStatus();
   if (uploadWindow && !uploadWindow.isDestroyed()) uploadWindow.webContents.send('exam:upload-status', latestStatus);
   if (status.upload) {
     const { phase, percent, sent, total } = status.upload;
@@ -223,6 +235,7 @@ function publishActivity(status: ActivityStatus | null) {
   latestStatus.activity = status;
   waitingWindow.publish(status);
   if (window && !window.isDestroyed()) window.webContents.send('exam:activity-status', status);
+  publishClientStatus();
   if (uploadWindow && !uploadWindow.isDestroyed())
     uploadWindow.webContents.send('exam:upload-status', { ...latestStatus, activity: status });
 }
@@ -559,6 +572,7 @@ app
       cache: running.cache,
       onStatus: (update) => {
         latestStatus.update = update;
+        publishClientStatus();
         trace('info', 'update.status', { phase: update.phase, message: update.message });
       },
     });
@@ -606,14 +620,7 @@ app
     });
     ipcMain.handle('exam:status', (event) => {
       ipcContext(event);
-      return {
-        ...latestStatus,
-        activity: activity.snapshot(),
-        update: updates.snapshot(),
-        debug,
-        root,
-        allowRootDebug: config.debug.allowRoot,
-      };
+      return statusSnapshot(true);
     });
     ipcMain.handle('exam:update-check', async (event) => {
       ipcContext(event);

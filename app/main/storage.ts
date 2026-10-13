@@ -35,7 +35,8 @@ export function configureStorage(app: Pick<Electron.App, 'isPackaged' | 'getPath
     fs.unlinkSync(probe);
     app.setPath('userData', directory);
     // Chromium 登录缓存、临时文件、崩溃记录也使用安装位置，而非默认 AppData。
-    for (const [name, folder] of [['temp', 'temp'], ['logs', 'logs'], ['crashDumps', 'crashes']] as const) {
+    // sessionData 必须在 ready 之前确定，不能等待异步迁移完成后才 setPath。
+    for (const [name, folder] of [['sessionData', 'browser'], ['temp', 'temp'], ['logs', 'logs'], ['crashDumps', 'crashes']] as const) {
       const target = path.join(directory, folder);
       fs.mkdirSync(target, { recursive: true, mode: 0o700 });
       app.setPath(name, target);
@@ -45,6 +46,14 @@ export function configureStorage(app: Pick<Electron.App, 'isPackaged' | 'getPath
   }
   // 实例锁和 Chromium 文件留在根目录；监考持久状态单独整体发布。
   return { root: directory, directory: path.join(directory, 'state'), previous };
+}
+
+/** 路径早已配置，只在创建考试 session 前原子搬迁分区，不再修改 Electron 路径。 */
+export async function restoreBrowserProfile(directory: string, browser: string) {
+  const source = path.join(directory, 'browser', 'Partitions');
+  const destination = path.join(browser, 'Partitions');
+  if (!fs.existsSync(source) || fs.existsSync(destination)) return;
+  await fs.promises.rename(source, destination);
 }
 
 /** 先完整复制到同目录暂存区，再原子发布。中途失败不留下半份身份/日志，也不删除旧数据。 */

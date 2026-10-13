@@ -153,7 +153,7 @@ Windows 在上传前解除网络限制，恢复失败时仍尝试上传并显示
 - macOS：`.app` 同级的 `<应用名称>.data`。数据不写进 `.app`，以保留签名完整性；推荐将应用复制到 `~/Applications` 或其他可写安装位置后启动，不能直接在只读 DMG 内运行。
 - 开发环境：客户端工程内被忽略的 `.proctor-data/`。
 
-设备身份、监考日志、更新缓存和诊断记录位于上述目录的 `state/` 内；Chromium 会话／缓存位于 `state/browser/`，临时文件和崩溃记录位于同级的 `temp/`、`crashes/` 等子目录。目录不可写时明确提示并停止，不回退到 AppData。首次启动新版完整安装包时，从旧 Windows `%APPDATA%\HydroProctorClient` 或 macOS `~/Library/Application Support/HydroProctorClient` 复制设备密钥、日志、配置、更新缓存与旧防火墙恢复状态，并迁移考试页面 Local Storage／IndexedDB 中的草稿（不迁移登录 Cookie）；迁移先在同磁盘暂存整个持久状态，再通过单次原子重命名发布；原数据保留，迁移失败或异常退出不会混用半份身份。已有独立设备数据的安装位置不会合并旧身份。
+设备身份、监考日志、更新缓存和诊断记录位于上述目录的 `state/` 内；Chromium 会话／缓存位于 `browser/`，临时文件和崩溃记录位于同级的 `temp/`、`crashes/` 等子目录。目录不可写时明确提示并停止，不回退到 AppData。首次启动新版完整安装包时，从旧 Windows `%APPDATA%\HydroProctorClient` 或 macOS `~/Library/Application Support/HydroProctorClient` 复制设备密钥、日志、配置、更新缓存与旧防火墙恢复状态，并迁移考试页面 Local Storage／IndexedDB 中的草稿（不迁移登录 Cookie）；所有 Electron 路径都在进入 `ready` 前设置，迁移在创建考试 session 前完成。迁移先在同磁盘暂存整个持久状态，再通过单次原子重命名发布；原数据保留，迁移失败或异常退出不会混用半份身份。已有独立设备数据的安装位置不会合并旧身份。
 
 实时日志以 AES-GCM 存入 `journals/`，密钥由 Windows DPAPI／macOS Keychain 保护；最终 `.hplog` 使用 OJ 日志公钥封装。不能保护密钥时拒绝启动，不回退明文。
 

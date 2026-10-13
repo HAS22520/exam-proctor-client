@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
-import { configureStorage, migrateStorage } from './storage';
+import { configureStorage, migrateStorage, restoreBrowserProfile } from './storage';
 import { DialogService } from './windows/dialog-service';
 import { ENTRY } from './updates/signed-archive';
 import { UpdateCache } from './updates/update-cache';
@@ -11,13 +11,13 @@ import { UpdateCache } from './updates/update-cache';
 app.setName('HydroProctorClient');
 // 在实例锁和 Chromium session 初始化前设置目录，避免写回默认 AppData。
 (async () => {
-  const { directory, previous } = configureStorage(app);
+  const { root: dataRoot, directory, previous } = configureStorage(app);
   if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
-  await migrateStorage(previous, directory);
+  // 实例锁固定在安装位置根目录；所有 setPath 必须在第一次 await 前完成。
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   app.setPath('userData', directory);
-  const browser = path.join(directory, 'browser');
-  fs.mkdirSync(browser, { recursive: true, mode: 0o700 });
-  app.setPath('sessionData', browser);
+  await migrateStorage(previous, directory);
+  await restoreBrowserProfile(directory, path.join(dataRoot, 'browser'));
   const root = path.resolve(__dirname, '../..');
   const json = (name: string) => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8'));
   const anchor = {

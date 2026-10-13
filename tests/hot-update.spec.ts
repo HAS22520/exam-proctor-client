@@ -400,7 +400,7 @@ test('installed bootstrap selects cached ASAR entry and exposes its actual versi
       exit: () => resolve(),
     };
     context.require = (name) => {
-      if (name === './storage') return { configureStorage: () => ({ directory: f.directory, previous: f.directory }), migrateStorage: async () => {} };
+      if (name === './storage') return { configureStorage: () => ({ root: f.directory, directory: f.directory, previous: f.directory }), migrateStorage: async () => {}, restoreBrowserProfile: async () => {} };
       if (name === './windows/dialog-service') return { DialogService: class {} };
       if (name === 'electron') return { app, dialog: { showErrorBox: (_title, message) => assert.fail(message) } };
       if (name === './updates/update-cache') return require('../app/main/updates/update-cache');
@@ -467,6 +467,20 @@ test('full client sources build a signed portable-code archive validated against
     'app/preload/waiting.js',
   ]) {
     assert.ok(archive.files.has(entry), `Compiled entry missing: ${entry}`);
+  }
+  for (const page of ['console', 'dialog', 'upload', 'waiting']) {
+    assert.ok(archive.files.has(`app/renderer/${page}.html`));
+    assert.ok(archive.files.has(`app/renderer/entries/${page}.js`));
+  }
+  const bytes = fs.readFileSync(result.filename);
+  for (const [name, entry] of archive.files) {
+    if (!name.endsWith('.js')) continue;
+    const source = bytes.subarray(entry.start, entry.start + entry.size).toString();
+    for (const [, specifier] of source.matchAll(/require\(["'](\.[^"']+)["']\)/g)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(name), specifier));
+      assert.ok([target, `${target}.js`, `${target}/index.js`].some((candidate) => archive.files.has(candidate)),
+        `${name} requires missing published module: ${specifier}`);
+    }
   }
 });
 

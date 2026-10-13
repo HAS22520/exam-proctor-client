@@ -24,7 +24,7 @@ export function Panel({ bridge, host }: { bridge: PanelBridge; host: HTMLElement
       catch { if (active) setError('请返回考试系统查看监考状态'); }
       finally { polling = false; }
     };
-    const unsubscribe = bridge.onStatus((next) => { if (active) setStatus(next); });
+    const unsubscribe = bridge.onStatus((next) => { if (active) { setStatus(next); setError(''); } });
     void refresh();
     const timer = setInterval(refresh, 5000);
     return () => { active = false; clearInterval(timer); unsubscribe(); };

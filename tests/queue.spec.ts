@@ -193,6 +193,21 @@ function fixture(t) {
   };
 }
 
+test('changing login immediately removes authentication from status while retaining the resumable encrypted journal', async (t) => {
+  const f = fixture(t), controller = new ProctorController(f.options);
+  try {
+    await controller.sync(url);
+    const record = controller.current;
+    assert.equal(f.statuses.at(-1).authenticated, true);
+    controller.invalidateIdentity();
+    assert.equal(f.statuses.at(-1).authenticated, false);
+    assert.equal(f.statuses.at(-1).root, false);
+    assert.equal(record.auth.session, null);
+    assert.equal(record.journal.state.phase, 'open');
+    assert.ok(controller.records.size);
+  } finally { controller.shutdown(); }
+});
+
 test('completed handshake is a terminal state, avoids repeat handshakes, and another account can read the same contest', async (t) => {
   const f = fixture(t),
     first = new ProctorController(f.options);

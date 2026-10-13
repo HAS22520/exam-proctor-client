@@ -166,6 +166,7 @@ class ProctorController {
     this.current = null;
     this.lastUrl = null;
     for (const record of this.records.values()) if (record.auth) record.auth.session = null;
+    this.status('登录状态已变化，请重新验证身份。');
   }
 
   identityKey(url: string) {

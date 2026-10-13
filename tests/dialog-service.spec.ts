@@ -66,3 +66,14 @@ test('macOS can keep its native message box without creating a React window', as
   assert.equal((await f.service.show({ message: '提示' })).response, 1);
   assert.equal(f.native.length, 1); assert.equal(f.windows.length, 0);
 });
+
+test('a crashed renderer or failed preload rejects the prompt instead of keeping the exit operation pending', async () => {
+  for (const name of ['render-process-gone', 'preload-error']) {
+    const f = fixture();
+    const result = f.service.show({ message: '退出？', buttons: ['继续', '退出'] });
+    f.windows[0].webContents.emit(name);
+    await assert.rejects(result, /提示页面/);
+    assert.equal(f.windows[0].destroyed, true);
+    assert.throws(() => f.handlers.get('exam:dialog-model')(f.event(f.windows[0])), /trusted local/);
+  }
+});
