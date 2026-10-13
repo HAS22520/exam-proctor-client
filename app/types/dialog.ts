@@ -9,4 +9,7 @@ export interface DialogModel {
   cancelId: number;
   checkboxLabel?: string;
   checkboxChecked?: boolean;
+  /** 主按钮/次要按钮仅决定 React 展示层级，不改变 response 编号和取消语义。 */
+  primaryIds?: number[];
+  secondaryDetail?: string;
 }

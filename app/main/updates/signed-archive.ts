@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import { DEFAULT_PRODUCT_NAME, validateProductName } from '../../shared/branding';
 import { archiveFs as fs } from './archive-filesystem';
 import { buildVersion } from './build-version';
 import type { UpdateAnchor, UpdatePackage } from '../contracts';
@@ -157,12 +158,16 @@ async function verifyArchive(filename: string, expected: UpdatePackage, anchor: 
       : crypto.createHash('sha256').digest('hex');
     if (hash !== file.sha256) throw new Error(`ASAR 文件签名校验失败：${file.path}`);
   }
+  const name = validateProductName(archive.identity.productName ?? DEFAULT_PRODUCT_NAME);
+  if (name !== (anchor.identity.productName || DEFAULT_PRODUCT_NAME))
+    throw new Error('ASAR 软件名称与已安装客户端不一致，请使用完整安装包更名');
+  const expectedIdentity = { version: expected.version, buildVersion: expected.buildVersion, nativeNetworkVersion: 1,
+    ...(archive.identity.productName === undefined ? {} : { productName: name }) };
   if (
     !seen.has(ENTRY) ||
     archive.pkg.version !== expected.version ||
     archive.pkg.buildVersion !== expected.buildVersion ||
-    canonical(archive.identity) !==
-      canonical({ version: expected.version, buildVersion: expected.buildVersion, nativeNetworkVersion: 1 }) ||
+    canonical(archive.identity) !== canonical(expectedIdentity) ||
     (archive.pkg.dependencies && Object.keys(archive.pkg.dependencies).length)
   )
     throw new Error('ASAR 应用身份无效');

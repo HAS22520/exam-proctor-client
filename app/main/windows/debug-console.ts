@@ -1,10 +1,11 @@
 import { localPreferences, pageFile, requireLocalFrame, secureLocalPage, windowIcon } from './local-page';
+import { DEFAULT_PRODUCT_NAME } from '../../shared/branding';
 
 class DebugConsole {
   declare BrowserWindow: typeof import('electron').BrowserWindow;
   declare window: Electron.BrowserWindow | null;
 
-  constructor(BrowserWindow: DebugConsole['BrowserWindow']) {
+  constructor(BrowserWindow: DebugConsole['BrowserWindow'], private productName = DEFAULT_PRODUCT_NAME) {
     this.BrowserWindow = BrowserWindow;
   }
 
@@ -19,7 +20,7 @@ class DebugConsole {
       height: 640,
       minWidth: 620,
       minHeight: 400,
-      title: '管理员调试控制台',
+      title: `调试控制台 · ${this.productName}`,
       show: false,
       autoHideMenuBar: true,
       icon: windowIcon,

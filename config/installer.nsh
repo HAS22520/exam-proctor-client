@@ -1,7 +1,7 @@
 ; 安装后不启动普通权限进程，用户点击完成，再从桌面以管理员身份打开。
 !macro customFinishPage
   !define MUI_FINISHPAGE_TITLE "安装完成"
-  !define MUI_FINISHPAGE_TEXT "监考客户端已安装。$\r$\n$\r$\n请点击【完成】，然后在桌面右键监考客户端，选择【以管理员身份运行】。$\r$\n$\r$\n监考日志、设备身份和更新缓存保存在安装目录的 data 文件夹。"
+  !define MUI_FINISHPAGE_TEXT "${PRODUCT_NAME}已安装。$\r$\n$\r$\n请点击【完成】，然后在桌面右键${PRODUCT_NAME}，选择【以管理员身份运行】。$\r$\n$\r$\n监考日志、设备身份和更新缓存保存在安装目录的 data 文件夹。"
   !insertmacro MUI_PAGE_FINISH
 !macroend
 

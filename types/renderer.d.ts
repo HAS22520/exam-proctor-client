@@ -2,6 +2,7 @@ import type { ActivityStatus, ClientStatus, DiagnosticSnapshot } from '../app/ty
 
 declare global {
   interface Window {
+    hydroClientName?: string;
     dialogAPI: {
       model(): Promise<import('../app/types/dialog').DialogModel>;
       respond(response: number, checkboxChecked: boolean): Promise<void>;

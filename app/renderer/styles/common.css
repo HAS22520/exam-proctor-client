@@ -28,3 +28,12 @@ body[data-phase="deferred"] #phase { color: #af7229; }
 @media (prefers-reduced-motion: reduce) { progress:not([value]), progress:indeterminate::-webkit-progress-bar { animation: none; } }
 
 .brand{display:flex;align-items:center;gap:10px}.brand img{width:32px;height:32px}.dialog-detail{white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto;line-height:1.7}.dialog-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}.dialog-actions button{width:auto;flex:1;min-width:120px}.dialog-actions .secondary{background:#e7edf8;color:#39547e}.upload-page[data-phase="complete"] #phase,.upload-page[data-phase="complete"] #percent{color:#21845b}.upload-page[data-phase="deferred"] #phase{color:#af7229}
+
+/* 两个主要操作同级；保留日志退出独立放在次要区域。 */
+.dialog-primary-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.dialog-primary-actions button{width:100%;min-width:0;min-height:48px;background:#4265c2;color:#fff;line-height:1.5}
+.dialog-secondary-actions{border-top:1px solid #e3e8f2;margin-top:20px;padding-top:14px;text-align:center}
+.dialog-secondary-actions .tertiary{width:auto;padding:7px 12px;background:transparent;color:#64718a;font-size:12px;font-weight:400}
+.dialog-secondary-actions .footnote{margin:8px 0 0}
+
+.dialog-primary-actions button:disabled{background:#e3e9f5;color:#8a98b0}

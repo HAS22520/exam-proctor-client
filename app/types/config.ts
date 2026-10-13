@@ -1,5 +1,6 @@
 /** 编译时信任边界；远端配置不能更换密钥、白名单或调试权限。 */
 export interface BuildIdentity {
+  productName?: string;
   version: string;
   buildVersion: string;
   nativeNetworkVersion?: number;

@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { generateIcons } from './generate-icons.mts';
+import { validateProductName } from '../app/shared/branding.ts';
 
 // 直接用 Node 擦除入口类型，干净源码目录无需保留任何 JavaScript 启动脚本。
 const require = createRequire(import.meta.url);
@@ -50,6 +51,8 @@ for (const name of ['exam-config.json', 'build.example.json', 'entitlements.mac.
 }
 fs.copyFileSync(path.join(root, 'config/installer.nsh'), path.join(output, 'config/installer.nsh'));
 generateIcons(root, output);
+const metadata = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+fs.writeFileSync(path.join(output, 'app/renderer/assets/brand.js'), `window.hydroClientName = ${JSON.stringify(validateProductName(process.env.PROCTOR_PRODUCT_NAME ?? metadata.build?.productName))};\n`);
 // React 和页面依赖完全打入 bundle；sandbox preload 只保留 electron 的内置 require。
 await build({
   absWorkingDir: root,

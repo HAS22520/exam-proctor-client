@@ -25,6 +25,7 @@ function fixture(t) {
       PROCTOR_ALLOWED_ORIGINS: '["https://oj.example.com"]',
       PROCTOR_UPDATE_ORIGINS: '["https://oj.example.com"]',
       PROCTOR_ALLOW_ROOT_DEBUG: 'true',
+      PROCTOR_PRODUCT_NAME: '容器构建监考客户端',
     },
   };
 }
@@ -69,6 +70,7 @@ test('Docker stages only build sources, injects public configuration and isolate
       assert.equal(options.env.PROCTOR_CLIENT_VERSION, '2.3.4');
       assert.equal(options.env.PROCTOR_CLIENT_BUILD_VERSION, '2026101007');
       assert.equal(options.env.PROCTOR_ALLOW_ROOT_DEBUG, 'true');
+      assert.equal(options.env.PROCTOR_PRODUCT_NAME, '容器构建监考客户端');
       assert.ok(args.includes('PROCTOR_AUTH_PUBLIC_KEY'));
       assert.ok(!args.some((arg) => arg.includes('BEGIN PUBLIC KEY')));
       assert.ok(!args.some((arg) => arg.includes('/home/magneto/code/Hydro/node_modules')));

@@ -4,6 +4,12 @@ import { Brand } from '../components/Brand';
 
 export function DialogContent({ model, busy, onRespond }: { model: DialogModel; busy: boolean; onRespond(response: number, checked: boolean): void }) {
   const [checked, setChecked] = useState(!!model.checkboxChecked);
+  const indices = model.buttons.map((_, index) => index);
+  const primaryIds = model.primaryIds;
+  const primary = primaryIds ? indices.filter((index) => primaryIds.includes(index)) : indices;
+  const secondary = primaryIds ? indices.filter((index) => !primaryIds.includes(index)) : [];
+  const button = (index: number, className = '') => <button key={index} autoFocus={index === model.defaultId}
+    className={className} disabled={busy} onClick={() => onRespond(index, checked)}>{model.buttons[index]}</button>;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busy) { event.preventDefault(); onRespond(model.cancelId, checked); }
@@ -15,8 +21,13 @@ export function DialogContent({ model, busy, onRespond }: { model: DialogModel; 
     <Brand/><h1 id="dialog-title">{model.message}</h1>
     <p className="intro dialog-detail" id="dialog-detail">{model.detail}</p>
     {model.checkboxLabel ? <label><input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)}/>{model.checkboxLabel}</label> : null}
-    <div className="dialog-actions">{model.buttons.map((label, index) => <button key={index} autoFocus={index === model.defaultId}
-      className={index === model.defaultId ? '' : 'secondary'} disabled={busy} onClick={() => onRespond(index, checked)}>{label}</button>)}</div>
+    <div className={`dialog-actions${model.primaryIds ? ' dialog-primary-actions' : ''}`}>
+      {primary.map((index) => button(index, model.primaryIds || index === model.defaultId ? '' : 'secondary'))}
+    </div>
+    {secondary.length ? <section className="dialog-secondary-actions" aria-label="暂时退出">
+      {secondary.map((index) => button(index, 'tertiary'))}
+      {model.secondaryDetail ? <p className="footnote">{model.secondaryDetail}</p> : null}
+    </section> : null}
   </main>;
 }
 export function DialogPage() {

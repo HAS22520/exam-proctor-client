@@ -150,6 +150,9 @@ async function fixture(t, options: any = {}) {
     setAlwaysOnTop(value) {
       this.alwaysOnTop = value;
     }
+    setTitle(value) {
+      this.options.title = value;
+    }
   }
   const config: any = {
     exam: { targetUrl: 'https://oj.example.com/d/exam/', allowedOrigins: ['https://oj.example.com'] },
@@ -285,9 +288,10 @@ async function fixture(t, options: any = {}) {
         return this.dependencies.dialog.showMessageBox(owner, value);
       }
     } },
+    '../shared/branding': require('../app/shared/branding'),
     './runtime': {
       runtime: () => ({
-        identity: { version: '1.0.0', buildVersion: '2026101001' },
+        identity: { version: '1.0.0', buildVersion: '2026101001', productName: options.productName },
         markReady: () => {},
         source: 'installed',
       }),
@@ -374,6 +378,18 @@ test('non-administrator startup prompts to close and reopen elevated before any 
   assert.match(f.choices[0].detail, /以管理员身份运行/);
   assert.equal(f.choices[0].buttons.length, 1);
   assert.equal(f.choices[0].buttons[0], '关闭软件');
+});
+test('configured software name appears in status and remains in the remote page window title', async (t) => {
+  const productName = '计算机学院监考客户端';
+  const f = await fixture(t, { productName });
+  const main = f.windows[0];
+  assert.equal(main.options.title, productName);
+  let prevented = false;
+  main.emit('page-title-updated', { preventDefault: () => { prevented = true; } }, '考试题目');
+  assert.equal(prevented, true);
+  assert.equal(main.options.title, `考试题目 · ${productName}`);
+  const status = await f.handlers.get('exam:status')(f.event(main));
+  assert.equal(status.productName, productName);
 });
 test('macOS authenticates without network setup or enforced window focus and prepares logs directly on exit', async (t) => {
   const f = await fixture(t, { platform: 'darwin', delayLock: true }),
@@ -666,7 +682,7 @@ test('exit without upload pauses, restores networking and never creates an uploa
   assert.equal(f.shutdownCount, 1);
   assert.equal(f.recoverCount, 2);
   assert.equal(f.windows.length, 1);
-  assert.deepEqual(Array.from(f.choices[0].buttons), ['继续考试', '保留日志退出', '上传日志并结束监考']);
+  assert.deepEqual(Array.from(f.choices[0].buttons), ['继续监考', '保留日志退出', '上传日志并结束监考']);
   assert.match(f.choices[0].detail, /续写、继续做题/);
 });
 

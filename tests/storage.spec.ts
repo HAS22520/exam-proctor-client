@@ -10,7 +10,7 @@ test('installation data resolves beside installed and portable executables, outs
   assert.equal(dataDirectory(base), path.join('/installed', 'data'));
   assert.equal(dataDirectory({ ...base, executable: '/temp/extracted/client.exe', env: { PORTABLE_EXECUTABLE_DIR: '/chosen' } }), path.join('/chosen', 'data'));
   assert.equal(dataDirectory({ ...base, executable: '/temp/extracted/client.exe', env: { PORTABLE_EXECUTABLE_FILE: '/chosen/portable.exe' } }), path.join('/chosen', 'data'));
-  assert.equal(dataDirectory({ ...base, platform: 'darwin', executable: '/Applications/Client.app/Contents/MacOS/Client' }), path.resolve('/Applications', 'Client.data'));
+  assert.equal(dataDirectory({ ...base, platform: 'darwin', executable: '/Applications/Client.app/Contents/MacOS/Client' }), path.resolve('/Applications', '在线监考客户端.data'));
   assert.equal(dataDirectory({ ...base, packaged: false, developmentRoot: '/project' }), path.join('/project', '.proctor-data'));
 });
 

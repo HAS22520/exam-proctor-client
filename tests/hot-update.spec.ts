@@ -226,6 +226,18 @@ test('native network components require a full installer before compatible ASAR 
   await assert.rejects(verifyArchive(result.filename, result, old), /系统网络组件不兼容.*完整安装包/);
   await verifyArchive(result.filename, result, f.anchor);
 });
+test('custom software names survive signed updates and cannot change without a full installer', async (t) => {
+  const f = fixture(t);
+  const productName = '计算机学院监考客户端';
+  const result = await release(f, { PROCTOR_PRODUCT_NAME: productName });
+  const anchor = { ...f.anchor, identity: { ...f.anchor.identity, productName } };
+  await verifyArchive(result.filename, result, anchor);
+  assert.equal(readArchive(result.filename).identity.productName, productName);
+  const cache = new UpdateCache(f.directory, anchor);
+  await cache.stage(result, result.filename);
+  assert.equal((await cache.select()).buildVersion, result.buildVersion);
+  await assert.rejects(verifyArchive(cache.filename(result), result, f.anchor), /软件名称.*完整安装包/);
+});
 test('verified download stays pending until boot, failed first boot rolls back, successful boot commits actual identity', async (t) => {
   const f = fixture(t),
     result = await release(f),
@@ -400,6 +412,7 @@ test('installed bootstrap selects cached ASAR entry and exposes its actual versi
       exit: () => resolve(),
     };
     context.require = (name) => {
+      if (name === '../shared/branding') return require('../app/shared/branding');
       if (name === './storage') return { configureStorage: () => ({ root: f.directory, directory: f.directory, previous: f.directory }), migrateStorage: async () => {}, restoreBrowserProfile: async () => {} };
       if (name === './windows/dialog-service') return { DialogService: class {} };
       if (name === 'electron') return { app, dialog: { showErrorBox: (_title, message) => assert.fail(message) } };

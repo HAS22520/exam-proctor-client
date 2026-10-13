@@ -15,6 +15,10 @@ on:
         description: Client version (must match OJ proctor settings)
         required: true
         default: '1.0.0'
+      product_name:
+        description: Full software name ending with 监考客户端
+        required: true
+        default: '在线监考客户端'
       build_version:
         description: Increasing YYYYMMDDNN build identifier (10 digits)
         required: true
@@ -38,6 +42,7 @@ on:
 permissions:
   contents: read
 env:
+  PROCTOR_PRODUCT_NAME: ${{ inputs.product_name }}
   PROCTOR_CLIENT_BUILD_VERSION: ${{ inputs.build_version }}
   PROCTOR_UPDATE_PUBLIC_KEY: ${{ secrets.PROCTOR_UPDATE_PUBLIC_KEY }}
   PROCTOR_CLIENT_VERSION: ${{ inputs.version }}

@@ -67,6 +67,18 @@ test('macOS can keep its native message box without creating a React window', as
   assert.equal(f.native.length, 1); assert.equal(f.windows.length, 0);
 });
 
+test('macOS also uses React for tiered finish actions while preserving upload and cancel response IDs', async () => {
+  const f = fixture('darwin');
+  const result = f.service.show({ message: '结束监考', buttons: ['继续监考', '保留日志退出', '上传日志并结束监考'],
+    primaryIds: [0, 2], defaultId: 0, cancelId: 0 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.native.length, 0);
+  const event = f.event(f.windows[0]);
+  assert.deepEqual(f.handlers.get('exam:dialog-model')(event).primaryIds, [0, 2]);
+  f.handlers.get('exam:dialog-response')(event, 2, false);
+  assert.equal((await result).response, 2);
+});
+
 test('a crashed renderer or failed preload rejects the prompt instead of keeping the exit operation pending', async () => {
   for (const name of ['render-process-gone', 'preload-error']) {
     const f = fixture();

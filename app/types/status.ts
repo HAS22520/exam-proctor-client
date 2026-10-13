@@ -74,6 +74,7 @@ export interface UpdateStatus {
 }
 
 export interface ClientStatus {
+  productName?: string;
   phase?: string;
   message?: string;
   authenticated?: boolean;

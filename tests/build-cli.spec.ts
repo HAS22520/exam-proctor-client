@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import { buildEnvironment, clearEmptySigningEnvironment, parseArgs, run } from '../scripts/build';
 import { auth, trust, workspace } from './helpers';
+import { validateProductName } from '../app/shared/branding';
 
 function fixture(t) {
   const root = workspace(t);
@@ -61,6 +62,24 @@ test('build JSON resolves PEM files relative to itself, with environment overrid
     fs.writeFileSync(file, JSON.stringify({ ...config, ...extra }));
     assert.throws(() => buildEnvironment(file, {}), /build config field/);
   }
+});
+
+test('software name flows from build JSON/environment into packager, embedded identity, window title and React branding', async (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(f.file, JSON.stringify({ ...f.config, productName: '计算机学院监考客户端' }));
+  assert.equal(buildEnvironment(f.file, {}).PROCTOR_PRODUCT_NAME, '计算机学院监考客户端');
+  await run(['--config', f.file, '--win'], { root: f.root, env: { PROCTOR_PRODUCT_NAME: '学院测试监考客户端' },
+    build: async ({ config }) => {
+      assert.equal(config.productName, '学院测试监考客户端');
+      assert.equal(config.extraMetadata.productName, '学院测试监考客户端');
+      return ['fixture.exe'];
+    } });
+  const json = (file) => JSON.parse(fs.readFileSync(path.join(f.root, file), 'utf8'));
+  assert.equal(json('app/generated/build.json').productName, '学院测试监考客户端');
+  assert.equal(json('app/generated/config.json').exam.title, '学院测试监考客户端');
+  assert.match(fs.readFileSync(path.join(f.root, 'app/renderer/assets/brand.js'), 'utf8'), /学院测试监考客户端/);
+  for (const name of ['', '学院', 'A/B监考客户端', 'A\n监考客户端', `${'A'.repeat(61)}监考客户端`])
+    assert.throws(() => validateProductName(name), /productName/);
 });
 
 test('documented JSON comments are accepted, never embedded, and cannot hide unknown build fields', async (t) => {

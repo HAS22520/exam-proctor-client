@@ -1,10 +1,11 @@
 import { localPreferences, pageFile, requireLocalFrame, secureLocalPage, windowIcon } from './local-page';
+import { DEFAULT_PRODUCT_NAME } from '../../shared/branding';
 
 class WaitingWindow {
   declare BrowserWindow: typeof import('electron').BrowserWindow;
   declare window: Electron.BrowserWindow | null;
 
-  constructor(BrowserWindow: WaitingWindow['BrowserWindow']) {
+  constructor(BrowserWindow: WaitingWindow['BrowserWindow'], private productName = DEFAULT_PRODUCT_NAME) {
     this.BrowserWindow = BrowserWindow;
     this.window = null;
   }
@@ -16,7 +17,7 @@ class WaitingWindow {
       useContentSize: true,
       resizable: false,
       show: false,
-      title: '正在准备监考客户端',
+      title: `正在准备 · ${this.productName}`,
       autoHideMenuBar: true,
       icon: windowIcon,
       webPreferences: { ...localPreferences('waiting'), partition: 'proctor-waiting' },

@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
 import * as path from 'node:path';
 import { archiveFs as fs } from './updates/archive-filesystem';
+import { MAC_DATA_FOLDER } from '../shared/branding';
 
 interface StorageLocation {
   packaged: boolean;
@@ -20,7 +21,7 @@ export function dataDirectory({ packaged, executable, platform, env, development
     const bundle = path.resolve(executable, '../../..');
     if (!bundle.endsWith('.app')) throw new Error('无法确定 macOS 应用安装目录，请将应用复制到可写目录后启动。');
     // 不改写签名的 .app 包；数据目录与 .app 同处于用户选择的安装位置。
-    return path.join(path.dirname(bundle), `${path.basename(bundle, '.app')}.data`);
+    return path.join(path.dirname(bundle), MAC_DATA_FOLDER);
   }
   return path.join(path.dirname(executable), 'data');
 }

@@ -5,10 +5,11 @@ import { configureStorage, migrateStorage, restoreBrowserProfile } from './stora
 import { DialogService } from './windows/dialog-service';
 import { ENTRY } from './updates/signed-archive';
 import { UpdateCache } from './updates/update-cache';
+import { INTERNAL_APP_NAME } from '../shared/branding';
 
 // This loader always runs from the original installation, never the cached ASAR.
 
-app.setName('HydroProctorClient');
+app.setName(INTERNAL_APP_NAME);
 // 在实例锁和 Chromium session 初始化前设置目录，避免写回默认 AppData。
 (async () => {
   const { root: dataRoot, directory, previous } = configureStorage(app);

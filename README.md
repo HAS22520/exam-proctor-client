@@ -31,7 +31,7 @@ Electron 客户端，使用 `HydroNext-proctor/1` 协议连接 OJ。支持 Windo
 | Secret，可选 | `PROCTOR_UPDATE_PUBLIC_KEY` | 独立的 Ed25519 更新签名公钥；启用 ASAR 更新时需要 |
 | Secret，可选 | `PROCTOR_UPDATE_PRIVATE_KEY` | 对应的更新签名私钥；生成可安装的 ASAR 时需要 |
 
-在 **Actions → Build Hydro proctor client → Run workflow** 填写 `version`、递增的 `build_version`、OJ 起始地址、考试及更新 origin JSON 数组、更新清单 URL 和 root 调试开关。选择构建类型：
+在 **Actions → Build Hydro proctor client → Run workflow** 填写软件名称 `product_name`、`version`、递增的 `build_version`、OJ 起始地址、考试及更新 origin JSON 数组、更新清单 URL 和 root 调试开关。软件名称填写完整名称，例如“计算机学院监考客户端”。选择构建类型：
 
 - `installers`：生成 Windows x64 的安装版／便携 EXE，以及 macOS x64、arm64 的 DMG／ZIP，无须更新签名私钥。
 - `asar`：只生成签名应用更新归档，必须配置两项更新密钥。
@@ -80,9 +80,21 @@ npm run test:updates:electron  # 在 Electron Node 模式中测试 ASAR，不创
 
 Windows 提示框统一使用本地 React 窗口，包括管理员权限提示、退出选择、认证／页面错误和更新重启确认。打开弹窗前解除主窗口抢焦点行为，关闭或取消后按考试状态恢复；macOS 仍可使用系统提示框。所有本地页面限制导航、网络访问和 IPC 来源，React 不包含 Node 权限。
 
+结束监考弹窗在两个平台均使用 React：“继续监考”和“上传日志并结束监考”并排显示为同级主要按钮；“保留日志退出”在下方显示为次要操作，并说明下次可以继续监考。
+
 ## 本地构建
 
 需要 Node.js 22.12+。在本客户端目录复制 `config/build.example.json` 为 `config/build.local.json`，按照 `_comments` 填写各项；注释字段不会进入安装包。公钥路径相对于配置文件，文件应放在仓库外。本地配置已被 Git 忽略，`.env` 不会自动加载。
+
+通过 `productName` 设置完整软件名称，例如：
+
+```json
+{
+  "productName": "计算机学院监考客户端"
+}
+```
+
+将这一项加入包含公钥等配置的本地构建文件。名称须以“监考客户端”结尾、长度不超过 60 个字符，且不包含文件名特殊字符或换行；未设置时默认“在线监考客户端”。名称用于窗口、内置页面、Windows 程序及安装向导、快捷方式和 macOS 应用。更名需要重新分发完整安装包；内部应用标识和数据目录保持稳定，保留设备身份及未上传日志。
 
 `allowedOrigins` 和 `updateOrigins` 使用完整 origin，例如 `https://oj.example.com`；不同子域、协议和端口需分别填写，不支持路径或通配符。HTTPS 必需，仅本机回环地址允许 HTTP 调试。`versionUrl` 填 OJ「更新设置」提供的远端清单地址。
 
@@ -110,6 +122,7 @@ Windows 安装向导允许选择安装目录，安装完成后需点击“完成
 
 | 环境变量 | 对应内容 |
 | --- | --- |
+| `PROCTOR_PRODUCT_NAME` | 完整软件名称，如“计算机学院监考客户端” |
 | `PROCTOR_AUTH_PUBLIC_KEY` / `PROCTOR_LOG_PUBLIC_KEY` | 完整公钥 PEM 正文，不是文件路径 |
 | `PROCTOR_KEY_ID` | 两组公钥对应的 keyId |
 | `PROCTOR_CLIENT_VERSION` / `PROCTOR_CLIENT_BUILD_VERSION` | 客户端版本／递增构建编号 |
@@ -150,7 +163,7 @@ Windows 在上传前解除网络限制，恢复失败时仍尝试上传并显示
 运行数据统一放在用户选择的安装位置：
 
 - Windows 安装版：`<安装目录>\data`；便携版：原始便携 EXE 所在目录的 `data`，不放在临时解包目录。
-- macOS：`.app` 同级的 `<应用名称>.data`。数据不写进 `.app`，以保留签名完整性；推荐将应用复制到 `~/Applications` 或其他可写安装位置后启动，不能直接在只读 DMG 内运行。
+- macOS：`.app` 同级的 `在线监考客户端.data`，展示名称更改后仍使用这一固定目录。数据不写进 `.app`，以保留签名完整性；推荐将应用复制到 `~/Applications` 或其他可写安装位置后启动，不能直接在只读 DMG 内运行。
 - 开发环境：客户端工程内被忽略的 `.proctor-data/`。
 
 设备身份、监考日志、更新缓存和诊断记录位于上述目录的 `state/` 内；Chromium 会话／缓存位于 `browser/`，临时文件和崩溃记录位于同级的 `temp/`、`crashes/` 等子目录。目录不可写时明确提示并停止，不回退到 AppData。首次启动新版完整安装包时，从旧 Windows `%APPDATA%\HydroProctorClient` 或 macOS `~/Library/Application Support/HydroProctorClient` 复制设备密钥、日志、配置、更新缓存与旧防火墙恢复状态，并迁移考试页面 Local Storage／IndexedDB 中的草稿（不迁移登录 Cookie）；所有 Electron 路径都在进入 `ready` 前设置，迁移在创建考试 session 前完成。迁移先在同磁盘暂存整个持久状态，再通过单次原子重命名发布；原数据保留，迁移失败或异常退出不会混用半份身份。已有独立设备数据的安装位置不会合并旧身份。
@@ -193,7 +206,7 @@ npm run release:hot -- --config config/build.local.json --sign-key /path/outside
 
 `--sign-key` 必须是对应的更新**私钥**，不能使用更新公钥或 OJ 的认证／日志私钥。产物为 `updates/app-<version>-<buildVersion>.asar` 及构建信息 JSON。将 ASAR 上传 OJ「更新设置」，填写一致的版本与构建编号；构建信息 JSON 不是完整的远端更新清单。未签名归档会被客户端拒绝。
 
-同一份 JS／HTML ASAR 适用于 Windows 和 Mac；不包含 Electron 或 Windows WFP 辅助程序。更换 Electron、原生组件、密钥、白名单、调试权限、安装器、系统图标或启动加载器／数据目录策略时重新分发完整包。本次 React 迁移后的首次部署应使用完整安装包，后续页面与业务代码仍可通过签名 ASAR 更新。加载器验证签名、文件哈希、版本、构建编号及运行时兼容性，不覆盖原安装目录；新版本启动失败会回退。
+同一份 JS／HTML ASAR 适用于 Windows 和 Mac；不包含 Electron 或 Windows WFP 辅助程序。更换 Electron、原生组件、软件名称、密钥、白名单、调试权限、安装器、系统图标或启动加载器／数据目录策略时重新分发完整包。本次 React 迁移后的首次部署应使用完整安装包，后续页面与业务代码仍可通过签名 ASAR 更新。加载器验证签名、文件哈希、版本、构建编号及运行时兼容性，不覆盖原安装目录；新版本启动失败会回退。
 
 存在未结束或待上传日志时，可查看更新状态，但需先上传并结束所有监考才能安装 ASAR 和重启。此检查包含其他账号的日志。浮窗显示阻止原因、当前版本、更新进度，并允许拖动和收起。
 

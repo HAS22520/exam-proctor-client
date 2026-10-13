@@ -17,6 +17,7 @@ test('bootstrap fixes all Electron paths before an asynchronous migration can yi
   };
   const source = path.resolve(__dirname, '../app/main/bootstrap.js');
   const context: any = { exports: {}, console, __dirname: path.dirname(source), process: { versions: { electron: '44.7.0' } }, require(name) {
+    if (name === '../shared/branding') return require('../app/shared/branding');
     if (name === 'electron') return { app, ipcMain: { removeHandler: () => {} } };
     if (name === './storage') return {
       configureStorage: () => { setPath('sessionData', path.join(root, 'browser')); return { root, directory, previous: '/old' }; },

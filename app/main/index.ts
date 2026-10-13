@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { BrowserWindow, app, dialog, ipcMain, safeStorage, shell } from 'electron';
+import { BrowserWindow, Menu, app, dialog, ipcMain, safeStorage, shell } from 'electron';
 import ActivityProgress = require('./diagnostics/activity-progress');
 import AntiCheatGuard = require('./security/anti-cheat');
 import { validateConfig } from './security/config-policy';
@@ -16,17 +16,19 @@ import { Transport, identity, isNetworkError, proctorErrorMessage } from './proc
 import { ProctorController } from './proctor/proctor-controller';
 import ProctorRequestGuard = require('./proctor/proctor-request-guard');
 import { runtime } from './runtime';
-import { DialogService } from './windows/dialog-service';
+import { DialogService, type ClientDialogOptions } from './windows/dialog-service';
+import { DEFAULT_PRODUCT_NAME, INTERNAL_APP_NAME } from '../shared/branding';
 import { localPreferences, pageFile, requireLocalFrame, secureLocalPage, windowIcon } from './windows/local-page';
 import { hasUnfinishedJournals } from './updates/update-cache';
 import Updater = require('./updates/updater');
 import WaitingWindow = require('./windows/waiting-window');
 
 const running = runtime(app);
-const prompts = new DialogService({ BrowserWindow, ipcMain, dialog });
+const productName = running.identity.productName || DEFAULT_PRODUCT_NAME;
+const prompts = new DialogService({ BrowserWindow, ipcMain, dialog, productName });
 const diagnostics = new Diagnostics();
 const activity = new ActivityProgress({ onChange: publishActivity });
-const waitingWindow = new WaitingWindow(BrowserWindow);
+const waitingWindow = new WaitingWindow(BrowserWindow, productName);
 const trace = (
   level: TraceLevel,
   event: string,
@@ -39,9 +41,9 @@ const trace = (
     if (['identity', 'challenge', 'handshake', 'refresh'].includes(stage)) activity.stage('auth', stage);
   }
 };
-const debugConsole = new DebugConsole(BrowserWindow);
+const debugConsole = new DebugConsole(BrowserWindow, productName);
 
-app.setName('HydroProctorClient');
+app.setName(INTERNAL_APP_NAME);
 let window: BrowserWindow,
   controller: ProctorController,
   network: NetworkGuard,
@@ -97,7 +99,7 @@ function applyWindowFocus() {
   window.setAlwaysOnTop(enforce && config.window?.alwaysOnTop !== false);
 }
 
-async function showExamDialog(options: Electron.MessageBoxOptions, owner = window) {
+async function showExamDialog(options: ClientDialogOptions, owner = window) {
   dialogDepth++;
   try {
     // 在弹窗使父窗口失焦前解除强制抢焦点；取消后再按监考状态恢复。
@@ -201,6 +203,7 @@ function uploadContext(event: Electron.IpcMainInvokeEvent) {
 
 function statusSnapshot(freshUpdates = false): ClientStatus {
   return { ...latestStatus, activity: activity.snapshot(),
+    productName: running.identity.productName || DEFAULT_PRODUCT_NAME,
     update: freshUpdates ? updates?.snapshot() : latestStatus.update,
     debug, root, exitReady, allowRootDebug: !!config?.debug?.allowRoot };
 }
@@ -248,7 +251,7 @@ async function showUploadWindow() {
     useContentSize: true,
     minWidth: 430,
     minHeight: 560,
-    title: '结束监考 · 上传日志',
+    title: `结束监考 · 上传日志 · ${productName}`,
     icon: windowIcon,
     parent: window,
     modal: true,
@@ -376,7 +379,9 @@ async function requestExit() {
       message: '退出客户端还是结束监考？',
       detail:
         '此操作不会代你提交代码。保留日志退出可在下次登录原账号后续写、继续做题，不会结束监考。上传成功后成绩才能有效；选择结束监考后无法继续本场比赛，断网时可补传。',
-      buttons: ['继续考试', '保留日志退出', '上传日志并结束监考'],
+      buttons: ['继续监考', '保留日志退出', '上传日志并结束监考'],
+      primaryIds: [0, 2],
+      secondaryDetail: '保留日志退出不会结束监考，也不会确认成绩；下次登录原账号后可继续监考。',
       defaultId: 0,
       cancelId: 0,
     });
@@ -485,6 +490,11 @@ async function requestExit() {
 app
   .whenReady()
   .then(async () => {
+    app.setAboutPanelOptions?.({ applicationName: productName });
+    if (process.platform === 'darwin') {
+      const menu = Menu?.getApplicationMenu();
+      if (menu?.items[0]) menu.items[0].label = productName;
+    }
     // Check the process token before loading the OJ, recovering old rules or
     // opening protected windows. No automatic PowerShell elevation is used.
     const privilegeGuard = new FirewallGuard({}, null, directory);
@@ -580,7 +590,7 @@ app
     window = new BrowserWindow({
       width: 1280,
       height: 800,
-      title: config.exam.title,
+      title: productName,
       icon: windowIcon,
       autoHideMenuBar: true,
       webPreferences: {
@@ -592,6 +602,12 @@ app
         devTools: true,
         webSecurity: true,
       },
+    });
+    // 页面可更新题目标题，软件名称始终保留在原生窗口标题里。
+    window.on('page-title-updated', (event, title) => {
+      event.preventDefault();
+      const pageTitle = title.trim().slice(0, 160);
+      window.setTitle(pageTitle && pageTitle !== productName ? `${pageTitle} · ${productName}` : productName);
     });
     examNetwork = new ExamNetwork(window.webContents.session, config.exam.allowedOrigins, trace);
     if (process.platform === 'win32') await diagnostics.span('startup.direct-connection', () => examNetwork.prepare());

@@ -40,7 +40,7 @@ export function Panel({ bridge, host }: { bridge: PanelBridge; host: HTMLElement
   const button = (channel: PanelAction, label: string, disabled = false, title?: string, className?: string) =>
     <button disabled={disabled || pending.includes(channel)} data-busy={pending.includes(channel)} title={title} className={className} onClick={() => void action(channel)}>{label}</button>;
   return <div className={`panel${collapsed ? ' collapsed' : ''}`}>
-    <div className="heading" title="拖动标题移动监考面板" {...drag}><span className="brand">HYDRO · 监考</span><span className="badge" data-state={view.state}>{view.badge}</span>
+    <div className="heading" title="拖动标题移动监考面板" {...drag}><span className="brand">{status.productName || '监考客户端'}</span><span className="badge" data-state={view.state}>{view.badge}</span>
       <button className="toggle" aria-label={collapsed ? '展开监考面板' : '收起监考面板'} onClick={() => setCollapsed((old) => !old)}>{collapsed ? '+' : '−'}</button></div>
     <Activity activity={status.activity} compact/>
     <div className="body"><div className="status">{view.title}</div><div className="meta">{view.meta}</div>

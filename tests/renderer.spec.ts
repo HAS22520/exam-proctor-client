@@ -31,6 +31,19 @@ test('React prompts retain explicit defaults and all exit choices; update blocke
   assert.match(activityTiming({ busy: true, kind: 'network', stage: 'restore', label: '恢复', estimatedMinMs: 1000, estimatedMaxMs: 3000 }, 5000), /已等待 5 秒.*超出参考/);
 });
 
+test('finish prompt places continue and upload on equal primary actions and separates non-upload exit without changing response IDs', () => {
+  const html = renderToStaticMarkup(createElement(DialogContent, { busy: false, onRespond: () => {}, model: {
+    title: '结束监考', message: '退出客户端还是结束监考？',
+    buttons: ['继续监考', '保留日志退出', '上传日志并结束监考'], defaultId: 0, cancelId: 0, primaryIds: [0, 2],
+    secondaryDetail: '保留日志退出不会结束监考',
+  } }));
+  const primary = html.match(/<div class="dialog-actions dialog-primary-actions">([\s\S]*?)<\/div>/)[1];
+  assert.match(primary, /继续监考/); assert.match(primary, /上传日志并结束监考/);
+  assert.doesNotMatch(primary, /secondary|tertiary|保留日志退出/);
+  assert.match(html, /class="tertiary"[^>]*>保留日志退出/);
+  assert.match(html, /保留日志退出不会结束监考/);
+});
+
 test('bundled React and sandbox bridges are complete; installer has directory selection, manual finish and persistent data', () => {
   const output = applicationRoot();
   for (const page of ['upload', 'waiting', 'console', 'dialog']) {

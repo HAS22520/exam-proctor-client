@@ -118,6 +118,7 @@ function run(args = process.argv.slice(2), dependencies: DockerDependencies = {}
     stageProject(projectDir, stage);
     for (const name of ['.docker-cache', 'dist']) fs.mkdirSync(path.join(projectDir, name), { recursive: true });
     const publicEnv = {
+      PROCTOR_PRODUCT_NAME: result.productName,
       PROCTOR_KEY_ID: result.trust.keyId,
       PROCTOR_AUTH_PUBLIC_KEY: result.trust.authPublicKey,
       PROCTOR_LOG_PUBLIC_KEY: result.trust.logPublicKey,

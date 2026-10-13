@@ -4,10 +4,14 @@ import { buildVersion as validateBuildVersion } from '../app/main/updates/build-
 import { validateConfig } from '../app/main/security/config-policy';
 import { atomicWrite } from '../app/main/audit/device-store';
 import { applicationRoot, projectRoot } from './project-layout';
+import { validateProductName } from '../app/shared/branding';
 
 const root = projectRoot;
 function prepare(env = process.env, buildRoot = root) {
   const raw = JSON.parse(fs.readFileSync(path.join(buildRoot, 'config/exam-config.json'), 'utf8'));
+  const pkg = JSON.parse(fs.readFileSync(path.join(buildRoot, 'package.json'), 'utf8'));
+  const productName = validateProductName(env.PROCTOR_PRODUCT_NAME ?? pkg.build?.productName);
+  raw.exam.title = productName;
   const parseOrigins = (value: string | undefined, fallback: string[]) => (value ? JSON.parse(value) : fallback);
   const trust = {
     keyId: env.PROCTOR_KEY_ID,
@@ -33,13 +37,14 @@ function prepare(env = process.env, buildRoot = root) {
   delete config.trust;
   atomicWrite(path.join(generated, 'trust.json'), JSON.stringify(normalizedTrust, null, 2));
   atomicWrite(path.join(generated, 'config.json'), JSON.stringify(config, null, 2));
-  const pkg = JSON.parse(fs.readFileSync(path.join(buildRoot, 'package.json'), 'utf8'));
   const version = env.PROCTOR_CLIENT_VERSION || pkg.version;
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('PROCTOR_CLIENT_VERSION must be x.y.z');
   const buildVersion = validateBuildVersion(env.PROCTOR_CLIENT_BUILD_VERSION || pkg.buildVersion);
   const nativeNetworkVersion = 1;
-  atomicWrite(path.join(generated, 'build.json'), JSON.stringify({ version, buildVersion, nativeNetworkVersion }));
-  return { config, trust: normalizedTrust, version, buildVersion, nativeNetworkVersion };
+  atomicWrite(path.join(generated, 'build.json'), JSON.stringify({ version, buildVersion, nativeNetworkVersion, productName }));
+  // 本地页面只读取公开展示名称，脚本与页面一起签名打包，不开放额外文件读取 IPC。
+  atomicWrite(path.join(applicationRoot(buildRoot), 'app/renderer/assets/brand.js'), `window.hydroClientName = ${JSON.stringify(productName)};\n`);
+  return { config, trust: normalizedTrust, version, buildVersion, nativeNetworkVersion, productName };
 }
 if (require.main === module) {
   try {

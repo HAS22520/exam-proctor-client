@@ -70,6 +70,7 @@ function buildEnvironment(filename: string | undefined, env: NodeJS.ProcessEnv) 
     throw new Error('Build config must be a JSON object');
   const fields: Record<string, [string, 'string' | 'file' | 'origins' | 'boolean']> = {
     keyId: ['PROCTOR_KEY_ID', 'string'],
+    productName: ['PROCTOR_PRODUCT_NAME', 'string'],
     version: ['PROCTOR_CLIENT_VERSION', 'string'],
     buildVersion: ['PROCTOR_CLIENT_BUILD_VERSION', 'string'],
     updatePublicKeyFile: ['PROCTOR_UPDATE_PUBLIC_KEY', 'file'],
@@ -149,7 +150,7 @@ async function run(args = process.argv.slice(2), dependencies: BuildDependencies
   const projectDir = dependencies.root || root;
   const nativePlatform = options.win ? 'win32' : options.mac ? 'darwin' : process.platform;
   if (nativePlatform === 'win32' && options.arm64) throw new Error('Windows packages currently support x64 only');
-  const { version, buildVersion } = prepare(env, projectDir);
+  const { version, buildVersion, productName } = prepare(env, projectDir);
   if (options.check) {
     console.log(`Validated proctor build ${version}`);
     return;
@@ -170,7 +171,8 @@ async function run(args = process.argv.slice(2), dependencies: BuildDependencies
     targets: platform.createTarget(target, arch),
     publish: 'never',
     config: {
-      extraMetadata: { version, buildVersion },
+      productName,
+      extraMetadata: { version, buildVersion, productName },
       mac,
       beforePack: async (context: import('app-builder-lib').PackContext) => {
         const prepared = prepare(env, projectDir);
