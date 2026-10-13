@@ -28,7 +28,7 @@ function prepare(env = process.env, buildRoot = root) {
     }
     if (env.PROCTOR_ALLOW_ROOT_DEBUG) {
         if (!['true', 'false'].includes(env.PROCTOR_ALLOW_ROOT_DEBUG)) {
-            throw new Error('PROCTOR_ALLOW_ROOT_DEBUG must be true or false');
+            throw new Error('PROCTOR_ALLOW_ROOT_DEBUG 必须为 true 或 false');
         }
         raw.debug = { allowRoot: env.PROCTOR_ALLOW_ROOT_DEBUG === 'true' };
     }
@@ -39,7 +39,7 @@ function prepare(env = process.env, buildRoot = root) {
     atomicWrite(path.join(generated, 'trust.json'), JSON.stringify(normalizedTrust, null, 2));
     atomicWrite(path.join(generated, 'config.json'), JSON.stringify(config, null, 2));
     const version = env.PROCTOR_CLIENT_VERSION || pkg.version;
-    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('PROCTOR_CLIENT_VERSION must be x.y.z');
+    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('PROCTOR_CLIENT_VERSION 必须为 x.y.z 格式');
     const buildVersion = validateBuildVersion(env.PROCTOR_CLIENT_BUILD_VERSION || pkg.buildVersion);
     const nativeNetworkVersion = 1;
     atomicWrite(path.join(generated, 'build.json'), JSON.stringify({ version, buildVersion, nativeNetworkVersion, productName }));
@@ -50,7 +50,7 @@ function prepare(env = process.env, buildRoot = root) {
 if (require.main === module) {
     try {
         const result = prepare();
-        console.log(`Validated proctor build ${result.version}`);
+        console.log(`监考客户端构建配置已通过校验：${result.version}`);
     } catch (error) {
         console.error(error.message);
         process.exitCode = 1;

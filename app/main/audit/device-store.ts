@@ -42,7 +42,7 @@ class ProtectedStore {
 
   check() {
     if (!this.safeStorage.isEncryptionAvailable() || this.safeStorage.getSelectedStorageBackend?.() === 'basic_text') {
-      throw new Error('OS protected key storage is unavailable; plaintext fallback is forbidden');
+      throw new Error('系统安全密钥存储不可用，禁止回退为明文存储');
     }
   }
 
@@ -66,7 +66,7 @@ class ProtectedStore {
         publicKey: pair.publicKey.export({ type: 'spki', format: 'pem' }).toString(),
         installationId: crypto.randomBytes(32).toString('hex'),
       };
-      // Deliberately excludes IP, hostname, boot time and OS update version.
+      // 环境指纹不包含 IP、主机名、开机时间和系统更新版本。
       device.fingerprint = digest(
         canonical({
           installationId: device.installationId,
@@ -82,14 +82,14 @@ class ProtectedStore {
         device.publicKey ||
       !/^[a-f0-9]{64}$/.test(device.fingerprint || '')
     )
-      throw new Error('Damaged device identity; do not regenerate during an exam');
+      throw new Error('设备身份损坏，考试期间不能重新生成');
     return device;
   }
 }
 
 const deviceInfo = () => ({ platform: process.platform, osVersion: os.release().slice(0, 128), arch: process.arch });
-// Read OS boot identity rather than subtracting wall time and uptime: clock
-// correction must not manufacture a SYSTEM_RESTART event.
+// 读取系统启动标识，不通过当前时间减运行时长计算开机时间，
+// 避免校时被误记为 SYSTEM_RESTART 事件。
 let cachedBootId: string | null = null;
 let bootPending: Promise<string | null>;
 function bootIdentity() {
@@ -124,7 +124,7 @@ function prepareBootIdentity({
           )
         : await read('/proc/sys/kernel/random/boot_id', 'utf8');
       const value = raw.trim();
-      if (!value || value.length > 128 || /[\r\n]/.test(value)) throw new Error('Invalid boot identity');
+      if (!value || value.length > 128 || /[\r\n]/.test(value)) throw new Error('系统启动标识无效');
       cachedBootId = digest(`${platform}:${value}`);
     } catch {
       cachedBootId = null;

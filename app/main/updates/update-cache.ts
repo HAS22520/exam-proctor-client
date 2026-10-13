@@ -11,7 +11,7 @@ interface UpdateAnchor {
   identity: BuildIdentity;
   electronVersion: string;
 }
-// Rename and inspect cached ASAR files without Electron's archive mounting.
+// 重命名和检查缓存 ASAR 时绕过 Electron 的归档挂载。
 
 function journalUpdateState(directory: string) {
   const journals = path.join(directory, 'journals');
@@ -23,8 +23,8 @@ function journalUpdateState(directory: string) {
     if (error.code !== 'ENOENT') counts.unreadable++;
   }
   for (const name of entries) {
-    // Journal IDs are SHA-256 digests. Finder metadata and unrelated files are
-    // not attempts; a missing/broken state within a real journal still blocks.
+    // 日志目录编号为 SHA-256；忽略 Finder 元数据和无关文件。
+    // 真实日志目录中的状态缺失或损坏仍会阻止更新。
     if (!/^[a-f0-9]{64}$/.test(name)) continue;
     try {
       const { phase } = JSON.parse(fs.readFileSync(path.join(journals, name, 'state.json'), 'utf8'));
@@ -79,7 +79,7 @@ class UpdateCache {
   }
   filename(info: UpdatePackage) {
     buildVersion(info.buildVersion);
-    if (!/^[a-f0-9]{64}$/.test(info.sha256 || '')) throw new Error('Invalid cached ASAR hash');
+    if (!/^[a-f0-9]{64}$/.test(info.sha256 || '')) throw new Error('缓存 ASAR 的哈希无效');
     return path.join(this.root, `${info.buildVersion}-${info.sha256}.asar`);
   }
   async validate(info: UpdatePackage) {
@@ -94,7 +94,7 @@ class UpdateCache {
     fs.renameSync(downloaded, destination);
     this.write('pending', info);
   }
-  // A failed first launch is rolled back before trying any downloaded code again.
+  // 首次更新启动失败时，先回退，再考虑执行下载的代码。
   rollback(message: string) {
     const trial = this.read('launch');
     if (trial) {

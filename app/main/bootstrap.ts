@@ -7,7 +7,7 @@ import { ENTRY } from './updates/signed-archive';
 import { UpdateCache } from './updates/update-cache';
 import { INTERNAL_APP_NAME } from '../shared/branding';
 
-// This loader always runs from the original installation, never the cached ASAR.
+// 加载器始终从原安装目录运行，不执行缓存 ASAR 中的加载器。
 
 app.setName(INTERNAL_APP_NAME);
 // 在实例锁和 Chromium session 初始化前设置目录，避免写回默认 AppData。
@@ -42,7 +42,7 @@ app.setName(INTERNAL_APP_NAME);
   try {
     require(selected ? path.join(cache.filename(selected), ENTRY) : './index');
   } catch (error) {
-    // Re-executing native main in the same process would duplicate IPC/listeners.
+    // 在同一进程重新执行主入口会重复注册 IPC 和事件监听器。
     if (selected && cache.read('launch')) {
       cache.rollback(error.message);
       app.relaunch();

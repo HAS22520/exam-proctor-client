@@ -21,8 +21,8 @@ const root = projectRoot;
 function stageProject(projectDir: string, destination: string) {
     const compiled = applicationRoot(projectDir);
     const generated = path.join(compiled, 'app/generated');
-    // Recreate build outputs from this invocation's public configuration. Old
-    // container-owned files may be unreadable and must not carry stale trust.
+    // 根据本次公开配置重新生成构建文件，
+    // 避免读取容器所属的旧文件或带入过期信任配置。
     fs.cpSync(path.join(compiled, 'app'), path.join(destination, 'app'), {
         recursive: true,
         filter: (source) => source !== generated && includeApplicationFile(source, path.join(compiled, 'app')),
@@ -61,7 +61,7 @@ function dockerArguments(
     const cache = path.join(projectDir, '.docker-cache');
     const output = path.join(projectDir, 'dist');
     if ([stage, cache, output].some((value) => value.includes(','))) {
-        throw new Error('Docker bind mount paths cannot contain commas');
+        throw new Error('Docker 挂载路径不能包含逗号');
     }
     const args = ['run', '--rm', '--platform', 'linux/amd64', '--workdir', '/project'];
     if (process.getuid) args.push('--user', `${process.getuid()}:${process.getgid()}`);
@@ -72,7 +72,7 @@ function dockerArguments(
     ]) {
         args.push('--mount', `type=bind,source=${source},target=${target}`);
     }
-    // The container entrypoint owns dependencies; no host node_modules or private PEM files are mounted.
+    // 依赖由容器入口安装，不挂载宿主机 node_modules 或私钥 PEM 文件。
     const variables = {
         ELECTRON_CACHE: '/cache/electron',
         ELECTRON_BUILDER_CACHE: '/cache/builder',
@@ -105,16 +105,16 @@ function run(args = process.argv.slice(2), dependencies: DockerDependencies = {}
     if (options.help) {
         console.log(
             `npm run build:docker -- --config config/build.local.json [--portable | --dir]
-Local Windows x64 build using electronuserland/builder:22-wine. GitHub Actions use native runners.`,
+本地 Windows x64 构建使用 electronuserland/builder:22-wine；GitHub Actions 使用标准原生运行器。`,
         );
         return;
     }
-    if (options.mac || options.arm64) throw new Error('Docker builds support Windows x64 only');
+    if (options.mac || options.arm64) throw new Error('Docker 构建仅支持 Windows x64');
     const projectDir = dependencies.root || root;
     const env = buildEnvironment(options.config, dependencies.env || process.env);
     const result = prepare(env, projectDir);
     if (options.check) {
-        console.log(`Validated Docker proctor build ${result.version}`);
+        console.log(`Docker 监考构建配置已通过校验：${result.version}`);
         return;
     }
     const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'hydro-proctor-docker-'));
@@ -152,16 +152,16 @@ Local Windows x64 build using electronuserland/builder:22-wine. GitHub Actions u
                 { stdio: 'inherit' },
             );
             if (image.error || image.status !== 0) {
-                throw new Error('Docker native builder image failed; check daemon access and MinGW installation');
+                throw new Error('Docker 原生构建镜像生成失败，请检查守护进程权限和 MinGW 安装');
             }
         }
         const child = (dependencies.spawn || spawnSync)('docker', dockerArguments(stage, projectDir, publicEnv, options), {
             stdio: 'inherit',
             env: { ...process.env, ...publicEnv },
         });
-        if (child.error) throw new Error(`Cannot run Docker: ${child.error.message}`);
+        if (child.error) throw new Error(`无法运行 Docker：${child.error.message}`);
         if (child.status !== 0) {
-            throw new Error('Docker build failed. Check Docker daemon access and the container output above.');
+            throw new Error('Docker 构建失败，请检查守护进程权限和上述容器输出');
         }
     } finally {
         fs.rmSync(stage, { recursive: true, force: true });

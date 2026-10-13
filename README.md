@@ -31,7 +31,7 @@ Electron 客户端，使用 `HydroNext-proctor/1` 协议连接 OJ。支持 Windo
 | Secret，可选 | `PROCTOR_UPDATE_PUBLIC_KEY` | 独立的 Ed25519 更新签名公钥；启用 ASAR 更新时需要 |
 | Secret，可选 | `PROCTOR_UPDATE_PRIVATE_KEY` | 对应的更新签名私钥；生成可安装的 ASAR 时需要 |
 
-在 **Actions → Build Hydro proctor client → Run workflow** 填写软件名称 `product_name`、`version`、递增的 `build_version`、OJ 起始地址、考试及更新 origin JSON 数组、更新清单 URL 和 root 调试开关。软件名称填写完整名称，例如“计算机学院监考客户端”。选择构建类型：
+在 **Actions → 构建 Hydro 监考客户端 → Run workflow** 填写软件名称 `product_name`、`version`、递增的 `build_version`、OJ 起始地址、考试及更新 origin JSON 数组、更新清单 URL 和 root 调试开关。软件名称填写完整名称，例如“计算机学院监考客户端”。选择构建类型：
 
 - `installers`：生成 Windows x64 的安装版／便携 EXE，以及 macOS x64、arm64 的 DMG／ZIP，无须更新签名私钥。
 - `asar`：只生成签名应用更新归档，必须配置两项更新密钥。

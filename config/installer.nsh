@@ -33,7 +33,7 @@
       ${EndIf}
       ${If} $R2 != "0"
         FindClose $R0
-        DetailPrint "File is busy, aborting: $R2"
+        DetailPrint "文件正在使用，已取消操作：$R2"
         Push ""
         Call un.restoreFiles
         Pop $R2

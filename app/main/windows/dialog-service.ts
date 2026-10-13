@@ -22,7 +22,7 @@ export class DialogService {
     dependencies.ipcMain.handle('exam:dialog-response', (event, response: unknown, checked: unknown) => {
       const item = this.context(event);
       if (!Number.isSafeInteger(response) || typeof response !== 'number' || response < 0 || response >= item.model.buttons.length || typeof checked !== 'boolean')
-        throw new Error('Invalid dialog response');
+        throw new Error('弹窗操作响应无效');
       item.settle({ response, checkboxChecked: checked });
     });
   }
@@ -74,7 +74,7 @@ export class DialogService {
       window.on('closed', () => settle({ response: model.cancelId, checkboxChecked: !!model.checkboxChecked }));
       contents.once('render-process-gone', () => fail(new Error('提示页面进程已退出，请重试。')));
       contents.once('preload-error', () => fail(new Error('提示页面通信桥加载失败，请重试。')));
-      // Show after content is loaded, then explicitly give the modal focus.
+      // 内容加载完成后再显示弹窗，并主动将焦点交给它。
       window.loadFile(pageFile('dialog')).then(() => {
         if (!settled && !window.isDestroyed()) { window.show(); window.focus(); }
       }).catch(fail);

@@ -8,17 +8,17 @@ const root = projectRoot;
 function execute(command: string, args: string[], cwd: string) {
     const child = spawnSync(command, args, { cwd, stdio: 'inherit' });
     if (child.error || child.status !== 0) {
-        throw new Error(`Native build failed: ${command}. Windows needs MSVC developer tools or MinGW.`);
+        throw new Error(`原生构建失败：${command}。Windows 需要 MSVC 开发工具或 MinGW。`);
     }
 }
 async function buildNative(platform: string, arch: string, env = process.env, project = root) {
-    // macOS uses passive logging and has no native network component.
+    // macOS 只记录日志，不构建原生网络限制组件。
     if (platform === 'darwin') return null;
-    if (platform !== 'win32') throw new Error('Native network builds support Windows only');
+    if (platform !== 'win32') throw new Error('原生网络组件构建仅支持 Windows');
     const output = path.join(project, 'build/native');
     fs.mkdirSync(output, { recursive: true });
     const common = path.join(project, 'native/common/policy.cpp');
-    if (arch !== 'x64') throw new Error('WFP currently supports Windows x64');
+    if (arch !== 'x64') throw new Error('WFP 当前仅支持 Windows x64');
     const filename = path.join(output, 'hydro-network.exe');
     const source = path.join(project, 'native/windows/main.cpp');
     if (process.platform === 'win32') {
@@ -28,6 +28,7 @@ async function buildNative(platform: string, arch: string, env = process.env, pr
                 '/nologo',
                 '/EHsc',
                 '/std:c++17',
+                '/utf-8',
                 '/O2',
                 '/MT',
                 '/D_WIN32_WINNT=0x0A00',

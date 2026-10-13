@@ -10,11 +10,11 @@ import { atomicWrite } from '../audit/device-store';
 import { hasUnfinishedJournals, journalUpdateState } from './update-cache';
 import type { UpdateCache } from './update-cache';
 
-// Update archives are physical files, not Electron's virtual ASAR directories.
+// 更新归档按实际文件处理，不作为 Electron 虚拟 ASAR 目录操作。
 
 function compareVersions(a: string, b: string) {
   if (![a, b].every((value) => typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value)))
-    throw new Error('Invalid update version');
+    throw new Error('更新版本无效');
   const left = a.split('.').map(Number),
     right = b.split('.').map(Number);
   for (let i = 0; i < 3; i++) if (left[i] !== right[i]) return left[i] > right[i] ? 1 : -1;
@@ -84,7 +84,7 @@ class Updater {
       const policy = JSON.parse(fs.readFileSync(this.policyPath, 'utf8'));
       this.minimumBlocked = !!policy.minClientVersion && compareVersions(version, policy.minClientVersion) < 0;
     } catch {
-      /* A corrupt optional cache does not prevent startup. */
+      /* 可选缓存损坏不会阻止启动。 */
     }
   }
 
@@ -114,7 +114,7 @@ class Updater {
   url(value: string, base?: string | URL) {
     const url = secureUrl(new URL(value, base || this.config.updater.versionUrl).href);
     if (!this.config.updater.allowedOrigins.includes(url.origin))
-      throw Object.assign(new Error(`Update address outside compiled allowlist: ${url.origin}`), {
+      throw Object.assign(new Error(`更新地址不在编译时白名单内：${url.origin}`), {
         code: 'UPDATE_ORIGIN_DENIED',
       });
     return url;
@@ -127,15 +127,15 @@ class Updater {
       const response = await this.fetch(url, { redirect: 'manual', signal, credentials: 'omit', cache: 'no-store' });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get('location');
-        if (!location) throw new Error('Missing update redirect');
+        if (!location) throw new Error('更新重定向缺少目标地址');
         url = this.url(location, url);
         continue;
       }
-      if (!response.ok || !response.body) throw new Error('Update download failed');
-      if (Number(response.headers.get('content-length') || 0) > maxBytes) throw new Error('Update exceeds size limit');
+      if (!response.ok || !response.body) throw new Error('更新下载失败');
+      if (Number(response.headers.get('content-length') || 0) > maxBytes) throw new Error('更新文件超过大小限制');
       return response;
     }
-    throw new Error('Too many update redirects');
+    throw new Error('更新重定向次数过多');
   }
 
   async json(primary: string, fallback?: string) {
@@ -147,7 +147,7 @@ class Updater {
         let size = 0;
         for await (const chunk of response.body) {
           size += chunk.length;
-          if (size > 256 * 1024) throw new Error('Update JSON too large');
+          if (size > 256 * 1024) throw new Error('更新 JSON 超过大小限制');
           chunks.push(Buffer.from(chunk));
         }
         return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -155,7 +155,7 @@ class Updater {
         last = error;
       }
     }
-    throw last || new Error('No update URL');
+    throw last || new Error('未配置更新地址');
   }
 
   async downloadPackage(
@@ -169,7 +169,7 @@ class Updater {
       info.size > 240 * 1024 * 1024 ||
       !/^[a-f0-9]{64}$/.test(info.sha256 || '')
     )
-      throw new Error('Invalid update integrity metadata');
+      throw new Error('更新完整性元数据无效');
     let last;
     for (const url of [...new Set([info.asarUrl, info.fallbackUrl].filter(Boolean))]) {
       const temp = `${destination}.tmp`;
@@ -181,7 +181,7 @@ class Updater {
           (async function* () {
             for await (const chunk of response.body) {
               size += chunk.length;
-              if (size > info.size) throw new Error('Update size mismatch');
+              if (size > info.size) throw new Error('更新文件大小不匹配');
               hash.update(chunk);
               progress(Math.floor((size * 100) / info.size));
               yield chunk;
@@ -189,7 +189,7 @@ class Updater {
           })(),
         );
         await pipeline(source, fs.createWriteStream(temp, { mode: 0o600 }));
-        if (size !== info.size || hash.digest('hex') !== info.sha256) throw new Error('Update integrity mismatch');
+        if (size !== info.size || hash.digest('hex') !== info.sha256) throw new Error('更新文件完整性校验失败');
         fs.renameSync(temp, destination);
         return destination;
       } catch (error) {
@@ -197,7 +197,7 @@ class Updater {
         last = error;
       }
     }
-    throw last || new Error('No update package URL');
+    throw last || new Error('未配置更新包地址');
   }
 
   async check({ force = false }: { force?: boolean } = {}) {
@@ -241,8 +241,8 @@ class Updater {
           this.installerUrl = this.url(candidate).href;
         } catch (error) {
           if (error.code !== 'UPDATE_ORIGIN_DENIED') throw error;
-          // An optional installer link must not block a valid manifest/ASAR.
-          // Keep the download button unavailable; never bypass the allowlist.
+          // 可选安装包链接异常不能阻止有效清单和 ASAR 更新。
+          // 禁用相应下载按钮，不能绕过白名单。
           this.installerWarning = `安装包地址未加入更新白名单，已禁用安装包下载：${new URL(candidate, this.config.updater.versionUrl).origin}`;
         }
       let newer;

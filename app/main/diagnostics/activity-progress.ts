@@ -37,7 +37,7 @@ class ActivityProgress {
     this.failure = null;
   }
   snapshot() {
-    // Network setup/recovery explains an authentication wait more precisely.
+    // 认证等待网络设置或恢复时，显示更具体的网络阶段。
     const tasks = [...this.tasks.values()];
     const task = tasks.findLast((item) => item.kind === 'network') || tasks.at(-1);
     if (!task)

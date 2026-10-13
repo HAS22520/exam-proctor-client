@@ -6,112 +6,112 @@ import { run, stageProject } from '../scripts/build-docker';
 import { trust, workspace } from './helpers';
 
 function fixture(t) {
-  const root = workspace(t),
-    source = path.resolve(__dirname, '..');
-  stageProject(source, root);
-  fs.writeFileSync(path.join(root, '.env'), 'PRIVATE_SECRET=must-not-enter-container');
-  fs.writeFileSync(path.join(root, 'config/server-private.pem'), 'PRIVATE KEY');
-  fs.mkdirSync(path.join(root, 'node_modules/parent-only'), { recursive: true });
-  return {
-    root,
-    env: {
-      PROCTOR_AUTH_PUBLIC_KEY: trust.authPublicKey,
-      PROCTOR_LOG_PUBLIC_KEY: trust.logPublicKey,
-      PROCTOR_KEY_ID: trust.keyId,
-      PROCTOR_CLIENT_VERSION: '2.3.4',
-      PROCTOR_CLIENT_BUILD_VERSION: '2026101007',
-      PROCTOR_TARGET_URL: 'https://oj.example.com',
-      PROCTOR_VERSION_URL: 'https://oj.example.com/version.json',
-      PROCTOR_ALLOWED_ORIGINS: '["https://oj.example.com"]',
-      PROCTOR_UPDATE_ORIGINS: '["https://oj.example.com"]',
-      PROCTOR_ALLOW_ROOT_DEBUG: 'true',
-      PROCTOR_PRODUCT_NAME: '容器构建监考客户端',
-    },
-  };
+    const root = workspace(t);
+    const source = path.resolve(__dirname, '..');
+    stageProject(source, root);
+    fs.writeFileSync(path.join(root, '.env'), 'PRIVATE_SECRET=must-not-enter-container');
+    fs.writeFileSync(path.join(root, 'config/server-private.pem'), 'PRIVATE KEY');
+    fs.mkdirSync(path.join(root, 'node_modules/parent-only'), { recursive: true });
+    return {
+        root,
+        env: {
+            PROCTOR_AUTH_PUBLIC_KEY: trust.authPublicKey,
+            PROCTOR_LOG_PUBLIC_KEY: trust.logPublicKey,
+            PROCTOR_KEY_ID: trust.keyId,
+            PROCTOR_CLIENT_VERSION: '2.3.4',
+            PROCTOR_CLIENT_BUILD_VERSION: '2026101007',
+            PROCTOR_TARGET_URL: 'https://oj.example.com',
+            PROCTOR_VERSION_URL: 'https://oj.example.com/version.json',
+            PROCTOR_ALLOWED_ORIGINS: '["https://oj.example.com"]',
+            PROCTOR_UPDATE_ORIGINS: '["https://oj.example.com"]',
+            PROCTOR_ALLOW_ROOT_DEBUG: 'true',
+            PROCTOR_PRODUCT_NAME: '容器构建监考客户端',
+        },
+    };
 }
 
-test('Docker stages only build sources, injects public configuration and isolates dependencies/caches', (t) => {
-  const f = fixture(t);
-  let stage,
-    calls = 0;
-  run(['--win', '--x64', '--portable'], {
-    ...f,
-    spawn: (command, args, options) => {
-      assert.equal(command, 'docker');
-      if (args[0] === 'build') {
-        assert.ok(args.includes('hydro-proctor-builder:22-wine-wfp'));
-        return { status: 0 };
-      }
-      calls++;
-      assert.ok(args.includes('hydro-proctor-builder:22-wine-wfp'));
-      assert.deepEqual(args.slice(-3), ['--win', '--x64', '--portable']);
-      const mounts = args.filter((arg) => arg.startsWith('type=bind,'));
-      assert.equal(mounts.length, 3);
-      stage = mounts.find((arg) => arg.endsWith('target=/project')).match(/source=(.*),target=/)[1];
-      assert.notEqual(stage, f.root);
-      assert.deepEqual(fs.readdirSync(stage).sort(), [
-        'app',
-        'config',
-        'icons',
-        'native',
-        'package-lock.json',
-        'package.json',
-        'scripts',
-      ]);
-      assert.deepEqual(fs.readdirSync(path.join(stage, 'config')).sort(), [
-        'entitlements.mac.plist',
-        'exam-config.json',
-        'installer.nsh',
-      ]);
-      assert.ok(!fs.existsSync(path.join(stage, 'node_modules')));
-      assert.ok(fs.existsSync(path.join(stage, 'app/renderer/console.html')));
-      assert.equal(fs.existsSync(path.join(stage, 'app/generated')), false);
-      assert.equal(options.env.PROCTOR_AUTH_PUBLIC_KEY, trust.authPublicKey);
-      assert.equal(options.env.PROCTOR_CLIENT_VERSION, '2.3.4');
-      assert.equal(options.env.PROCTOR_CLIENT_BUILD_VERSION, '2026101007');
-      assert.equal(options.env.PROCTOR_ALLOW_ROOT_DEBUG, 'true');
-      assert.equal(options.env.PROCTOR_PRODUCT_NAME, '容器构建监考客户端');
-      assert.ok(args.includes('PROCTOR_AUTH_PUBLIC_KEY'));
-      assert.ok(!args.some((arg) => arg.includes('BEGIN PUBLIC KEY')));
-      assert.ok(!args.some((arg) => arg.includes('/home/magneto/code/Hydro/node_modules')));
-      assert.ok(args.includes('WINEPREFIX=/cache/wine'));
-      return { status: 0 };
-    },
-  });
-  assert.equal(calls, 1);
-  assert.equal(fs.existsSync(stage), false);
-});
-
-test('Docker staging omits generated configuration from previous builds', (t) => {
-  const f = fixture(t),
-    destination = path.join(workspace(t), 'stage');
-  fs.mkdirSync(path.join(f.root, 'app/generated'), { recursive: true });
-  fs.writeFileSync(path.join(f.root, 'app/generated/trust.json'), 'stale trust');
-  stageProject(f.root, destination);
-  assert.equal(fs.existsSync(path.join(destination, 'app/generated')), false);
-  assert.ok(fs.existsSync(path.join(destination, 'app/preload/debug.js')));
-});
-
-test('Docker validates before launching, supports pinned images and cleans staging on failure', (t) => {
-  const f = fixture(t);
-  run(['--check'], { ...f, spawn: () => assert.fail('check must not invoke Docker') });
-  for (const args of [['--mac'], ['--arm64']]) assert.throws(() => run(args, f));
-  assert.throws(() => run([], { ...f, env: { ...f.env, PROCTOR_AUTH_PUBLIC_KEY: '' } }));
-  let stage;
-  assert.throws(
-    () =>
-      run([], {
+test('Docker 只暂存构建源码，注入公开配置并隔离依赖和缓存', (t) => {
+    const f = fixture(t);
+    let stage;
+    let calls = 0;
+    run(['--win', '--x64', '--portable'], {
         ...f,
-        env: { ...f.env, PROCTOR_BUILDER_IMAGE: 'electronuserland/builder:22-wine@sha256:pinned' },
-        spawn: (command, args) => {
-          assert.ok(args.includes('electronuserland/builder:22-wine@sha256:pinned'));
-          stage = args.find((arg) => arg.endsWith('target=/project')).match(/source=(.*),target=/)[1];
-          return { status: 1 };
+        spawn: (command, args, options) => {
+            assert.equal(command, 'docker');
+            if (args[0] === 'build') {
+                assert.ok(args.includes('hydro-proctor-builder:22-wine-wfp'));
+                return { status: 0 };
+            }
+            calls++;
+            assert.ok(args.includes('hydro-proctor-builder:22-wine-wfp'));
+            assert.deepEqual(args.slice(-3), ['--win', '--x64', '--portable']);
+            const mounts = args.filter((arg) => arg.startsWith('type=bind,'));
+            assert.equal(mounts.length, 3);
+            stage = mounts.find((arg) => arg.endsWith('target=/project')).match(/source=(.*),target=/)[1];
+            assert.notEqual(stage, f.root);
+            assert.deepEqual(fs.readdirSync(stage).sort(), [
+                'app',
+                'config',
+                'icons',
+                'native',
+                'package-lock.json',
+                'package.json',
+                'scripts',
+            ]);
+            assert.deepEqual(fs.readdirSync(path.join(stage, 'config')).sort(), [
+                'entitlements.mac.plist',
+                'exam-config.json',
+                'installer.nsh',
+            ]);
+            assert.ok(!fs.existsSync(path.join(stage, 'node_modules')));
+            assert.ok(fs.existsSync(path.join(stage, 'app/renderer/console.html')));
+            assert.equal(fs.existsSync(path.join(stage, 'app/generated')), false);
+            assert.equal(options.env.PROCTOR_AUTH_PUBLIC_KEY, trust.authPublicKey);
+            assert.equal(options.env.PROCTOR_CLIENT_VERSION, '2.3.4');
+            assert.equal(options.env.PROCTOR_CLIENT_BUILD_VERSION, '2026101007');
+            assert.equal(options.env.PROCTOR_ALLOW_ROOT_DEBUG, 'true');
+            assert.equal(options.env.PROCTOR_PRODUCT_NAME, '容器构建监考客户端');
+            assert.ok(args.includes('PROCTOR_AUTH_PUBLIC_KEY'));
+            assert.ok(!args.some((arg) => arg.includes('BEGIN PUBLIC KEY')));
+            assert.ok(!args.some((arg) => arg.includes('/home/magneto/code/Hydro/node_modules')));
+            assert.ok(args.includes('WINEPREFIX=/cache/wine'));
+            return { status: 0 };
         },
-      }),
-    /Docker build failed/,
-  );
-  assert.equal(fs.existsSync(stage), false);
+    });
+    assert.equal(calls, 1);
+    assert.equal(fs.existsSync(stage), false);
+});
+
+test('Docker 暂存不带入上次构建的生成配置', (t) => {
+    const f = fixture(t);
+    const destination = path.join(workspace(t), 'stage');
+    fs.mkdirSync(path.join(f.root, 'app/generated'), { recursive: true });
+    fs.writeFileSync(path.join(f.root, 'app/generated/trust.json'), 'stale trust');
+    stageProject(f.root, destination);
+    assert.equal(fs.existsSync(path.join(destination, 'app/generated')), false);
+    assert.ok(fs.existsSync(path.join(destination, 'app/preload/debug.js')));
+});
+
+test('Docker 启动前先校验，支持固定镜像并在失败后清理暂存目录', (t) => {
+    const f = fixture(t);
+    run(['--check'], { ...f, spawn: () => assert.fail('检查模式不能启动 Docker') });
+    for (const args of [['--mac'], ['--arm64']]) assert.throws(() => run(args, f));
+    assert.throws(() => run([], { ...f, env: { ...f.env, PROCTOR_AUTH_PUBLIC_KEY: '' } }));
+    let stage;
+    assert.throws(
+        () =>
+            run([], {
+                ...f,
+                env: { ...f.env, PROCTOR_BUILDER_IMAGE: 'electronuserland/builder:22-wine@sha256:pinned' },
+                spawn: (command, args) => {
+                    assert.ok(args.includes('electronuserland/builder:22-wine@sha256:pinned'));
+                    stage = args.find((arg) => arg.endsWith('target=/project')).match(/source=(.*),target=/)[1];
+                    return { status: 1 };
+                },
+            }),
+        /Docker 构建失败/,
+    );
+    assert.equal(fs.existsSync(stage), false);
 });
 
 export {};

@@ -123,7 +123,7 @@ class Diagnostics {
   persist(entry: DiagnosticEntry) {
     if (!this.file) return;
     const line = `${JSON.stringify(entry)}\n`;
-    // Bounded plain diagnostics are separate from encrypted examination logs.
+    // 限制明文诊断文件大小，并与加密监考日志分开存储。
     if (this.bytes + Buffer.byteLength(line) > 4 * 1024 * 1024) return;
     this.bytes += Buffer.byteLength(line);
     this.pending = this.pending.then(() => fs.promises.appendFile(this.file, line)).catch(() => {});

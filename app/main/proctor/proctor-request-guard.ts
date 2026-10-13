@@ -29,9 +29,9 @@ class ProctorRequestGuard {
     const owner = [...this.controller.records.values()].find(
       (record) => record.auth?.session?.token === token && token,
     );
-    // Also applies to storage redirects and root-debug navigation to external sites.
+    // 同样检查存储重定向和 root 调试模式下的外站导航。
     const sameUser = owner && owner.login.uid === this.controller.current?.login.uid;
-    // Closing attempts still need their native refresh/finish/upload proofs.
+    // 结束中的会话仍需刷新、结束和上传请求的原生证明。
     const protocol = details.method === 'POST' && url.pathname === owner?.context.proctorPath;
     const usable =
       sameUser &&
@@ -67,7 +67,7 @@ class ProctorRequestGuard {
         })),
       };
     } catch (error) {
-      // The OJ returns a content-free 403 page, including on a deep link/refresh.
+      // OJ 在直接访问和刷新时也会返回不含题目内容的 403 页面。
       this.controller.trace?.('warn', 'request.authentication-failed', {
         url: details.url,
         name: error.name,

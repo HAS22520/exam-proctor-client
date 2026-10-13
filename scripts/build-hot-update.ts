@@ -8,16 +8,16 @@ import { buildEnvironment } from './build';
 import { prepare } from './prepare-build';
 import { applicationRoot, includeApplicationFile, projectRoot, runtimePackage } from './project-layout';
 
-const help = `Usage: npm run release:hot -- [--config FILE] [--sign-key FILE] [--help]
+const help = `用法：npm run release:hot -- [--config FILE] [--sign-key FILE] [--help]
 
---config FILE  Read build JSON; public key paths are relative to this file.
---sign-key FILE Ed25519 update signing PRIVATE key, e.g. update-private.pem (never embedded).
---help         Show this help without requiring keys.
+--config FILE   读取构建 JSON，公钥路径相对于配置文件。
+--sign-key FILE 传入 Ed25519 更新签名私钥，例如 update-private.pem；私钥不进入客户端。
+--help          显示帮助，无需密钥。
 
-PROCTOR_* environment variables override JSON settings.
-Outputs: updates/app-<version>-<buildVersion>.asar and matching JSON.
-Signed archives can be applied by clients with the same embedded update public key.
-Electron, native scripts and trust changes require full installers.`;
+PROCTOR_* 环境变量优先于 JSON 配置。
+产物：updates/app-<version>-<buildVersion>.asar 及对应 JSON。
+签名归档仅供内置相同更新公钥的客户端使用。
+更换 Electron、原生组件或信任配置时，需要发布完整安装包。`;
 function readSigningKey(pem: string) {
     if (/-----BEGIN (?:RSA )?PUBLIC KEY-----/.test(pem)) {
         throw new Error(
@@ -36,14 +36,14 @@ function readSigningKey(pem: string) {
     return key;
 }
 async function buildArchive(env = process.env, root = projectRoot) {
-    // Validate before generating config, staging source or creating output files.
+    // 先校验，再生成配置、暂存源码或创建发布文件。
     const key = env.PROCTOR_UPDATE_PRIVATE_KEY ? readSigningKey(env.PROCTOR_UPDATE_PRIVATE_KEY) : null;
     const { version, buildVersion, trust, nativeNetworkVersion } = prepare(env, root);
     if (env.PROCTOR_REQUIRE_SIGNED_UPDATE === 'true' && !env.PROCTOR_UPDATE_PRIVATE_KEY) {
-        throw new Error('Signed ASAR requires PROCTOR_UPDATE_PRIVATE_KEY');
+        throw new Error('签名 ASAR 需要设置 PROCTOR_UPDATE_PRIVATE_KEY');
     }
     if (env.PROCTOR_UPDATE_PRIVATE_KEY && !trust.updatePublicKey) {
-        throw new Error('Signed ASAR requires an independent PROCTOR_UPDATE_PUBLIC_KEY');
+        throw new Error('签名 ASAR 需要设置独立的 PROCTOR_UPDATE_PUBLIC_KEY');
     }
     const asar = require('@electron/asar');
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'hydro-proctor-asar-'));
@@ -67,7 +67,7 @@ async function buildArchive(env = process.env, root = projectRoot) {
                     const source = path.join(directory, name);
                     const relative = prefix + name;
                     const stat = fs.lstatSync(source);
-                    if (stat.isSymbolicLink()) throw new Error('ASAR does not support symlinks');
+                    if (stat.isSymbolicLink()) throw new Error('ASAR 不支持符号链接');
                     if (stat.isDirectory()) collect(source, `${relative}/`);
                     else {
                         files.push({
@@ -90,7 +90,7 @@ async function buildArchive(env = process.env, root = projectRoot) {
             };
             const signature = sign(payload, key);
             if (!verify(payload, signature, trust.updatePublicKey)) {
-                throw new Error('Update signing key does not match embedded public key');
+                throw new Error('更新签名私钥与内置公钥不匹配');
             }
             fs.writeFileSync(path.join(staging, 'release.json'), JSON.stringify({ payload, signature }));
         }
@@ -120,14 +120,14 @@ async function run(
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '--help') showHelp = true;
         else if (args[i] === '--config') {
-            if (config || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('--config requires exactly one file');
+            if (config || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error('--config 必须指定且只能指定一个配置文件');
             config = args[++i];
         } else if (args[i] === '--sign-key') {
             if (signKey || !args[i + 1] || args[i + 1].startsWith('--')) {
-                throw new Error('--sign-key requires exactly one file');
+                throw new Error('--sign-key 必须指定且只能指定一个私钥文件');
             }
             signKey = args[++i];
-        } else throw new Error(`Unsupported ASAR build option: ${args[i]}`);
+        } else throw new Error(`不支持的 ASAR 构建选项：${args[i]}`);
     }
     const log = dependencies.log || console.log;
     if (showHelp) {

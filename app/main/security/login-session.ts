@@ -1,6 +1,6 @@
 async function resetLogin(session: Pick<Electron.Session, 'clearStorageData' | 'clearAuthCache' | 'cookies'>) {
-  // This partition belongs only to the exam client. Preserve local drafts,
-  // encrypted journals and OS-protected device identity for offline recovery.
+  // 此分区只属于监考客户端；保留本地草稿、
+  // 加密日志和受系统保护的设备身份，以便离线恢复。
   await session.clearStorageData({ storages: ['cookies', 'serviceworkers', 'cachestorage'] });
   await session.clearAuthCache();
   await session.cookies.flushStore();

@@ -30,5 +30,5 @@ int main() {
     for (int i = 0; i < 1025; ++i) tooMany += "127.0.0.1|443;";
     assert(rejects(tooMany));
     assert(rejects(std::string(65537, 'a')));
-    std::cout << "Windows endpoint policy tests passed" << std::endl;
+    std::cout << "Windows 网络端点策略测试通过" << std::endl;
 }

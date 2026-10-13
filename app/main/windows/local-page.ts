@@ -20,5 +20,5 @@ export function secureLocalPage(window: Electron.BrowserWindow) {
 }
 export function requireLocalFrame(window: Electron.BrowserWindow, page: LocalPage, event: Electron.IpcMainInvokeEvent) {
   if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
-    || event.senderFrame.url !== pathToFileURL(pageFile(page)).href) throw new Error(`${page} IPC requires its trusted local main frame`);
+    || event.senderFrame.url !== pathToFileURL(pageFile(page)).href) throw new Error(`${page} IPC 请求必须来自受信任的本地主页面`);
 }

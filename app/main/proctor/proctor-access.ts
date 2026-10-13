@@ -54,10 +54,10 @@ function accessRequest(request: ProofRequest, source: RouteContext) {
     !request.payload ||
     !/^[a-f0-9]{24}$/.test((request.payload.tid as string) || '')
   )
-    throw new Error('Invalid proctor access request');
+    throw new Error('监考读取请求无效');
   const url = new URL(request.path, source.origin);
   if (url.pathname !== request.path || url.search || url.hash || url.origin !== source.origin)
-    throw new Error('Invalid proctor access path');
+    throw new Error('监考读取路径无效');
   if (request.action === 'problem_view') url.searchParams.set('tid', request.payload.tid as string);
   const target = accessTarget(url.href);
   if (
@@ -68,7 +68,7 @@ function accessRequest(request: ProofRequest, source: RouteContext) {
     Object.keys(request.payload).sort().join(',') !== Object.keys(target.payload).sort().join(',') ||
     Object.entries(target.payload).some(([key, value]) => request.payload[key] !== value)
   )
-    throw new Error('Proctor access is outside the current domain/contest');
+    throw new Error('监考读取请求不属于当前域或比赛');
   return target;
 }
 

@@ -1,6 +1,6 @@
 #pragma once
-// Windows SDK ABI identifiers missing from MinGW-w64 11 fwpmu.h.
-// Source: microsoft/win32metadata generation/WinSDK/RecompiledIdlHeaders/um/fwpmu.h
+// 补充 MinGW-w64 11 的 fwpmu.h 缺少的 Windows SDK ABI 标识符。
+// 来源：microsoft/win32metadata 的 generation/WinSDK/RecompiledIdlHeaders/um/fwpmu.h。
 #ifdef __MINGW32__
 #define FWPM_SESSION_FLAG_DYNAMIC 0x00000001
 inline const GUID FWPM_LAYER_ALE_AUTH_CONNECT_V4 = {0xc38d57d1, 0x05a7, 0x4c33, 0x90, 0x4f, 0x7f, 0xbc, 0xee, 0xe6, 0x0e, 0x82};

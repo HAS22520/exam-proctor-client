@@ -31,7 +31,7 @@ class Transport {
   ) {
     const url = new URL(path, this.origin);
     if (url.origin !== this.origin || !path.startsWith('/') || path.startsWith('//'))
-      throw new Error('Invalid protocol target');
+      throw new Error('协议请求目标无效');
     const started = Date.now();
     const details = { url: url.href, method, operation };
     this.trace('info', 'protocol.request', details);
@@ -48,9 +48,9 @@ class Transport {
       });
       const type = response.headers.get('content-type') || '';
       if (response.status >= 300 && response.status < 400)
-        throw new ProctorError('Login or redirect requires attention', response.status);
+        throw new ProctorError('登录或重定向状态异常，请重新登录', response.status);
       if (!type.includes('application/json'))
-        throw new ProctorError('Server did not return protocol JSON', response.status);
+        throw new ProctorError('服务端未返回协议要求的 JSON', response.status);
       const raw = await response.text();
       const result = parseReply(raw, response.status, type);
       this.trace('info', 'protocol.response', {

@@ -1,9 +1,9 @@
-name: Build Hydro proctor client
+name: 构建 Hydro 监考客户端
 on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: Build installers, ASAR application archive, or both
+        description: 构建安装包、ASAR 更新归档或两者
         type: choice
         required: true
         default: all
@@ -12,31 +12,31 @@ on:
           - installers
           - asar
       version:
-        description: Client version (must match OJ proctor settings)
+        description: 客户端版本，必须与 OJ 监考设置一致
         required: true
         default: '1.0.0'
       product_name:
-        description: Full software name ending with 监考客户端
+        description: 完整软件名称，须以“监考客户端”结尾
         required: true
         default: '在线监考客户端'
       build_version:
-        description: Increasing YYYYMMDDNN build identifier (10 digits)
+        description: 递增的 YYYYMMDDNN 构建编号，须为 10 位字符串
         required: true
         default: '2026101001'
       target_url:
-        description: OJ start URL
+        description: OJ 起始页面 URL
         required: true
       allowed_origins:
-        description: Allowed exam origins as a JSON array
+        description: 允许访问的考试来源，填写 JSON 数组
         required: true
       update_origins:
-        description: Allowed update origins as a JSON array
+        description: 允许访问的更新来源，填写 JSON 数组
         required: true
       version_url:
-        description: OJ version.json URL
+        description: OJ 更新清单 version.json 的 URL
         required: true
       allow_root_debug:
-        description: Allow signed Hydro root login to enable debug mode
+        description: 允许经签名验证的 Hydro root 登录开启调试模式
         type: boolean
         default: false
 permissions:
@@ -84,7 +84,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Check TypeScript
+      - name: 检查 TypeScript 类型
         run: npm run typecheck
       - uses: ilammy/msvc-dev-cmd@v1
         if: matrix.platform == 'win'
@@ -92,7 +92,7 @@ jobs:
       - run: npm run test:updates:electron
       - run: npm run test:native
         if: matrix.platform == 'win'
-      - name: Build installers
+      - name: 构建安装包
         run: npm run dist -- --${{ matrix.platform }} --${{ matrix.arch }} --publish=never
         env:
           CSC_LINK: ${{ secrets[matrix.csc_link] }}
@@ -121,7 +121,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Check TypeScript
+      - name: 检查 TypeScript 类型
         run: npm run typecheck
       - run: npm test
       - run: npm run test:updates:electron

@@ -18,11 +18,11 @@ class DecryptLogTests(unittest.TestCase):
     def setUpClass(cls):
         cls.fixture = tempfile.TemporaryDirectory()
         cls.folder = Path(cls.fixture.name)
-        # Generate a real finalized log with the Electron client's existing journal implementation.
+        # 使用客户端现有日志实现生成真实的最终加密日志。
         subprocess.run(["node", "-e", """
 const fs = require('node:fs'), path = require('node:path');
 const { logs, auth, trust, store, decryptLog } = require('./tests/helpers');
-const AuditLogger = require('./app/main/audit-logger');
+const AuditLogger = require('./app/main/audit/audit-logger');
 const dir = process.argv[1];
 (async () => {
   const journal = new AuditLogger({ directory: path.join(dir, 'journal'), protectedStore: store(path.join(dir, 'secrets')),
@@ -34,7 +34,7 @@ const dir = process.argv[1];
   fs.writeFileSync(path.join(dir, 'auth-private.pem'), auth.privateKey.export({ type: 'pkcs8', format: 'pem' }));
   fs.writeFileSync(path.join(dir, 'expected.json'), JSON.stringify(decryptLog(file)));
 })().catch(error => { console.error(error); process.exitCode = 1; });
-""", str(cls.folder)], cwd=ROOT, check=True, capture_output=True)
+""", str(cls.folder)], cwd=ROOT / "out", check=True, capture_output=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -99,6 +99,17 @@ const dir = process.argv[1];
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("PRIVATE KEY", result.stderr)
         self.assertFalse(self.output.exists())
+
+    def test_cli_uses_chinese_help_and_argument_errors(self):
+        command = ["python3", str(ROOT / "tools/decrypt-log.py")]
+        help_result = subprocess.run(command + ["--help"], capture_output=True, text=True)
+        self.assertEqual(help_result.returncode, 0)
+        self.assertIn("用法：", help_result.stdout)
+        self.assertIn("日志私钥", help_result.stdout)
+        self.assertNotIn("usage:", help_result.stdout)
+        missing = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("参数错误", missing.stderr)
 
 
 if __name__ == "__main__":

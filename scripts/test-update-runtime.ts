@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { applicationRoot } from './project-layout';
 
-// Run only filesystem/update tests in Electron's Node mode; no windows or UI.
+// 只在 Electron 的 Node 模式运行文件系统和更新测试，不创建窗口或进行 UI 验收。
 const electron = require('electron');
 const child = spawnSync(electron, ['--test', 'tests/asar-filesystem.spec.js'], {
     cwd: applicationRoot(),

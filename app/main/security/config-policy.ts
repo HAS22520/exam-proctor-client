@@ -9,20 +9,20 @@ function secureUrl(value: string) {
     !['https:', 'http:'].includes(url.protocol) ||
     (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
   ) {
-    throw new Error('Remote addresses require HTTPS (HTTP is allowed only on localhost)');
+    throw new Error('远端地址必须使用 HTTPS，只有本机回环地址允许 HTTP');
   }
   return url;
 }
 
 function origins(values: string[]) {
   if (!Array.isArray(values) || !values.length || values.length > 100)
-    throw new Error('Configure allowed remote origins');
+    throw new Error('请配置允许访问的远端来源');
   return [
     ...new Set(
       values.map((value) => {
         const url = secureUrl(value);
         if (url.pathname !== '/' || url.search || url.hash)
-          throw new Error('Allowed addresses must be origins, without paths');
+          throw new Error('允许地址必须是完整来源，不能包含路径');
         return url.origin;
       }),
     ),
@@ -38,12 +38,12 @@ function validateConfig(
   const trust = validateTrust(buildTrust);
   const allowed = origins(trust.allowedOrigins);
   const target = secureUrl(raw?.exam?.targetUrl);
-  if (!allowed.includes(target.origin)) throw new Error('Exam origin is outside the build allowlist');
+  if (!allowed.includes(target.origin)) throw new Error('考试地址不在编译时白名单内');
   const updateOrigins = origins(trust.updateOrigins || allowed);
   const updater = { ...raw.updater };
   for (const key of ['versionUrl', 'fallbackVersionUrl'] as const) {
     if (updater[key] && !updateOrigins.includes(secureUrl(updater[key]).origin))
-      throw new Error('Untrusted update origin');
+      throw new Error('更新地址不在信任范围内');
   }
   return {
     ...raw,
@@ -60,7 +60,7 @@ function contextFromUrl(value: string): RouteContext {
   const path = url.pathname.slice(prefix.length);
   const tid = path.match(/^\/contest\/([a-f0-9]{24})(?:\/|$)/)?.[1] || url.searchParams.get('tid') || '';
   const problem = path.match(/^\/p\/([^/]+)(?:\/submit)?$/)?.[1] || '';
-  if (tid && !/^[a-f0-9]{24}$/.test(tid)) throw new Error('Invalid contest ID');
+  if (tid && !/^[a-f0-9]{24}$/.test(tid)) throw new Error('比赛编号无效');
   return {
     origin: url.origin,
     prefix,

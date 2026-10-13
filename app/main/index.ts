@@ -121,7 +121,7 @@ function loadConfig() {
   if (!fs.existsSync(cache)) return validateConfig(base, trust);
   try {
     const remote = JSON.parse(fs.readFileSync(cache, 'utf8'));
-    // Remote config cannot enable debugging or change the compiled trust boundary.
+    // 远端配置不能开启调试模式或改变编译时确定的信任边界。
     return validateConfig({ ...base, ...remote, debug: base.debug }, trust);
   } catch {
     return validateConfig(base, trust);
@@ -191,9 +191,9 @@ function requireDebug() {
 
 function ipcContext(event: Electron.IpcMainInvokeEvent) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)
-    throw new Error('IPC requires the exam main frame');
+    throw new Error('IPC 请求必须来自考试主页面');
   const url = new URL(event.senderFrame.url);
-  if (!config.exam.allowedOrigins.includes(url.origin)) throw new Error('IPC requires a trusted OJ origin');
+  if (!config.exam.allowedOrigins.includes(url.origin)) throw new Error('IPC 请求必须来自受信任的 OJ 来源');
   return url.href;
 }
 
@@ -326,7 +326,7 @@ async function syncLogin(force = false) {
 }
 
 async function pageLoadFailed(code: number, message: string, url: string, isMainFrame: boolean) {
-  if (code === -3) return; // Aborted navigations are normal during redirects/reloads.
+  if (code === -3) return; // 重定向或重新加载时取消导航属于正常行为。
   trace('error', 'page.load-failed', { code, message, url });
   if (
     !startupReady ||
@@ -445,8 +445,8 @@ async function requestExit() {
           networkWarning =
             '系统网络尚未确认恢复。WFP 临时规则会在网络辅助进程退出后由系统清理；若仍无法联网，请退出客户端后检查系统网络设置。';
           diagnostics.error('exit.network-recovery-deferred', error);
-          // Seal evidence and attempt the allowlisted OJ upload even if Windows
-          // recovery fails. Do not resume the exam or trigger another UAC loop.
+          // 即使 Windows 网络恢复失败，也封存证据并尝试向允许的 OJ 上传。
+          // 此时不能恢复考试或反复触发 UAC 提权。
           publishStatus({ ...latestStatus, message: networkWarning });
         }
       }),
@@ -475,7 +475,7 @@ async function requestExit() {
       uploadWindow && !uploadWindow.isDestroyed() ? uploadWindow : window,
     );
     exiting = false;
-    // Closing attempts stay closed; retry sealing/upload instead of resuming access.
+    // 已进入结束流程的会话只重试封存和上传，不恢复考试访问。
     controller.finishing = false;
     if (uploadWindow && !uploadWindow.isDestroyed()) {
       uploadWindow.destroy();
@@ -495,8 +495,8 @@ app
       const menu = Menu?.getApplicationMenu();
       if (menu?.items[0]) menu.items[0].label = productName;
     }
-    // Check the process token before loading the OJ or opening protected windows.
-    // The native helper never requests automatic elevation.
+    // 加载 OJ 或打开受保护窗口前，先检查进程权限。
+    // 原生辅助进程不会自动请求提权。
     const privilegeGuard = new FirewallGuard({}, null);
     try {
       await privilegeGuard.checkPrivileges();
@@ -522,8 +522,8 @@ app
       waitingWindow.context(event);
       return activity.snapshot();
     });
-    // Show a local React status window only when preparation takes long enough to be
-    // noticeable. Network recovery still finishes before any OJ page is loaded.
+    // 准备耗时明显时才打开本地 React 进度窗口；
+    // 网络恢复始终先于 OJ 页面加载完成。
     preparationTimer = setTimeout(
       () => waitingWindow.show().catch((error) => diagnostics.error('startup.progress-failed', error)),
       350,
@@ -678,7 +678,7 @@ app
       try {
         return await controller.headers(url, request);
       } catch (error) {
-        // Electron IPC serializes Error.message, but drops publicMessage and code.
+        // Electron IPC 只保留 Error.message，不保留 publicMessage 和 code。
         if (error.publicMessage || isNetworkError(error))
           throw new Error(proctorErrorMessage(error, running.identity.version));
         throw error;
@@ -710,7 +710,7 @@ app
     ipcMain.handle('exam:debug-logs', (event, after) => {
       debugConsole.context(event);
       requireDebug();
-      if (!Number.isSafeInteger(after) || after < 0) throw new Error('Invalid debug cursor');
+      if (!Number.isSafeInteger(after) || after < 0) throw new Error('诊断日志读取位置无效');
       return diagnostics.snapshot(after);
     });
     ipcMain.handle('exam:debug-devtools', (event) => {
@@ -743,7 +743,7 @@ app
     const settled = (details: Electron.OnCompletedListenerDetails & { error?: string }) => {
       const read = requestMethods.get(details.id) === 'GET';
       requestMethods.delete(details.id);
-      // Chromium ends URLRequest with ERR_WS_UPGRADE after a successful upgrade.
+      // WebSocket 升级成功后，Chromium 会以 ERR_WS_UPGRADE 结束 URLRequest。
       const upgraded =
         details.error === 'net::ERR_WS_UPGRADE' && details.statusCode === 101 && /^wss?:/.test(details.url);
       const failure = details.error && details.error !== 'net::OK' && !upgraded ? details.error : undefined;
@@ -795,7 +795,7 @@ app
     waitingWindow.close();
     running.markReady();
     if (running.failure) trace('warn', 'update.rollback', running.failure);
-    // Fetching a manifest must never delay login/contest authentication.
+    // 获取更新清单不能延迟登录和比赛认证。
     if (config.updater.enabled)
       setTimeout(
         () =>
@@ -839,5 +839,5 @@ app.on('before-quit', (event) => {
   }
 });
 app.on('will-quit', () => firewall?.close());
-// Normal exit awaits restoration in requestExit. Forced exit is covered by the elevated watchdog;
-// asynchronous subprocesses cannot be awaited from Node's exit event.
+// 正常退出在 requestExit 中等待网络恢复；强制退出由管理员权限的守护进程处理。
+// Node 的 exit 事件无法等待异步子进程结束。

@@ -53,7 +53,7 @@ function submission(request: ProofRequest, context: RouteContext, login: LoginId
     !context.tid ||
     !context.problem
   )
-    throw new Error('Invalid proctor submission target');
+    throw new Error('监考提交目标无效');
   const p = request.payload as Partial<SubmissionPayload>;
   if (
     !p ||
@@ -73,7 +73,7 @@ function submission(request: ProofRequest, context: RouteContext, login: LoginId
     typeof p.fileHash !== 'string' ||
     (p.fileHash !== '' && !/^[a-f0-9]{64}$/.test(p.fileHash))
   ) {
-    throw new Error('Invalid proctor submission payload');
+    throw new Error('监考提交内容无效');
   }
   return p as SubmissionPayload;
 }
@@ -171,7 +171,7 @@ class ProctorController {
 
   identityKey(url: string) {
     const { origin, prefix, tid, problem } = contextFromUrl(url);
-    if (!this.config.exam.allowedOrigins.includes(origin)) throw new Error('Untrusted exam origin');
+    if (!this.config.exam.allowedOrigins.includes(origin)) throw new Error('考试地址不在信任范围内');
     return canonical({ origin, prefix, tid, problem });
   }
 
@@ -204,7 +204,7 @@ class ProctorController {
           if (['closing', 'pending-upload'].includes(state.phase) && state.binding.uid === this.current?.login.uid)
             pendingUploads++;
         } catch {
-          /* Damaged states are handled by recovery, never replaced here. */
+          /* 损坏状态交由恢复流程处理，此处不能直接覆盖。 */
         }
       }
     const ended = !!active?.completed || (!!active?.journal && active.journal.state.phase !== 'open');
@@ -293,7 +293,7 @@ class ProctorController {
 
   async syncNow(url: string, epoch: number) {
     const context = contextFromUrl(url);
-    if (!this.config.exam.allowedOrigins.includes(context.origin)) throw new Error('Untrusted exam origin');
+    if (!this.config.exam.allowedOrigins.includes(context.origin)) throw new Error('考试地址不在信任范围内');
     const transport = this.createTransport(context.origin);
     let login;
     try {
@@ -418,7 +418,7 @@ class ProctorController {
       });
       const session = await auth.ensure();
       if (session.completed) continue;
-      if (session.attemptId !== state.binding.attemptId) throw new Error('Restored attempt mismatch');
+      if (session.attemptId !== state.binding.attemptId) throw new Error('恢复的监考会话编号不匹配');
       const journal = new AuditLogger({
         directory,
         binding: state.binding,
@@ -482,8 +482,8 @@ class ProctorController {
     if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
     if (session.completed || this.finishing) throw new Error('本场监考已结束');
     this.status();
-    // The actual protected GET validates the live attempt on the OJ. A second
-    // status round trip per resource adds latency without authorizing anything.
+    // 实际受保护的 GET 请求会在 OJ 校验当前监考会话；
+    // 每个资源额外查询一次状态只会增加延迟，不会提供额外授权。
     record.journal.append(request.action === 'problem_view' ? 'PROBLEM_VIEW' : 'CONTEST_VIEW', target.payload);
     return record.auth.proof(request.action, request.path, target.payload, 'GET');
   }
@@ -527,7 +527,7 @@ class ProctorController {
     }
     const session = await record.auth.ensure();
     if (session.completed) {
-      if (!(await this.confirmedUpload(record, sha256))) throw new Error('Server receipt does not match the local log');
+      if (!(await this.confirmedUpload(record, sha256))) throw new Error('服务端回执与本地日志不匹配');
       this.progress('complete', record, { percent: 100 });
       return;
     }
@@ -541,7 +541,7 @@ class ProctorController {
         headers: record.auth.proof('upload', record.context.proctorPath, { filename: uploadName, size, sha256 }),
       });
       if (result.ok !== true || !/^[a-f0-9]{24}$/.test(result.receipt || ''))
-        throw new Error('Missing log upload receipt');
+        throw new Error('缺少日志上传回执');
       record.journal.uploaded(result.receipt);
       this.progress('complete', record, { sent: size, total: size, percent: 100 });
     } catch (error) {
@@ -553,7 +553,7 @@ class ProctorController {
   async pause() {
     if (this.finishing) throw new Error('日志仍在处理中');
     this.finishing = true;
-    // Stop new proofs first, allow already queued authentication/submissions to settle.
+    // 先停止生成新证明，再等待已排队的认证和提交完成。
     await this.proofPending.catch(() => {});
     if (this.syncPending) await this.syncPending.catch(() => {});
     const deadline = Date.now() + 30000;
@@ -562,7 +562,7 @@ class ProctorController {
       if (record.journal?.state.phase === 'open')
         record.journal.append('CLIENT_PAUSED', { reason: 'exit-without-upload' });
     }
-    // Keep open attempts open: no finish RPC, sealing, upload or new attempt ID.
+    // 暂停时保持会话开放，不发送结束请求、不封存上传日志，也不生成新会话编号。
     this.status('日志已保留，重新登录原账号后可继续监考；上传成功才算结束');
   }
 
@@ -570,7 +570,7 @@ class ProctorController {
     if (this.finishing) return false;
     this.finishing = true;
     this.progress('closing');
-    // Disable new proofs before awaiting asynchronous network restoration.
+    // 等待异步网络恢复前，先禁止生成新证明。
     await beforeFinish();
     await this.proofPending;
     if (this.syncPending) await this.syncPending.catch(() => {});

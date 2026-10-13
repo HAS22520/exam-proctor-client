@@ -5,11 +5,11 @@ async function main() {
     const [major, minor] = process.versions.node.split('.').map(Number);
     if (major < 22 || (major === 22 && minor < 12)) {
         throw new Error(
-            'Builder container requires Node.js 22.12+. Set PROCTOR_BUILDER_IMAGE to a compatible electronuserland/builder Wine image.',
+            '构建容器需要 Node.js 22.12+，请将 PROCTOR_BUILDER_IMAGE 设置为兼容的 electronuserland/builder Wine 镜像',
         );
     }
     const install = spawnSync('npm', ['ci', '--cache', '/cache/npm'], { stdio: 'inherit' });
-    if (install.error || install.status !== 0) throw new Error('Container npm ci failed');
+    if (install.error || install.status !== 0) throw new Error('容器内 npm ci 安装依赖失败');
     const { build } = require('electron-builder');
     await run(process.argv.slice(2), {
         build: (

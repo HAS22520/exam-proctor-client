@@ -14,7 +14,7 @@ function canonical(value: unknown): string {
       .map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`)
       .join(',')}}`;
   }
-  throw new TypeError('Invalid protocol JSON value');
+  throw new TypeError('协议 JSON 数据无效');
 }
 
 const digest = (value: crypto.BinaryLike) => crypto.createHash('sha256').update(value).digest('hex');
@@ -33,17 +33,17 @@ function verify(payload: unknown, signature: unknown, key: crypto.KeyLike) {
 
 function publicKey(pem: string, type: 'ed25519' | 'rsa') {
   if (typeof pem !== 'string' || !pem.startsWith('-----BEGIN PUBLIC KEY-----') || pem.includes('PRIVATE KEY')) {
-    throw new Error('Build requires SPKI public keys, never private keys');
+    throw new Error('构建必须使用 SPKI 公钥，不能传入私钥');
   }
   const key = crypto.createPublicKey(pem);
   if (key.asymmetricKeyType !== type || (type === 'rsa' && key.asymmetricKeyDetails.modulusLength !== 3072)) {
-    throw new Error(`Invalid ${type} public key`);
+    throw new Error(`${type} 公钥无效`);
   }
   return key.export({ type: 'spki', format: 'pem' }).toString();
 }
 
 function validateTrust(raw: Trust): Trust {
-  if (!raw || !/^[a-f0-9]{32}$/.test(raw.keyId || '')) throw new Error('Invalid proctor keyId');
+  if (!raw || !/^[a-f0-9]{32}$/.test(raw.keyId || '')) throw new Error('监考认证 keyId 无效');
   return {
     ...raw,
     authPublicKey: publicKey(raw.authPublicKey, 'ed25519'),
@@ -66,11 +66,11 @@ function verifyEnvelope<T extends object = Record<string, unknown>>(
     !verify(payload, envelope.signature, key) ||
     Object.entries(expected).some(([field, value]) => canonical(payload[field]) !== canonical(value))
   ) {
-    throw new Error('Server signature or identity mismatch');
+    throw new Error('服务端签名或身份不匹配');
   }
   const expiry = Date.parse(payload.expiresAt as string);
   if (!Number.isFinite(expiry) || expiry <= Date.now() || expiry > Date.now() + maxLifetime + 60000) {
-    throw new Error('Server response expired or invalid');
+    throw new Error('服务端响应已过期或无效');
   }
   return payload as T;
 }

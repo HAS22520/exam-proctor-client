@@ -36,11 +36,11 @@ FWPM_FILTER_CONDITION0 number(const GUID& key, FWP_DATA_TYPE type, unsigned valu
 }
 void filter(const GUID& layer, std::vector<FWPM_FILTER_CONDITION0> conditions, bool permit) {
     FWPM_FILTER0 f{}; checked(UuidCreate(&f.filterKey)); f.layerKey = layer; f.subLayerKey = sublayer;
-    f.displayData.name = const_cast<wchar_t*>(L"Hydro temporary exam policy");
+    f.displayData.name = const_cast<wchar_t*>(L"Hydro 临时监考策略");
     f.action.type = permit ? FWP_ACTION_PERMIT : FWP_ACTION_BLOCK;
     UINT64 weight = permit ? 100 : 1; f.weight.type = FWP_UINT64; f.weight.uint64 = &weight;
-    // Soft permits respect blocks from other security products. Our fallback
-    // block is terminating and cannot be overridden by ordinary allow rules.
+    // 软放行仍遵守其他安全软件的阻断规则；
+    // 兜底阻断为终结规则，普通放行规则不能覆盖它。
     f.numFilterConditions = static_cast<UINT32>(conditions.size()); f.filterCondition = conditions.data();
     checked(FwpmFilterAdd0(engine, &f, nullptr, nullptr));
 }
@@ -51,7 +51,7 @@ void install(const std::vector<hydro::Endpoint>& endpoints) {
     try {
         checked(FwpmTransactionBegin0(engine, 0));
         checked(UuidCreate(&sublayer)); FWPM_SUBLAYER0 s{}; s.subLayerKey = sublayer; s.weight = 0x8000;
-        s.displayData.name = const_cast<wchar_t*>(L"Hydro exam dynamic session"); checked(FwpmSubLayerAdd0(engine, &s, nullptr));
+        s.displayData.name = const_cast<wchar_t*>(L"Hydro 监考动态会话"); checked(FwpmSubLayerAdd0(engine, &s, nullptr));
         const GUID* layers[] = { &FWPM_LAYER_ALE_AUTH_CONNECT_V4, &FWPM_LAYER_ALE_AUTH_CONNECT_V6,
             &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4, &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6,
             &FWPM_LAYER_OUTBOUND_TRANSPORT_V4, &FWPM_LAYER_OUTBOUND_TRANSPORT_V6,
@@ -83,7 +83,7 @@ void install(const std::vector<hydro::Endpoint>& endpoints) {
 }
 void reply(unsigned id, const char* code = nullptr, DWORD detail = 0) {
     std::cout << "{\"id\":" << id << ",\"protocol\":1,\"ok\":" << (code ? "false" : "true");
-    if (code) std::cout << ",\"code\":\"" << code << "\",\"message\":\"Windows error " << detail << "\"";
+    if (code) std::cout << ",\"code\":\"" << code << "\",\"message\":\"Windows 错误 " << detail << "\"";
     std::cout << "}" << std::endl;
 }
 }
@@ -98,15 +98,15 @@ int main(int argc, char** argv) {
     std::thread watchdog([&] {
         for (;;) {
             if (WaitForSingleObject(parent, 200) != WAIT_TIMEOUT || GetTickCount64() - lastHeartbeat.load() > 10000) {
-                // Independent of a stalled WFP RPC: process death makes BFE
-                // remove the dynamic session and abort uncommitted changes.
+                // 不依赖可能卡住的 WFP RPC；进程结束后，BFE 会
+                // 删除动态会话并放弃未提交的修改。
                 ExitProcess(0);
             }
         }
     });
     watchdog.detach();
-    // Read stdin without blocking parent/lease monitoring. Process exit tears
-    // down this thread and BFE also removes its dynamic objects on a crash.
+    // 读取标准输入不能阻塞父进程和租约监测；
+    // 进程结束会终止输入线程，崩溃时 BFE 也会清理动态对象。
     std::thread reader([&] { std::string line; while (std::getline(std::cin, line)) {
         if (line.size() > 70000) break;
         if (line == "0\tping") { lastHeartbeat.store(GetTickCount64()); continue; }
@@ -135,6 +135,6 @@ int main(int argc, char** argv) {
         catch (...) { reply(id, "INVALID_POLICY"); }
     }
     closePolicy(); CloseHandle(parent); WSACleanup(); reader.detach();
-    // Do not destroy stack objects still referenced by the blocking input thread.
+    // 不能销毁阻塞输入线程仍在引用的栈对象。
     ExitProcess(0);
 }

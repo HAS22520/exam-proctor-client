@@ -33,7 +33,7 @@ async function uploadFile({
     path.startsWith('//') ||
     !/^proctor-[a-f0-9]{24}\.hplog$/.test(uploadName)
   )
-    throw new Error('Invalid log upload target');
+    throw new Error('日志上传目标无效');
   const boundary = `HydroProctor${crypto.randomBytes(24).toString('hex')}`;
   const prefix = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="operation"\r\n\r\nupload\r\n--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${uploadName}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
@@ -66,7 +66,7 @@ async function uploadFile({
       try {
         value = request.getUploadProgress();
       } catch {
-        fail(new ProctorError('Cannot read log upload progress'));
+        fail(new ProctorError('无法读取日志上传进度'));
         return;
       }
       if (!value.active || !value.started) return;
@@ -79,7 +79,7 @@ async function uploadFile({
       });
     };
     const poll = setInterval(progress, 200);
-    const timeout = setTimeout(() => fail(new ProctorError('Log upload timed out')), timeoutMs);
+    const timeout = setTimeout(() => fail(new ProctorError('日志上传超时')), timeoutMs);
     const finish = (error: Error | null, result?: UploadReply) => {
       if (ended) return;
       ended = true;
@@ -95,13 +95,13 @@ async function uploadFile({
       request.abort();
     };
     request.on('error', (error) => fail(new ProctorError(error.message)));
-    request.on('abort', () => finish(new ProctorError('Log upload aborted')));
-    // Electron 44 uses a Writable: its body stream can close before the HTTP
-    // response arrives. Only premature body closure means the upload was lost.
+    request.on('abort', () => finish(new ProctorError('日志上传已中断')));
+    // Electron 44 使用 Writable，请求体流可能先于 HTTP 响应关闭。
+    // 只有请求体尚未写完就关闭，才表示上传中断。
     request.on('close', () => {
-      if (!ended && !request.writableFinished) finish(new ProctorError('Log upload response lost'));
+      if (!ended && !request.writableFinished) finish(new ProctorError('日志上传响应丢失'));
     });
-    request.on('redirect', () => fail(new ProctorError('Log upload redirects are forbidden', 403)));
+    request.on('redirect', () => fail(new ProctorError('日志上传不允许重定向', 403)));
     request.on('response', (response) => {
       if (ended) return;
       responseStarted = true;
@@ -110,12 +110,12 @@ async function uploadFile({
       const chunks: Buffer[] = [];
       let size = 0;
       response.on('error', (error) => fail(new ProctorError(error.message)));
-      response.on('aborted', () => fail(new ProctorError('Log upload response lost')));
+      response.on('aborted', () => fail(new ProctorError('日志上传响应丢失')));
       response.on('data', (chunk) => {
         if (ended) return;
         size += chunk.length;
         if (size > 1024 * 1024) {
-          fail(new ProctorError('Protocol response too large', 400));
+          fail(new ProctorError('协议响应超过大小限制', 400));
           return;
         }
         chunks.push(chunk);

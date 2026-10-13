@@ -1,4 +1,4 @@
-// Fixed-width YYYYMMDDNN values sort lexically; do not fall back to semver.
+// 固定宽度的 YYYYMMDDNN 可按字符串排序，不回退为语义版本比较。
 function buildVersion(value: unknown) {
   if (typeof value !== 'string' || !/^[1-9]\d{9}$/.test(value))
     throw new Error('buildVersion 必须是 YYYYMMDDNN 格式的 10 位字符串');

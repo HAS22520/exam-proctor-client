@@ -12,14 +12,14 @@ try {
     const compiler = process.platform === 'win32' ? 'cl.exe' : process.env.CXX || 'c++';
     const args =
         process.platform === 'win32'
-            ? ['/nologo', '/EHsc', '/std:c++17', `/Fe:${output}`, ...sources, '/link', 'ws2_32.lib']
+            ? ['/nologo', '/EHsc', '/std:c++17', '/utf-8', `/Fe:${output}`, ...sources, '/link', 'ws2_32.lib']
             : ['-std=c++17', '-Wall', '-Wextra', '-Werror', ...sources, '-o', output];
     for (const [command, commandArgs] of [
         [compiler, args],
         [output, []],
     ] as [string, string[]][]) {
         const result = spawnSync(command, commandArgs, { cwd: directory, stdio: 'inherit' });
-        if (result.error || result.status !== 0) throw new Error(`${command} failed; install a C++17 compiler`);
+        if (result.error || result.status !== 0) throw new Error(`${command} 执行失败，请安装 C++17 编译器`);
     }
 } catch (error) {
     console.error(error.message);

@@ -13,7 +13,7 @@ interface AsarEntry {
   offset?: string;
 }
 
-// Electron's fs transparently mounts ASAR; original-fs reads the actual bytes.
+// Electron 的 fs 会自动挂载 ASAR；original-fs 用于读取实际文件字节。
 
 const MAX_ARCHIVE = 240 * 1024 * 1024;
 const ENTRY = 'app/main/index.js';
@@ -86,7 +86,7 @@ function readArchive(filename: string) {
       }
     }
     walk(header);
-    // Electron/Windows can resolve names without case sensitivity. Reject aliases.
+    // Electron 和 Windows 可能忽略文件名大小写，因此拒绝大小写冲突。
     if (new Set([...files.keys()].map((name) => name.toLowerCase())).size !== files.size)
       throw new Error('ASAR 路径大小写冲突');
     const json = (name: string) => {
@@ -96,7 +96,7 @@ function readArchive(filename: string) {
       if (fs.readSync(fd, bytes, 0, file.size, file.start) !== file.size) throw new Error('ASAR 文件不完整');
       return JSON.parse(bytes.toString('utf8'));
     };
-    // Materialize small metadata while fd is open, then close before async hashing.
+    // 文件句柄打开时先读取少量元数据，再关闭句柄并异步计算哈希。
     return {
       files,
       release: files.has('release.json') ? json('release.json') : null,

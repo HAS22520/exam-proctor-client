@@ -46,7 +46,7 @@ async function identity(transport: Transport, context: RouteContext, trust: Trus
     typeof payload.root !== 'boolean' ||
     (payload.root && payload.uid === 0)
   )
-    throw new Error('Invalid signed login identity');
+    throw new Error('已签名的登录身份无效');
   transport.trace?.('info', 'identity.verified', {
     uid: payload.uid,
     domainId: payload.domainId,
@@ -101,7 +101,7 @@ class ProctorAuth {
   accept(reply: unknown, previousAttempt?: string) {
     const response = reply as { token?: string };
     if (typeof response.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(response.token))
-      throw new Error('Invalid session token');
+      throw new Error('会话令牌无效');
     const payload = verifyEnvelope<SessionPayload>(
       response,
       this.trust.authPublicKey,
@@ -113,7 +113,7 @@ class ProctorAuth {
       typeof payload.refreshEnabled !== 'boolean' ||
       ((previousAttempt || this.attemptId) && payload.attemptId !== (previousAttempt || this.attemptId))
     )
-      throw new Error('Session attempt mismatch');
+      throw new Error('监考会话编号不匹配');
     this.attemptId = payload.attemptId;
     this.session = {
       ...payload,
@@ -151,7 +151,7 @@ class ProctorAuth {
       !/^[A-Za-z0-9_-]{43}$/.test(payload.challengeId || '') ||
       !/^[A-Za-z0-9_-]{43}$/.test(payload.serverNonce || '')
     ) {
-      throw new Error('Invalid handshake challenge');
+      throw new Error('握手挑战无效');
     }
     const result = await this.transport.json(this.context.proctorPath, {
       operation: 'handshake',
@@ -159,7 +159,7 @@ class ProctorAuth {
       signature: sign(payload, this.device.privateKey),
     });
     if (result.completed === true) {
-      if (!/^[a-f0-9]{24}$/.test(result.receipt || '')) throw new Error('Invalid completion receipt');
+      if (!/^[a-f0-9]{24}$/.test(result.receipt || '')) throw new Error('监考结束回执无效');
       this.session = null;
       this.transport.trace?.('info', 'auth.attempt-complete', {
         uid: this.login.uid,
@@ -190,8 +190,8 @@ class ProctorAuth {
           this.log('SESSION_REFRESHED');
           return session;
         } catch (error) {
-          // A lost refresh response may have revoked the old token. Re-handshake,
-          // never send another refresh concurrently or silently reuse that token.
+          // 刷新响应丢失时，旧令牌可能已被撤销，必须重新握手；
+          // 不能并发刷新或直接复用旧令牌。
           this.session = null;
           if (error.status === 403 && /version|environment|configured|key/i.test(error.message)) throw error;
         }
@@ -207,8 +207,8 @@ class ProctorAuth {
 
   proof(action: string, path: string, payload: unknown, method = 'POST') {
     if (method !== (['problem_view', 'contest_view'].includes(action) ? 'GET' : 'POST'))
-      throw new Error('Invalid proctor proof method');
-    if (!this.session || Date.now() >= Date.parse(this.session.expiresAt)) throw new Error('Session expired');
+      throw new Error('监考证明的请求方法无效');
+    if (!this.session || Date.now() >= Date.parse(this.session.expiresAt)) throw new Error('监考会话已过期');
     const proof = {
       protocol: PROTOCOL,
       action,

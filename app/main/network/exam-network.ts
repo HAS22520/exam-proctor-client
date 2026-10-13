@@ -14,8 +14,8 @@ class ExamNetwork {
   }
 
   async prepare() {
-    // A local/system proxy may lose its upstream when the whole-machine WFP
-    // policy starts. Set this partition only; do not edit Windows proxy settings.
+    // 整机 WFP 策略启用后，本地或系统代理可能失去上游连接。
+    // 只修改考试分区的连接方式，不改写 Windows 系统代理设置。
     await this.session.setProxy({ mode: 'direct' });
     await this.session.closeAllConnections();
     this.trace('info', 'network.connection-mode', { source: 'direct' });
@@ -33,8 +33,8 @@ class ExamNetwork {
   }
 
   async lookup(host: string) {
-    // Use the same resolver/cache as the actual HTTPS requests. A separate
-    // Node DNS lookup can select different CDN or proxy DNS answers.
+    // 与实际 HTTPS 请求共用解析器和缓存；
+    // 独立的 Node DNS 查询可能获得不同的 CDN 或代理地址。
     const result = await this.session.resolveHost(host, { cacheUsage: 'allowed' });
     const addresses = result.endpoints?.map((entry) => entry.address) || (result as { addresses?: string[] }).addresses;
     if (!Array.isArray(addresses) || !addresses.length || addresses.some((address) => !net.isIP(address))) {

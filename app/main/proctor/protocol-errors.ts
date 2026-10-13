@@ -15,7 +15,7 @@ class ProctorError extends Error {
     } else if (/^Proctor session expired or client version mismatch\.?$/i.test(message)) {
       this.code = 'PROCTOR_SESSION_REJECTED';
       this.publicMessage = '监考会话已过期或客户端版本不符合系统要求。请重新认证；若仍失败，请联系管理员确认所需版本。';
-    } else if (status === 403 && /^(?:ForbiddenError|Proctor request rejected)$/.test(message)) {
+    } else if (status === 403 && /^(?:ForbiddenError|Proctor request rejected|监考请求被拒绝)$/.test(message)) {
       this.publicMessage =
         'OJ 拒绝了监考认证（HTTP 403），服务端未提供具体原因。请管理员检查客户端版本、比赛报名及访问权限。';
     } else if (message === 'Attend the contest before starting proctoring.') {
@@ -49,13 +49,13 @@ function isNetworkError(error: ClientError) {
 }
 
 function parseReply(raw: string, status: number, type: string) {
-  if (status >= 300 && status < 400) throw new ProctorError('Login or redirect requires attention', status);
-  if (!type.includes('application/json')) throw new ProctorError('Server did not return protocol JSON', status);
-  if (raw.length > 1024 * 1024) throw new ProctorError('Protocol response too large', 400);
+  if (status >= 300 && status < 400) throw new ProctorError('登录或重定向状态异常，请重新登录', status);
+  if (!type.includes('application/json')) throw new ProctorError('服务端未返回协议要求的 JSON', status);
+  if (raw.length > 1024 * 1024) throw new ProctorError('协议响应超过大小限制', 400);
   const data = JSON.parse(raw);
   const serverError = data?.error;
   if (status < 200 || status >= 300 || serverError) {
-    // Hydro puts the detailed reason in params; message may only be ForbiddenError.
+    // Hydro 将具体拒绝原因放在 params 中，message 可能只有 ForbiddenError。
     const param =
       Array.isArray(serverError?.params) &&
       serverError.params.find((value: unknown) => typeof value === 'string' && value.trim());
@@ -64,7 +64,7 @@ function parseReply(raw: string, status: number, type: string) {
       (typeof serverError === 'string'
         ? serverError
         : typeof serverError?.message === 'string' && serverError.message) ||
-      'Proctor request rejected';
+      '监考请求被拒绝';
     throw new ProctorError(String(reason).trim().slice(0, 300), status);
   }
   return data;

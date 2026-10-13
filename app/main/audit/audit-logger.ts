@@ -13,14 +13,14 @@ function decodeRecord(line: string, key: Buffer, binding: JournalBinding, seq: n
   const sealed = JSON.parse(line);
   const iv = Buffer.from(sealed.iv, 'base64url');
   const tag = Buffer.from(sealed.tag, 'base64url');
-  if (iv.length !== 12 || tag.length !== 16) throw new Error('Invalid journal encryption');
+  if (iv.length !== 12 || tag.length !== 16) throw new Error('日志加密参数无效');
   const cipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
   cipher.setAAD(Buffer.from(`HYDRO-JOURNAL/1:${binding.attemptId}`));
   cipher.setAuthTag(tag);
   const record = JSON.parse(
     Buffer.concat([cipher.update(Buffer.from(sealed.data, 'base64url')), cipher.final()]).toString('utf8'),
   );
-  if (record.seq !== seq || record.previousHash !== previousHash) throw new Error('Invalid journal sequence');
+  if (record.seq !== seq || record.previousHash !== previousHash) throw new Error('日志序列无效');
   return { record, iv: sealed.iv, hash: digest(canonical(sealed)) };
 }
 
@@ -70,16 +70,16 @@ class AuditLogger {
           createdAt: new Date().toISOString(),
           bootId,
         };
-    if (canonical(this.state.binding) !== canonical(binding)) throw new Error('Journal identity mismatch');
+    if (canonical(this.state.binding) !== canonical(binding)) throw new Error('日志绑定身份不匹配');
     const secretName = `journal-${binding.attemptId}.bin`;
     let secret = this.store.read(secretName);
     if (!secret) {
-      if (existed || fs.existsSync(this.journalPath)) throw new Error('Journal key is missing; recovery required');
+      if (existed || fs.existsSync(this.journalPath)) throw new Error('日志密钥缺失，需要恢复数据');
       secret = { key: crypto.randomBytes(32).toString('base64url') };
       this.store.write(secretName, secret);
     }
     this.key = Buffer.from(secret.key, 'base64url');
-    if (this.key.length !== 32) throw new Error('Invalid protected journal key');
+    if (this.key.length !== 32) throw new Error('受保护的日志密钥无效');
     this.seq = 0;
     this.previousHash = '';
     this.usedIvs = new Set();
@@ -121,7 +121,7 @@ class AuditLogger {
           this.seq + 1,
           this.previousHash,
         );
-        if (this.usedIvs.has(decoded.iv)) throw new Error('Repeated journal nonce');
+        if (this.usedIvs.has(decoded.iv)) throw new Error('日志加密随机数重复');
         this.usedIvs.add(decoded.iv);
         this.seq++;
         this.previousHash = decoded.hash;
@@ -133,7 +133,7 @@ class AuditLogger {
       offset = end + 1;
     }
     if (validEnd === bytes.length) return 0;
-    if (!['open', 'closing'].includes(this.state.phase)) throw new Error('Finalized journal is damaged');
+    if (!['open', 'closing'].includes(this.state.phase)) throw new Error('已封存的日志损坏');
     const tail = bytes.subarray(validEnd);
     atomicWrite(path.join(this.directory, `corrupt-tail-${crypto.randomBytes(8).toString('hex')}.enc`), tail);
     fs.truncateSync(this.journalPath, validEnd);
@@ -180,7 +180,7 @@ class AuditLogger {
       const url = new URL(safeTarget);
       safeTarget = `${url.origin}${url.pathname}`;
     } catch {
-      /* Process/shortcut. */
+      /* 记录进程或快捷键事件。 */
     }
     this.append(type || 'SECURITY_EVENT', {
       source: source || 'CLIENT',
@@ -241,7 +241,7 @@ class AuditLogger {
         await write(cipher.update(`${canonical(decoded.record)}\n`));
         if (seq % 128 === 0) await yieldToLoop();
       }
-      if (seq !== this.seq || previousHash !== this.previousHash) throw new Error('Journal changed while finalizing');
+      if (seq !== this.seq || previousHash !== this.previousHash) throw new Error('封存过程中日志发生变化');
       await write(cipher.final());
       output.end();
       await outputDone;
@@ -268,11 +268,11 @@ class AuditLogger {
   }
 
   uploaded(receipt: string) {
-    if (!/^[a-f0-9]{24}$/.test(receipt || '')) throw new Error('Invalid upload receipt');
+    if (!/^[a-f0-9]{24}$/.test(receipt || '')) throw new Error('日志上传回执无效');
     Object.assign(this.state, { phase: 'uploaded', receipt, clean: true });
     delete this.state.uploadError;
     this.saveState();
-    // Retain encrypted evidence to recover qualification after an admin deletion.
+    // 保留加密证据，以便管理员删除服务端日志后恢复成绩资格。
   }
 }
 
