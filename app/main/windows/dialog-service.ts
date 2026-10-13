@@ -48,28 +48,32 @@ export class DialogService {
       primaryIds: options.primaryIds?.filter((index) => Number.isInteger(index) && index >= 0 && index < buttons.length), secondaryDetail: options.secondaryDetail };
     const window = new BrowserWindow({ width: 620, height: 430, minWidth: 520, minHeight: 360, useContentSize: true,
       title: model.title, icon: windowIcon, parent: owner, modal: !!owner, show: false, minimizable: false, fullscreenable: false,
+      // Windows 操作全部放在 React 页面中；禁用标题栏与最大化，避免系统按钮绕过操作提示。
+      frame: platform !== 'win32', maximizable: false, resizable: false,
       autoHideMenuBar: true, webPreferences: { ...localPreferences('dialog'), partition: 'proctor-dialog' } });
+    // closed 触发时原生窗口已经销毁，不能再通过 window.webContents 访问它。
+    const contents = window.webContents;
     secureLocalPage(window);
     return new Promise((resolve, reject) => {
       let settled = false;
       const settle = (value: Electron.MessageBoxReturnValue) => {
         if (settled) return;
         settled = true;
-        this.pending.delete(window.webContents);
+        this.pending.delete(contents);
         if (!window.isDestroyed()) window.destroy();
         resolve(value);
       };
       const fail = (error: Error) => {
         if (settled) return;
         settled = true;
-        this.pending.delete(window.webContents);
+        this.pending.delete(contents);
         if (!window.isDestroyed()) window.destroy();
         reject(error);
       };
-      this.pending.set(window.webContents, { window, model, settle });
+      this.pending.set(contents, { window, model, settle });
       window.on('closed', () => settle({ response: model.cancelId, checkboxChecked: !!model.checkboxChecked }));
-      window.webContents.once('render-process-gone', () => fail(new Error('提示页面进程已退出，请重试。')));
-      window.webContents.once('preload-error', () => fail(new Error('提示页面通信桥加载失败，请重试。')));
+      contents.once('render-process-gone', () => fail(new Error('提示页面进程已退出，请重试。')));
+      contents.once('preload-error', () => fail(new Error('提示页面通信桥加载失败，请重试。')));
       // Show after content is loaded, then explicitly give the modal focus.
       window.loadFile(pageFile('dialog')).then(() => {
         if (!settled && !window.isDestroyed()) { window.show(); window.focus(); }
