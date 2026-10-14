@@ -58,7 +58,7 @@ function fixture(t) {
         anchor: {
             trust: prepared.trust,
             config,
-            identity: { version: prepared.version, buildVersion: prepared.buildVersion, nativeNetworkVersion: 1 },
+            identity: { version: prepared.version, buildVersion: prepared.buildVersion, nativeNetworkVersion: 2 },
             electronVersion: '44.7.0',
         },
     };
@@ -434,7 +434,7 @@ test('安装包加载器选择缓存 ASAR 并展示实际版本，加载失败�
     const updated = await boot();
     assert.ok(updated.loaded[0].endsWith(path.join('.asar', 'app', 'main', 'index.js')));
     assert.equal(updated.runtime.source, 'asar');
-    assert.deepEqual({ ...updated.runtime.identity }, { version: '0.9.0', buildVersion: '2026101002', nativeNetworkVersion: 1 });
+    assert.deepEqual({ ...updated.runtime.identity }, { version: '0.9.0', buildVersion: '2026101002', nativeNetworkVersion: 2 });
     const next = await release(f, { PROCTOR_CLIENT_BUILD_VERSION: '2026101003' });
     await cache.stage(next, next.filename);
     // release() 会重写构建文件，因此再次恢复原安装身份。
@@ -454,7 +454,7 @@ test('完整客户端源码生成签名代码归档，并按原安装包信任�
     const anchor: any = {
         trust: prepared.trust,
         config: prepared.config,
-        identity: { version: prepared.version, buildVersion: prepared.buildVersion, nativeNetworkVersion: 1 },
+        identity: { version: prepared.version, buildVersion: prepared.buildVersion, nativeNetworkVersion: 2 },
         electronVersion: '44.7.0',
     };
     const result = await buildArchive({ ...environment, PROCTOR_CLIENT_BUILD_VERSION: '2026101002' }, root);

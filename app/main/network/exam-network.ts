@@ -1,48 +1,60 @@
-import * as net from 'node:net';
 import type { Trace } from '../contracts';
+import { ControlledProxy } from './controlled-proxy';
+
+type SessionNetwork = Pick<Electron.Session, 'setProxy' | 'closeAllConnections'>;
 
 class ExamNetwork {
-    declare session: Pick<Electron.Session, 'setProxy' | 'closeAllConnections' | 'resolveHost'>;
-    declare origins: string[];
-    declare trace: Trace;
-    declare connected: Map<string, Set<string>>;
+    private sessions: SessionNetwork[];
+    private debug = false;
+    readonly proxy: ControlledProxy;
 
-    constructor(session: ExamNetwork['session'], origins: string[], trace: Trace = () => {}) {
-        Object.assign(this, { session, origins, trace });
-        this.connected = new Map();
+    constructor(
+        private session: SessionNetwork,
+        private origins: string[],
+        private trace: Trace = () => {},
+        beforeConnect: () => Promise<unknown> = async () => {},
+        updates?: SessionNetwork,
+    ) {
+        this.sessions = [session, updates].filter(Boolean);
+        this.proxy = new ControlledProxy(origins, { beforeConnect });
         this.lookup = this.lookup.bind(this);
     }
 
     async prepare() {
-        // 整机 WFP 策略启用后，本地或系统代理可能失去上游连接。
-        // 只修改考试分区的连接方式，不改写 Windows 系统代理设置。
-        await this.session.setProxy({ mode: 'direct' });
-        await this.session.closeAllConnections();
-        this.trace('info', 'network.connection-mode', { source: 'direct' });
+        await this.proxy.start();
+        for await (const session of this.sessions) {
+            await session.setProxy({
+                mode: 'fixed_servers', proxyRules: this.proxy.proxyRules, proxyBypassRules: '<-loopback>',
+            });
+            await session.closeAllConnections();
+        }
+        this.trace('info', 'network.connection-mode', { source: 'controlled-proxy' });
     }
 
+    async setDebug(enabled: boolean) {
+        if (this.debug === enabled) return;
+        this.debug = enabled;
+        if (enabled) await this.session.setProxy({ mode: 'direct' });
+        else await this.prepare();
+        await this.session.closeAllConnections();
+    }
+
+    get auxiliaryEndpoints() { return [this.proxy.localEndpoint, ...this.proxy.dnsEndpoints]; }
+
+    close() { this.proxy.close(); }
+
     observe(details: { url: string, fromCache?: boolean, ip?: string }) {
-        if (details.fromCache || !net.isIP(details.ip || '')) return;
         const url = new URL(details.url);
-        if (!this.origins.includes(url.origin)) return;
-        const host = url.hostname.replace(/^\[|\]$/g, '');
-        const addresses = this.connected.get(host) || new Set();
-        addresses.add(details.ip);
-        if (addresses.size > 32) addresses.delete(addresses.values().next().value);
-        this.connected.set(host, addresses);
+        if (!details.fromCache && this.origins.includes(url.origin)) {
+            this.trace('info', 'network.response', { url: details.url });
+        }
     }
 
     async lookup(host: string) {
-        // 与实际 HTTPS 请求共用解析器和缓存；
-        // 独立的 Node DNS 查询可能获得不同的 CDN 或代理地址。
-        const result = await this.session.resolveHost(host, { cacheUsage: 'allowed' });
-        const addresses = result.endpoints?.map((entry) => entry.address) || (result as { addresses?: string[] }).addresses;
-        if (!Array.isArray(addresses) || !addresses.length || addresses.some((address) => !net.isIP(address))) {
-            throw Object.assign(new Error('浏览器未能解析 OJ 地址，请检查 DNS 或代理软件。'), { code: 'DNS_INVALID_RESULT' });
-        }
-        const combined = [...new Set([...addresses, ...(this.connected.get(host) || [])])];
-        this.trace('info', 'network.resolved', { url: host, message: combined.join(', ') });
-        return combined.map((address) => ({ address }));
+        // 新连接候选和正在使用的地址均保留，DNS 刷新不能打断既有提交或 WebSocket。
+        const addresses = await this.proxy.policyLookup(host);
+        this.trace('info', 'network.resolved', { url: host, message: addresses.map((entry) => entry.address).join(', ') });
+        return addresses;
     }
 }
 

@@ -82,7 +82,7 @@ async function fixture(t) {
     const anchor: any = {
         trust: prepared.trust,
         config: prepared.config,
-        identity: { version: '1.0.0', buildVersion: '2026101001', nativeNetworkVersion: 1 },
+        identity: { version: '1.0.0', buildVersion: '2026101001', nativeNetworkVersion: 2 },
         electronVersion: '44.7.0',
     };
     // 发布归档与实际构建一样，在普通 Node 进程中生成。

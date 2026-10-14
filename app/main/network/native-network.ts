@@ -17,6 +17,7 @@ const dns = require('node:dns').promises;
 
 const messages: Record<string, string> = {
     ADMIN_REQUIRED: '请关闭软件，右键点击监考客户端，选择“以管理员身份运行”后重新打开。',
+    NATIVE_PROTOCOL_MISMATCH: '系统网络组件与当前客户端不兼容，请安装新版完整 Windows 安装包；ASAR 无法更新原生组件。',
     NATIVE_MISSING: '安装包缺少系统网络组件，请安装新版完整安装包；ASAR 更新不能安装原生组件。',
     FILTER_FAILED: '系统网络过滤未能启用，请检查系统授权及网络服务后重试。',
     HELPER_EXITED: '系统网络组件已停止，监考认证已撤销。请重新进入考试。',
@@ -157,7 +158,7 @@ class NativeNetwork {
                 if (!pending) continue;
                 this.requests.delete(reply.id);
                 clearTimeout(pending.timer);
-                if (reply.ok && reply.protocol === 1) pending.resolve(reply);
+                if (reply.ok && reply.protocol === 2) pending.resolve(reply);
                 else pending.reject(failure(reply.code || 'NATIVE_PROTOCOL_MISMATCH', reply.message));
             }
         });

@@ -21,6 +21,9 @@ int main() {
     assert(policy[1].family == AF_INET6 && policy[1].port == 8282);
     assert(policy[1].address[0] == 0x20 && policy[1].address[1] == 0x01
         && policy[1].address[2] == 0x0d && policy[1].address[3] == 0xb8 && policy[1].address[15] == 7);
+    const auto dns = hydro::parsePolicy("192.0.2.53|53|dns;2001:db8::53|5353|dns");
+    assert(dns[0].dns && dns[0].port == 53 && dns[1].dns && dns[1].port == 5353);
+    assert(!policy[0].dns);
     const auto limits = hydro::parsePolicy("127.0.0.1|1;::1|65535");
     assert(limits[0].port == 1 && limits[1].port == 65535);
     for (const char* invalid : { "", "example.com|443", "::1|0", "127.0.0.1|65536", "::1|443\n",

@@ -26,6 +26,7 @@ function fixture(platform) {
                 unregister: () => {},
             },
         },
+        './process-scanner': require('../app/main/security/process-scanner'),
         'node:child_process': {
             execFile: (file, args, options, callback) => {
                 commands.push({ file, args });
@@ -42,6 +43,7 @@ function fixture(platform) {
         process: { platform, pid: 999 },
         setInterval: () => ({ unref() {} }),
         clearInterval: () => {},
+        setTimeout, clearTimeout,
     });
     const AntiCheatGuard = module.exports;
     const guard = new AntiCheatGuard(
@@ -56,6 +58,15 @@ function fixture(platform) {
             },
         },
         { logViolation: (event) => events.push(event) },
+        { scanner: {
+            snapshot: async () => {
+                commands.push({ file: 'native-snapshot' }); return [{
+                    pid: 123, name: 'ForbiddenApp', path: 'C:/ForbiddenApp', originalName: '', sha256: '', signed: false, created: '1',
+                }];
+            },
+            terminate: async () => { commands.push({ file: 'native-terminate' }); },
+            close() {},
+        } },
     );
     return { guard, events, commands, shortcuts, window };
 }
@@ -80,15 +91,16 @@ test('macOS 记录焦点、屏幕和进程，不拦截快捷键或终止应用',
     assert.equal(f.events.length, count);
 });
 
-test('Windows 保留快捷键限制、焦点恢复和明确配置的进程终止', () => {
+test('Windows 使用常驻扫描，延迟恢复焦点并保留明确配置的进程终止', async () => {
     const f = fixture('win32');
     f.guard.start();
     f.window.emit('blur');
     f.window.emit('minimize');
+    await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(f.shortcuts, ['Alt+Tab']);
     assert.deepEqual(
         f.commands.map((command) => command.file),
-        ['tasklist.exe', 'taskkill.exe'],
+        ['native-snapshot', 'native-terminate'],
     );
     assert.ok(f.events.some((event) => event.type === 'FOCUS'));
     assert.ok(f.events.some((event) => event.type === 'RESTORE'));
@@ -96,3 +108,28 @@ test('Windows 保留快捷键限制、焦点恢复和明确配置的进程终止
 });
 
 export {};
+
+test('弹窗打开后取消尚未执行的焦点恢复，不与弹窗争抢前台', async () => {
+    const f = fixture('win32');
+    f.guard.start();
+    f.window.emit('blur');
+    assert.equal(f.events.some((event) => event.type === 'FOCUS'), false);
+    f.guard.stop();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(f.events.some((event) => event.type === 'FOCUS'), false);
+});
+
+test('检测重命名的已签名工具及已知哈希，不把未知软件或伪造产品名当作作弊', () => {
+    const f = fixture('win32');
+    const hash = 'a'.repeat(64);
+    const entry = {
+        pid: 321, created: '123', path: 'C:/renamed.exe', name: 'calculator.exe',
+        originalName: 'ForbiddenApp', sha256: hash, signed: true,
+    };
+    f.guard.inspectProcesses([entry]);
+    assert.equal(f.events.filter((event) => event.type === 'FORBIDDEN_PROCESS').length, 1);
+    f.guard.inspectProcesses([{ ...entry, pid: 322, originalName: '', signed: false }]);
+    assert.equal(f.events.filter((event) => event.type === 'FORBIDDEN_PROCESS').length, 2);
+    f.guard.inspectProcesses([{ ...entry, pid: 323, sha256: 'b'.repeat(64), signed: false }]);
+    assert.equal(f.events.filter((event) => event.type === 'FORBIDDEN_PROCESS').length, 2);
+});

@@ -140,7 +140,7 @@ async function verifyArchive(filename: string, expected: UpdatePackage, anchor: 
     ) {
         throw new Error('ASAR 版本、构建编号或 Electron 运行时不匹配，需要完整安装包');
     }
-    if (payload.nativeNetworkVersion !== 1 || anchor.identity.nativeNetworkVersion !== 1) {
+    if (payload.nativeNetworkVersion !== 2 || anchor.identity.nativeNetworkVersion !== 2) {
         throw new Error('ASAR 与已安装的系统网络组件不兼容，请先安装新版完整安装包');
     }
     if (!Array.isArray(payload.files) || payload.files.length !== archive.files.size - 1) {
@@ -171,7 +171,7 @@ async function verifyArchive(filename: string, expected: UpdatePackage, anchor: 
     const expectedIdentity = {
         version: expected.version,
         buildVersion: expected.buildVersion,
-        nativeNetworkVersion: 1,
+        nativeNetworkVersion: 2,
         ...(archive.identity.productName === undefined ? {} : { productName: name }),
     };
     if (

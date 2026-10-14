@@ -1,10 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session as electronSession, shell } from 'electron';
 import ActivityProgress = require('./diagnostics/activity-progress');
 import AntiCheatGuard = require('./security/anti-cheat');
 import type { ActivityStatus, ClientConfig, ClientStatus, LoginIdentity, TraceLevel, Trust } from './contracts';
 import { validateConfig } from './security/config-policy';
+import { protectExamInput } from './security/exam-input';
 import DebugConsole = require('./windows/debug-console');
 import { prepareBootIdentity, ProtectedStore } from './audit/device-store';
 import { Diagnostics } from './diagnostics/diagnostics';
@@ -44,6 +45,7 @@ const trace = (
 const debugConsole = new DebugConsole(BrowserWindow, productName);
 
 app.setName(INTERNAL_APP_NAME);
+for (const name of ['remote-debugging-port', 'remote-debugging-pipe']) app.commandLine?.removeSwitch(name);
 let window: BrowserWindow,
     controller: ProctorController,
     network: NetworkGuard,
@@ -64,8 +66,10 @@ let latestStatus: ClientStatus = { phase: 'idle', message: '正在连接 OJ' };
 let exitReady = false;
 let dialogDepth = 0;
 let protectedFocus = false;
+let enforcedWindowFocus: boolean | null = null;
 let recoveryReady = false;
 let debugExpiry = 0;
+let debugTimer: ReturnType<typeof setTimeout>;
 let syncing = false;
 let syncRequested = false;
 let lastUploadStage: string;
@@ -98,8 +102,11 @@ function applyWindowFocus() {
     if (enabled) antiCheat.start();
     else antiCheat.stop();
     const enforce = enabled && process.platform !== 'darwin';
+    // 认证刷新不反复切换 kiosk/置顶，否则 Windows 可能重新排列窗口并短暂丢失前台。
+    if (enforcedWindowFocus === enforce) return;
+    enforcedWindowFocus = enforce;
     window.setKiosk(enforce && config.window?.kiosk !== false);
-    window.setAlwaysOnTop(enforce && config.window?.alwaysOnTop !== false);
+    window.setAlwaysOnTop(enforce && config.window?.alwaysOnTop !== false, 'screen-saver');
 }
 
 async function showExamDialog(options: ClientDialogOptions, owner = window) {
@@ -187,9 +194,21 @@ async function applyIdentity(login: LoginIdentity | null) {
     root = !!login?.root && login.uid > 0;
     const next = root && config.debug.allowRoot && Date.parse(login.expiresAt) > Date.now();
     debugExpiry = next ? Date.parse(login.expiresAt) : 0;
+    clearTimeout(debugTimer);
+    if (next) {
+        debugTimer = setTimeout(() => {
+            if (debug && Date.now() >= debugExpiry) {
+                applyIdentity(null).catch((error) => diagnostics.error('identity.revoke-failed', error));
+            }
+        }, Math.max(1, debugExpiry - Date.now()));
+        debugTimer.unref?.();
+    }
     if (next !== debug) {
         debug = next;
         network.debug = debug;
+        // 权限失效必须同步销毁调试窗口，不能等网络连接恢复后才撤销。
+        if (!debug) debugConsole.close();
+        if (process.platform === 'win32') await examNetwork.setDebug(debug);
         if (!debug && !config.exam.allowedOrigins.includes(new URL(window.webContents.getURL()).origin)) {
             window.loadURL(config.exam.targetUrl).catch(() => {});
         }
@@ -534,6 +553,7 @@ app.whenReady()
         }
         privilegeGuard.close();
         config = loadConfig();
+        const updateSession = electronSession?.fromPartition('proctor-updates');
         ipcMain.handle('exam:waiting-status', (event) => {
             waitingWindow.context(event);
             return activity.snapshot();
@@ -560,6 +580,7 @@ app.whenReady()
             trace,
             activity: activity.run.bind(activity),
             lookup: (host: string) => examNetwork.lookup(host),
+            auxiliaryEndpoints: () => examNetwork.auxiliaryEndpoints,
             verifyConnectivity: async () => {
                 const record = controller.current;
                 const login = await identity(
@@ -592,6 +613,7 @@ app.whenReady()
             source: running.source,
             failure: running.failure,
             cache: running.cache,
+            fetch: (input, init) => (updateSession || window.webContents.session).fetch(input instanceof URL ? input.href : input, init),
             onStatus: (update) => {
                 latestStatus.update = update;
                 publishClientStatus();
@@ -611,7 +633,7 @@ app.whenReady()
                 nodeIntegration: false,
                 contextIsolation: true,
                 sandbox: true,
-                devTools: true,
+                devTools: false,
                 webSecurity: true,
             },
         });
@@ -621,7 +643,9 @@ app.whenReady()
             const pageTitle = title.trim().slice(0, 160);
             window.setTitle(pageTitle && pageTitle !== productName ? `${pageTitle} · ${productName}` : productName);
         });
-        examNetwork = new ExamNetwork(window.webContents.session, config.exam.allowedOrigins, trace);
+        protectExamInput(window.webContents, logger);
+        examNetwork = new ExamNetwork(window.webContents.session,
+            [...new Set([...config.exam.allowedOrigins, ...(config.updater.allowedOrigins || [])])], trace, () => firewall.refresh(), updateSession);
         if (process.platform === 'win32') await diagnostics.span('startup.direct-connection', () => examNetwork.prepare());
         await diagnostics.span('startup.clear-login', () => resetLogin(window.webContents.session));
         network = new NetworkGuard(config, logger);
@@ -729,7 +753,8 @@ app.whenReady()
         ipcMain.handle('exam:debug-devtools', (event) => {
             debugConsole.context(event);
             requireDebug();
-            window.webContents.openDevTools({ mode: 'detach' });
+            return debugConsole.showPage(window.webContents.getURL(), window.webContents.session,
+                () => debug && root && Date.now() < debugExpiry);
         });
         const requests = window.webContents.session.webRequest;
         requests.onResponseStarted((details) => examNetwork.observe(details));
@@ -778,9 +803,7 @@ app.whenReady()
         };
         requests.onCompleted(settled);
         requests.onErrorOccurred(settled);
-        window.webContents.on('devtools-opened', () => {
-            if (!debug) window.webContents.closeDevTools();
-        });
+
         window.webContents.on('did-navigate', () => syncLogin());
         window.webContents.on('did-navigate-in-page', () => syncLogin());
         window.on('unresponsive', () => trace('error', 'window.unresponsive'));
@@ -858,6 +881,11 @@ app.on('before-quit', (event) => {
         requestExit();
     }
 });
-app.on('will-quit', () => firewall?.close());
+app.on('will-quit', () => {
+    clearTimeout(debugTimer);
+    firewall?.close();
+    examNetwork?.close();
+    antiCheat?.close();
+});
 // 正常退出在 requestExit 中等待网络恢复；强制退出由管理员权限的守护进程处理。
 // Node 的 exit 事件无法等待异步子进程结束。

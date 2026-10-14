@@ -89,7 +89,7 @@ async function fixture(t, scenario: any = {}) {
                         startupSteps.push('clear-auth');
                     },
                     setProxy: async (value) => {
-                        assert.equal(value.mode, 'direct');
+                        assert.ok(['direct', 'fixed_servers'].includes(value.mode));
                         startupSteps.push('direct-proxy');
                     },
                     closeAllConnections: async () => {
@@ -220,6 +220,7 @@ async function fixture(t, scenario: any = {}) {
             return Promise.resolve();
         }
 
+        refresh() { return Promise.resolve(); }
         close() {}
         recover() {
             return this.activity('network', 'restore', async () => {
@@ -298,6 +299,7 @@ async function fixture(t, scenario: any = {}) {
         './proctor/proctor-controller': { ProctorController: Controller },
         './network/network-guard': Guard,
         './security/anti-cheat': Guard,
+        './security/exam-input': require('../app/main/security/exam-input'),
         './proctor/proctor-auth': require('../app/main/proctor/proctor-auth'),
         './network/firewall-guard': class extends Guard {
             constructor(config, logger, runtime = {}) {
@@ -334,7 +336,18 @@ async function fixture(t, scenario: any = {}) {
         './windows/debug-console': require('../app/main/windows/debug-console'),
         './diagnostics/activity-progress': require('../app/main/diagnostics/activity-progress'),
         './windows/waiting-window': require('../app/main/windows/waiting-window'),
-        './network/exam-network': require('../app/main/network/exam-network'),
+        './network/exam-network': class {
+            auxiliaryEndpoints = [];
+            observe() {}
+            lookup() { return Promise.resolve([]); }
+            async prepare() {
+                await windows[0].webContents.session.setProxy({ mode: 'fixed_servers' });
+                await windows[0].webContents.session.closeAllConnections();
+            }
+
+            setDebug() { return Promise.resolve(); }
+            close() {}
+        },
     };
     const source = path.resolve(__dirname, '../app/main/index.js');
     if (scenario.platform === 'darwin') {
@@ -662,8 +675,8 @@ test('控制台要求构建允许调试且 root 身份未过期', async (t) => {
     await f.controller.options.onIdentity({ uid: 1, root: true, expiresAt: new Date(Date.now() + 50).toISOString() });
     const console = f.windows[1];
     await new Promise((resolve) => setTimeout(resolve, 70));
-    assert.throws(() => f.handlers.get('exam:debug-logs')(f.event(console), 0), /有效/);
     assert.equal(console.isDestroyed(), true);
+    assert.throws(() => f.handlers.get('exam:debug-logs')(f.event(console), 0), /受信任/);
 });
 
 test('旧身份等待网络期间切换到 root 调试，不会重新启用全屏保护', async (t) => {
@@ -846,3 +859,19 @@ test('控制器认证失败立即推送浮窗，推送与 IPC 查询状态一致
 });
 
 export {};
+
+test('重复认证不反复切换全屏或置顶，正式考试窗口始终禁用开发工具', async (t) => {
+    const f = await fixture(t, { delayLock: true });
+    const main = f.windows[0];
+    assert.equal(main.options.webPreferences.devTools, false);
+    const calls = [];
+    main.setKiosk = (value) => calls.push(['kiosk', value]);
+    main.setAlwaysOnTop = (value, level) => calls.push(['top', value, level]);
+    const login = { uid: 3, root: false, proctorEnabled: true, expiresAt: new Date(Date.now() + 60000).toISOString() };
+    const verified = f.controller.options.onIdentity(login);
+    await f.locking;
+    f.releaseLock();
+    await verified;
+    await f.controller.options.onIdentity(login);
+    assert.deepEqual(calls, [['kiosk', true], ['top', true, 'screen-saver']]);
+});

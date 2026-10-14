@@ -89,7 +89,8 @@
           "from": "build/native",
           "to": "native",
           "filter": [
-            "hydro-network.exe"
+            "hydro-network.exe",
+            "hydro-audit.exe"
           ]
         }
       ],

@@ -73,6 +73,7 @@ test('TypeScript 源码不含 JS，编译资源及开发和安装入口使用独
     const runtimePackage = JSON.parse(fs.readFileSync(path.join(output, 'package.json'), 'utf8'));
     assert.equal(sourcePackage.main, 'out/app/main/bootstrap.js');
     assert.equal(sourcePackage.build.directories.app, 'out');
+    assert.deepEqual(sourcePackage.build.win.extraResources[0].filter, ['hydro-network.exe', 'hydro-audit.exe']);
     assert.equal(runtimePackage.main, 'app/main/bootstrap.js');
     assert.equal(runtimePackage.build, undefined);
     for (const entry of ['app/main/bootstrap.js', 'app/preload/preload.js', 'app/renderer/upload.html']) {

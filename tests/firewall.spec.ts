@@ -191,7 +191,7 @@ test('Windows 非管理员启动显示重开说明，不自动触发 UAC 或 Pow
         c.emit('exit', 0);
     });
     const check = network.check();
-    c.stdout.write('{"id":1,"protocol":1,"ok":false,"code":"ADMIN_REQUIRED"}\n');
+    c.stdout.write('{"id":1,"protocol":2,"ok":false,"code":"ADMIN_REQUIRED"}\n');
     await assert.rejects(check, (error: any) => error.code === 'ADMIN_REQUIRED' && /关闭软件.*以管理员身份运行/.test(error.message));
 });
 test('原生协议拒绝不匹配响应，支持分块读取，并在进程退出后撤销保护', async (t) => {
@@ -209,11 +209,11 @@ test('原生协议拒绝不匹配响应，支持分块读取，并在进程退�
         c.emit('exit', 0);
     });
     const first = network.check();
-    c.stdout.write('{"id":1,"protocol":2,"ok":true}\n');
-    await assert.rejects(first, /NATIVE_PROTOCOL_MISMATCH/);
+    c.stdout.write('{"id":1,"protocol":9,"ok":true}\n');
+    await assert.rejects(first, (error: any) => error.code === 'NATIVE_PROTOCOL_MISMATCH' && /完整 Windows 安装包/.test(error.message));
     const lock = network.lock('127.0.0.1|443');
     c.stdout.write('{"event":"stage","phase":"apply-native-policy"}\n{"id":2,');
-    c.stdout.write('"protocol":1,"ok":true}\n');
+    c.stdout.write('"protocol":2,"ok":true}\n');
     await lock;
     assert.equal(network.active, true);
     assert.ok(stages.includes('apply-native-policy'));
@@ -238,7 +238,7 @@ test('事件循环长期暂停时，本地网络保护先过期再允许新心�
         c.emit('exit', 0);
     });
     const locked = network.lock('127.0.0.1|443');
-    c.stdout.write('{"id":1,"protocol":1,"ok":true}\n');
+    c.stdout.write('{"id":1,"protocol":2,"ok":true}\n');
     await locked;
     assert.equal(network.healthy(), true);
     now = 9000;
@@ -246,3 +246,25 @@ test('事件循环长期暂停时，本地网络保护先过期再允许新心�
 });
 
 export {};
+
+test('地址刷新合并并复用动态会话，恢复排队后不重新加锁', async () => {
+    const native = backend();
+    let address = '203.0.113.7';
+    const guard = new FirewallGuard({ exam: { allowedOrigins: ['https://oj.example'] } }, null, {
+        platform: 'win32', native, lookup: async () => [{ address }], auxiliaryEndpoints: () => ['192.0.2.53|53|dns', '127.0.0.1|12345'],
+    });
+    await guard.lock();
+    await guard.refresh();
+    assert.equal(native.calls.length, 1);
+    address = '203.0.113.8';
+    const refresh = guard.refresh();
+    assert.equal(refresh, guard.refresh());
+    await refresh;
+    assert.equal(native.calls.length, 2);
+    assert.match(native.calls[1][1], /203\.0\.113\.8/);
+    const recovering = guard.unlock();
+    await guard.refresh();
+    await recovering;
+    assert.equal(native.active, false);
+    assert.equal(native.calls.length, 3);
+});

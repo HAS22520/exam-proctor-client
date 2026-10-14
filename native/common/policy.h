@@ -5,6 +5,6 @@
 #include <vector>
 
 namespace hydro {
-struct Endpoint { int family; std::array<uint8_t, 16> address{}; uint16_t port; };
+struct Endpoint { int family; std::array<uint8_t, 16> address{}; uint16_t port; bool dns = false; };
 std::vector<Endpoint> parsePolicy(const std::string& policy);
 }

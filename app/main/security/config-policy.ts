@@ -48,6 +48,11 @@ function validateConfig(
             throw new Error('更新地址不在信任范围内');
         }
     }
+    if (raw.antiCheat?.processBlacklistHashes !== undefined
+        && (!Array.isArray(raw.antiCheat.processBlacklistHashes)
+            || raw.antiCheat.processBlacklistHashes.some((hash) => typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)))) {
+        throw new Error('进程黑名单哈希必须为 SHA-256 小写十六进制数组');
+    }
     return {
         ...raw,
         exam: { ...raw.exam, allowedOrigins: allowed, allowedDomains: allowed.map((value) => new URL(value).hostname) },

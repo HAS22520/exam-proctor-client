@@ -35,6 +35,10 @@
       "F12"
     ],
     "processBlacklist": [
+      "ollama.exe",
+      "LM Studio.exe",
+      "llama-server.exe",
+      "llama-cli.exe",
       "Weixin.exe",
       "WeChat.exe",
       "WeChatAppEx.exe",

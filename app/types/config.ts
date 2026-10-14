@@ -38,6 +38,7 @@ export interface ClientConfig {
     antiCheat?: {
         blockShortcuts?: string[];
         processBlacklist?: string[];
+        processBlacklistHashes?: string[];
         processBlacklistByPlatform?: Record<string, string[]>;
         checkProcessIntervalMs?: number;
         singleScreenOnly?: boolean;

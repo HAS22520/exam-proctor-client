@@ -63,6 +63,15 @@ async function buildNative(platform: string, arch: string, env = process.env, pr
             output,
         );
     }
+    const auditSource = path.join(project, 'native/windows/process-audit.cpp');
+    const auditFilename = path.join(output, 'hydro-audit.exe');
+    if (process.platform === 'win32') {
+        execute('cl.exe', ['/nologo', '/EHsc', '/std:c++17', '/utf-8', '/O2', '/MT', '/D_WIN32_WINNT=0x0A00',
+            `/Fe:${auditFilename}`, auditSource, '/link', 'version.lib', 'wintrust.lib', 'crypt32.lib', 'bcrypt.lib', 'advapi32.lib'], output);
+    } else {
+        execute(env.PROCTOR_MINGW_CXX || 'x86_64-w64-mingw32-g++', ['-std=c++17', '-O2', '-static', '-D_WIN32_WINNT=0x0A00',
+            auditSource, '-o', auditFilename, '-lversion', '-lwintrust', '-lcrypt32', '-lbcrypt', '-ladvapi32'], output);
+    }
     return output;
 }
 if (require.main === module) {

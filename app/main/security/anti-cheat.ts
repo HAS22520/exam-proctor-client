@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import * as path from 'node:path';
 import { globalShortcut, screen } from 'electron';
 import type { AuditSink, ClientConfig } from '../contracts';
+import { NativeProcessScanner, type ProcessInfo } from './process-scanner';
 
 class AntiCheatGuard {
     declare window: Electron.BrowserWindow;
@@ -14,13 +15,18 @@ class AntiCheatGuard {
     declare detected: Map<string, string>;
     declare platform: NodeJS.Platform;
     declare auditOnly: boolean;
+    declare scanner: Pick<NativeProcessScanner, 'snapshot' | 'terminate' | 'close'>;
+    declare generation: number;
+    declare knownHashes: Set<string>;
+    declare focusTimer: ReturnType<typeof setTimeout>;
+    declare focusWatch: ReturnType<typeof setInterval>;
     declare timer: ReturnType<typeof setInterval>;
 
     constructor(
         mainWindow: Electron.BrowserWindow,
         config: ClientConfig,
         auditLogger: AuditSink | null = null,
-        runtime: { platform?: NodeJS.Platform } = {},
+        runtime: { platform?: NodeJS.Platform, scanner?: AntiCheatGuard['scanner'] } = {},
     ) {
         this.window = mainWindow;
         this.config = { ...config.antiCheat, preventMinimize: config.window?.preventMinimize };
@@ -32,6 +38,9 @@ class AntiCheatGuard {
         this.detected = new Map();
         this.platform = runtime.platform || process.platform;
         this.auditOnly = this.platform === 'darwin';
+        this.scanner = runtime.scanner || new NativeProcessScanner();
+        this.generation = 0;
+        this.knownHashes = new Set(config.antiCheat.processBlacklistHashes || []);
     }
 
     record(type: string, target = '') {
@@ -46,6 +55,7 @@ class AntiCheatGuard {
     start() {
         if (this.running) return;
         this.running = true;
+        this.generation++;
         for (const shortcut of this.auditOnly ? [] : this.config.blockShortcuts || []) {
             try {
                 if (globalShortcut.register(shortcut, () => this.record('BLOCKED_SHORTCUT', shortcut))) {
@@ -57,7 +67,7 @@ class AntiCheatGuard {
         }
         this.listen(this.window, 'blur', () => {
             this.record('WINDOW_BLUR');
-            if (!this.auditOnly && this.config.preventMinimize && !this.window.isDestroyed()) this.window.focus();
+            this.restoreFocus();
         });
         this.listen(this.window, 'minimize', () => {
             this.record('WINDOW_MINIMIZED');
@@ -71,9 +81,30 @@ class AntiCheatGuard {
             this.listen(screen, event, displays);
         }
         displays();
+        if (!this.auditOnly && this.config.preventMinimize) {
+            this.focusWatch = setInterval(() => {
+                if (this.window.isDestroyed()) return;
+                if (this.window.isFocused?.() === false) this.restoreFocus();
+            }, 750);
+            this.focusWatch.unref?.();
+        }
         this.scan();
         this.timer = setInterval(() => this.scan(), Math.max(1000, this.config.checkProcessIntervalMs || 3000));
         this.timer.unref();
+    }
+
+    restoreFocus() {
+        if (this.auditOnly || !this.config.preventMinimize || this.focusTimer) return;
+        // Windows 在 blur 返回后才完成前台切换，必须延后恢复；弹窗打开时 stop 会取消任务。
+        const generation = this.generation;
+        this.focusTimer = setTimeout(() => {
+            this.focusTimer = null;
+            if (!this.running || generation !== this.generation || this.window.isDestroyed()) return;
+            if (this.window.isMinimized?.()) this.window.restore();
+            this.window.moveTop?.();
+            if (this.running && generation === this.generation && !this.window.isDestroyed()) this.window.focus();
+        }, 80);
+        this.focusTimer.unref?.();
     }
 
     scan() {
@@ -84,50 +115,79 @@ class AntiCheatGuard {
             this.scanning = false;
             return;
         }
-        const blacklist = this.config.processBlacklistByPlatform?.[this.platform] || (windows ? this.config.processBlacklist || [] : []);
-        execFile(
-            windows ? 'tasklist.exe' : '/bin/ps',
-            windows ? ['/fo', 'csv', '/nh'] : ['-axo', 'pid=,comm='],
-            { windowsHide: true, timeout: 5000, maxBuffer: 4 * 1024 * 1024 },
-            (error, output) => {
-                this.scanning = false;
-                if (!this.running) return;
-                if (error) {
-                    this.record('PROCESS_SCAN_UNAVAILABLE');
-                    return;
-                }
-                const detected = new Map();
-                for (const line of output.split(/\r?\n/)) {
-                    const match = windows ? line.match(/^"([^"]+)","(\d+)"/) : line.trim().match(/^(\d+)\s+(\S.*)$/);
-                    if (!match) continue;
-                    const name = windows ? match[1] : path.basename(match[2]);
-                    const pid = Number(windows ? match[2] : match[1]);
-                    if (pid === process.pid || pid < 2 || !blacklist.some((item) => item.toLowerCase() === name.toLowerCase())) {
-                        continue;
-                    }
-                    const processKey = `${pid}:${name}`;
-                    detected.set(processKey, name);
-                    if (this.detected.has(processKey)) continue;
-                    this.record('FORBIDDEN_PROCESS', name);
-                    if (!this.auditOnly && this.config.terminateBlacklisted === true) {
-                        execFile(
-                            windows ? 'taskkill.exe' : '/bin/kill',
-                            windows ? ['/F', '/T', '/PID', String(pid)] : ['-TERM', String(pid)],
-                            { windowsHide: true, timeout: 5000 },
-                            (killError) => this.record(killError ? 'PROCESS_TERMINATION_FAILED' : 'PROCESS_TERMINATED', name),
-                        );
-                    }
-                }
-                for (const [key, name] of this.detected) if (!detected.has(key)) this.record('FORBIDDEN_PROCESS_EXITED', name);
-                this.detected = detected;
-            },
-        );
+        const generation = this.generation;
+        const accept = (entries: ProcessInfo[]) => {
+            if (this.running && generation === this.generation) this.inspectProcesses(entries);
+        };
+        const failed = () => {
+            if (this.running && generation === this.generation) this.record('PROCESS_SCAN_UNAVAILABLE');
+        };
+        if (windows) {
+            this.scanner.snapshot().then(accept, failed).finally(() => { this.scanning = false; });
+            return;
+        }
+        execFile('/bin/ps', ['-axo', 'pid=,comm='], { timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, output) => {
+            this.scanning = false;
+            if (error) {
+                failed();
+                return;
+            }
+            const entries = output.split(/\r?\n/).flatMap((line) => {
+                const match = line.trim().match(/^(\d+)\s+(\S.*)$/);
+                return match ? [{
+                    pid: Number(match[1]), name: path.basename(match[2]), path: match[2],
+                    created: '0', originalName: '', sha256: '', signed: false,
+                }] : [];
+            });
+            accept(entries);
+        });
+    }
+
+    inspectProcesses(entries: ProcessInfo[]) {
+        const blacklist = this.config.processBlacklistByPlatform?.[this.platform]
+            || (this.platform === 'win32' ? this.config.processBlacklist || [] : []);
+        const forbidden = new Set(blacklist.map((name) => name.toLowerCase()));
+        const detected = new Map<string, string>();
+        for (const entry of entries) {
+            if (entry.pid === process.pid || entry.pid < 2) continue;
+            const named = forbidden.has(entry.name.toLowerCase());
+            const renamed = entry.signed && forbidden.has(entry.originalName.toLowerCase());
+            const hashed = /^[a-f0-9]{64}$/.test(entry.sha256) && this.knownHashes.has(entry.sha256);
+            if (!named && !renamed && !hashed) continue;
+            if ((named || renamed) && /^[a-f0-9]{64}$/.test(entry.sha256)) this.knownHashes.add(entry.sha256);
+            const processKey = `${entry.pid}:${entry.created}:${entry.name}`;
+            detected.set(processKey, entry.name);
+            if (this.detected.has(processKey)) continue;
+            this.logger?.logViolation({ source: 'ANTI_CHEAT', type: 'FORBIDDEN_PROCESS', target: entry.name,
+                detail: JSON.stringify({
+                    pid: entry.pid, path: entry.path, originalName: entry.originalName, sha256: entry.sha256, signed: entry.signed,
+                }) });
+            // 未识别进程不会自动判定作弊；macOS 始终只记录。终止时校验 PID 的创建时间。
+            if (!this.auditOnly && this.config.terminateBlacklisted === true) {
+                this.scanner.terminate(entry).then(
+                    () => this.record('PROCESS_TERMINATED', entry.name),
+                    () => this.record('PROCESS_TERMINATION_FAILED', entry.name),
+                );
+            }
+        }
+        for (const [key, name] of this.detected) if (!detected.has(key)) this.record('FORBIDDEN_PROCESS_EXITED', name);
+        this.detected = detected;
+    }
+
+    close() {
+        this.stop();
+        this.scanner.close();
     }
 
     stop() {
         this.running = false;
+        this.generation++;
+        if (!this.auditOnly && this.scanning) this.scanner.close();
         this.detected.clear();
         clearInterval(this.timer);
+        clearInterval(this.focusWatch);
+        clearTimeout(this.focusTimer);
+        this.focusTimer = null;
         for (const dispose of this.listeners.splice(0)) dispose();
         for (const shortcut of this.shortcuts.splice(0)) globalShortcut.unregister(shortcut);
     }

@@ -6,6 +6,7 @@ interface FirewallRuntime {
     trace?: Trace;
     activity?: ActivityRunner;
     lookup?: Parameters<typeof endpoints>[1];
+    auxiliaryEndpoints?: () => string[];
     verifyConnectivity?: () => Promise<unknown>;
     onFailure?: (error: import('../contracts').ClientError) => void;
     native?: FirewallGuard['native'];
@@ -19,6 +20,9 @@ class FirewallGuard {
     declare trace: Trace;
     declare activity: ActivityRunner;
     declare lookup: Parameters<typeof endpoints>[1];
+    declare auxiliaryEndpoints: () => string[];
+    declare lastPolicy: string;
+    declare refreshPending: Promise<unknown> | null;
     declare verifyConnectivity: () => Promise<unknown>;
     declare pending: Promise<unknown>;
     declare native:
@@ -35,6 +39,9 @@ class FirewallGuard {
         this.trace = runtime.trace || (() => {});
         this.activity = runtime.activity || ((_kind, _stage, action) => action());
         this.lookup = runtime.lookup;
+        this.auxiliaryEndpoints = runtime.auxiliaryEndpoints || (() => []);
+        this.lastPolicy = '';
+        this.refreshPending = null;
         this.verifyConnectivity = runtime.verifyConnectivity || (async () => {});
         this.pending = Promise.resolve();
         this.native =
@@ -65,6 +72,24 @@ class FirewallGuard {
         return result;
     }
 
+    async policy() {
+        return [await endpoints(this.config.exam.allowedOrigins, this.lookup), ...this.auxiliaryEndpoints()].join(';');
+    }
+
+    refresh() {
+        if (!this.isLocked || this.restorePending || this.cancelled) return Promise.resolve();
+        if (this.refreshPending) return this.refreshPending;
+        const pending = this.enqueue('refresh', async () => {
+            const policy = await this.policy();
+            if (!this.isLocked || this.cancelled || this.restorePending || policy === this.lastPolicy) return;
+            await this.native.lock(policy);
+            this.lastPolicy = policy;
+        });
+        this.refreshPending = pending;
+        pending.finally(() => { if (this.refreshPending === pending) this.refreshPending = null; }).catch(() => {});
+        return pending;
+    }
+
     lock() {
         if (this.platform === 'darwin') {
             if (!this.auditRecorded) {
@@ -85,12 +110,13 @@ class FirewallGuard {
         this.cancelled = false;
         const pending = this.enqueue('lock', async () => {
             this.trace('info', 'firewall.stage', { phase: 'resolve-destinations' });
-            const policy = await endpoints(this.config.exam.allowedOrigins, this.lookup);
+            const policy = await this.policy();
             this.trace('info', 'firewall.policy', { message: policy });
             if (this.cancelled) throw failure('NETWORK_CANCELLED', '用户已退出监考');
             const started = Date.now();
             try {
                 await this.native.lock(policy);
+                this.lastPolicy = policy;
                 this.trace('info', 'firewall.stage', { phase: 'verify-oj-connectivity' });
                 try {
                     await this.verifyConnectivity();
@@ -178,6 +204,8 @@ class FirewallGuard {
     }
 
     close() {
+        this.cancelled = true;
+        this.isLocked = false;
         this.native?.close();
     }
 }

@@ -41,7 +41,7 @@ function prepare(env = process.env, buildRoot = root) {
     const version = env.PROCTOR_CLIENT_VERSION || pkg.version;
     if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('PROCTOR_CLIENT_VERSION 必须为 x.y.z 格式');
     const buildVersion = validateBuildVersion(env.PROCTOR_CLIENT_BUILD_VERSION || pkg.buildVersion);
-    const nativeNetworkVersion = 1;
+    const nativeNetworkVersion = 2;
     atomicWrite(path.join(generated, 'build.json'), JSON.stringify({ version, buildVersion, nativeNetworkVersion, productName }));
     // 本地页面只读取公开展示名称，脚本与页面一起签名打包，不开放额外文件读取 IPC。
     atomicWrite(path.join(applicationRoot(buildRoot), 'app/renderer/assets/brand.js'), `window.hydroClientName = ${JSON.stringify(productName)};\n`);
