@@ -1,5 +1,6 @@
 /** 认证与请求证明的协议类型；网络和 IPC 输入仍必须经过运行时校验。 */
 export interface RouteContext {
+    rid?: string;
     origin: string;
     prefix: string;
     tid: string;
@@ -17,6 +18,7 @@ export interface DeviceIdentity {
 }
 
 export interface LoginIdentity {
+    rid?: string;
     uid: number;
     domainId: string;
     root: boolean;

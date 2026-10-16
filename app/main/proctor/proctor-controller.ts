@@ -172,9 +172,9 @@ class ProctorController {
     }
 
     identityKey(url: string) {
-        const { origin, prefix, tid, problem } = contextFromUrl(url);
+        const { origin, prefix, tid, problem, rid } = contextFromUrl(url);
         if (!this.config.exam.allowedOrigins.includes(origin)) throw new Error('考试地址不在信任范围内');
-        return canonical({ origin, prefix, tid, problem });
+        return canonical({ origin, prefix, tid, problem, rid: rid || '' });
     }
 
     async cachedIdentity(url: string, key: string) {
@@ -182,6 +182,10 @@ class ProctorController {
         if (!entry || entry.validUntil <= Date.now() || Date.parse(entry.login.expiresAt) <= Date.now() + 5000) return null;
         const current = { ...entry.record, context: contextFromUrl(url), login: entry.login };
         if (current.auth && !current.completed && !current.auth.session) return null;
+        if (current.context.rid && current.login.tid) {
+            current.context = { ...current.context, tid: current.login.tid,
+                proctorPath: `${current.context.prefix}/contest/${current.login.tid}/proctor` };
+        }
         this.current = current;
         this.lastUrl = url;
         await this.onIdentity(current.login);
@@ -306,6 +310,10 @@ class ProctorController {
             throw error;
         }
         if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
+        if (context.rid && login.tid) {
+            context.tid = login.tid;
+            context.proctorPath = `${context.prefix}/contest/${login.tid}/proctor`;
+        }
         if (this.current && this.current.login.uid !== login.uid) this.identityCache.clear();
         if (login.root || !login.uid || !login.proctorEnabled) await this.onIdentity(login);
         this.lastUrl = url;
@@ -441,7 +449,7 @@ class ProctorController {
             .then(async () => {
                 if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
                 if (this.finishing) throw new Error('监考正在结束，禁止新提交');
-                if (['problem_view', 'contest_view'].includes(request?.action)) return this.accessHeaders(url, request);
+                if (['problem_view', 'contest_view', 'record_view'].includes(request?.action)) return this.accessHeaders(url, request);
                 const record = await this.sync(url);
                 const payload = submission(request, record.context, record.login);
                 requireOpenAttempt(record);
@@ -473,8 +481,12 @@ class ProctorController {
         if (!current.login.uid) throw new Error('请登录后验证监考客户端');
         const uid = current.login.uid;
         const domainId = current.login.domainId;
-        const record = this.identityKey(url) === this.identityKey(target.identityUrl) ? current : await this.sync(target.identityUrl);
+        // 有明确比赛上下文时，在握手前让服务端核对记录归属，不能先开启另一场监考。
+        const identityUrl = target.action === 'record_view' && source.tid
+            ? `${target.identityUrl}?tid=${source.tid}` : target.identityUrl;
+        const record = this.identityKey(url) === this.identityKey(identityUrl) ? current : await this.sync(identityUrl);
         if (record.login.uid !== uid || record.login.domainId !== domainId) throw new Error('登录身份已变更，请重新验证');
+        if (source.tid && record.context.tid !== source.tid) throw new Error('记录不属于当前比赛');
         if (!record.login.proctorEnabled) return {};
         if (this.finishing) throw new Error('监考正在结束，不能继续做题');
         requireOpenAttempt(record);
@@ -484,7 +496,8 @@ class ProctorController {
         this.status();
         // 实际受保护的 GET 请求会在 OJ 校验当前监考会话；
         // 每个资源额外查询一次状态只会增加延迟，不会提供额外授权。
-        record.journal.append(request.action === 'problem_view' ? 'PROBLEM_VIEW' : 'CONTEST_VIEW', target.payload);
+        record.journal.append(request.action === 'record_view' ? 'RECORD_VIEW'
+            : request.action === 'problem_view' ? 'PROBLEM_VIEW' : 'CONTEST_VIEW', target.payload);
         return record.auth.proof(request.action, request.path, target.payload, 'GET');
     }
 

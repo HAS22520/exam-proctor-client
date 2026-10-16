@@ -23,7 +23,7 @@ class ProctorRequestGuard {
             & Partial<Pick<Electron.OnBeforeSendHeadersListenerDetails, 'webContentsId' | 'resourceType'>>,
     ) {
         const url = new URL(details.url);
-        const origin = url.origin;
+        const origin = url.origin.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
         const original = details.requestHeaders;
         const token = Object.entries(original).find(([name]) => name.toLowerCase() === 'x-proctor-token')?.[1];
         const owner = [...this.controller.records.values()].find((record) => record.auth?.session?.token === token && token);

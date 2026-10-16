@@ -73,6 +73,9 @@ function contextFromUrl(value: string): RouteContext {
         origin: url.origin,
         prefix,
         tid,
+        ...(/^\/record\/[a-f0-9]{24}(?:\/replay(?:\/data)?)?$/i.test(path)
+            ? { rid: path.split('/')[2].toLowerCase() }
+            : {}),
         problem: decodeURIComponent(problem),
         identityPath: `${prefix}/proctor/identity`,
         proctorPath: tid ? `${prefix}/contest/${tid}/proctor` : '',

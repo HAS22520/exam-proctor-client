@@ -21,6 +21,7 @@ async function identity(transport: Transport, context: RouteContext, trust: Trus
         clientNonce,
         ...(context.tid ? { tid: context.tid } : {}),
         ...(context.problem ? { problem: context.problem } : {}),
+        ...(context.rid ? { rid: context.rid } : {}),
     });
     const payload = verifyEnvelope<LoginIdentity>(response, trust.authPublicKey, {
         protocol: PROTOCOL,
@@ -28,11 +29,14 @@ async function identity(transport: Transport, context: RouteContext, trust: Trus
         keyId: trust.keyId,
         origin: context.origin,
         clientNonce,
-        tid: context.tid,
+        ...(context.rid ? { rid: context.rid, ...(context.tid ? { tid: context.tid } : {}) } : { tid: context.tid }),
         routePid: context.problem,
     });
     if (
-        !Number.isSafeInteger(payload.uid)
+        typeof payload.tid !== 'string'
+        || (payload.tid !== '' && !/^[a-f0-9]{24}$/.test(payload.tid))
+        || (context.rid && payload.proctorEnabled && !payload.tid)
+        || !Number.isSafeInteger(payload.uid)
         || payload.uid < 0
         || typeof payload.domainId !== 'string'
         || typeof payload.root !== 'boolean'
@@ -187,7 +191,7 @@ class ProctorAuth {
     }
 
     proof(action: string, path: string, payload: unknown, method = 'POST') {
-        if (method !== (['problem_view', 'contest_view'].includes(action) ? 'GET' : 'POST')) {
+        if (method !== (['problem_view', 'contest_view', 'record_view'].includes(action) ? 'GET' : 'POST')) {
             throw new Error('监考证明的请求方法无效');
         }
         if (!this.session || Date.now() >= Date.parse(this.session.expiresAt)) throw new Error('监考会话已过期');
