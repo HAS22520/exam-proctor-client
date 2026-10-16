@@ -306,3 +306,35 @@ test('受保护读取显示被拒绝的版本，版本拒绝后不转发凭据',
 });
 
 export {};
+
+test('记录读取白名单限制记录编号、动作和域路径，实时连接绑定独立记录', async () => {
+    const rid = 'abcdef1234567890abcdef12';
+    const source = contextFromUrl(`${origin}/d/exam/contest/${tid}`);
+    for (const suffix of ['', '/replay', '/replay/data']) {
+        const path = `/d/exam/record/${rid}${suffix}`;
+        const target = accessTarget(`${origin}${path}?download=true`);
+        assert.equal(target.action, 'record_view');
+        assert.deepEqual(target.payload, { rid });
+        assert.equal(accessRequest({ action: 'record_view', method: 'GET', path, payload: { rid } }, source).path, path);
+    }
+    assert.equal(accessTarget(`${origin}/record/not-an-id`), null);
+    assert.equal(accessTarget(`${origin}/record/${rid}/manage`), null);
+    const request = { action: 'record_view', method: 'GET', path: `/d/exam/record/${rid}`, payload: { rid } };
+    assert.throws(() => accessRequest({ ...request, path: `/d/other/record/${rid}` }, source));
+    assert.throws(() => accessRequest({ ...request, payload: { rid: 'f'.repeat(24) } }, source));
+    assert.throws(() => accessRequest({ ...request, payload: { rid, tid } }, source));
+    assert.throws(() => accessRequest({ ...request, method: 'POST' }, source));
+    const target = accessTarget(`wss://oj.example.com/d/exam/record-detail-conn?rid=${rid}`);
+    assert.deepEqual(target.payload, { rid });
+    assert.equal(accessTarget(`wss://oj.example.com/d/exam/record-detail-conn?rid=${rid}&rid=${rid}`), null);
+    const calls: any[] = [];
+    const guard = new ProctorRequestGuard({ records: new Map(), headers: async (...args: any[]) => {
+        calls.push(args);
+        return { 'x-proctor-token': 'token', 'x-proctor-proof': 'proof' };
+    } } as any, { exam: { allowedOrigins: [origin] } }, { id: 1, getURL: () => `${origin}/d/exam/record/${rid}` });
+    const headers = await guard.headers({ url: `wss://oj.example.com/d/exam/record-detail-conn?rid=${rid}`,
+        method: 'GET', webContentsId: 1, resourceType: 'webSocket', requestHeaders: {} });
+    assert.equal(headers['x-proctor-proof'], 'proof');
+    assert.equal(calls[0][1].path, '/d/exam/record-detail-conn');
+    assert.deepEqual(calls[0][1].payload, { rid });
+});

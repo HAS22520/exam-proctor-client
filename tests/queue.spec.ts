@@ -9,7 +9,7 @@ import { hasUnfinishedJournals } from '../app/main/updates/update-cache';
 import { auth, decryptLog, forEachSerial, store, trust, workspace } from './helpers';
 
 const contestUrl = 'https://oj.example.com/d/exam/contest/1234567890abcdef12345678';
-function fixture(t) {
+function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
     const directory = workspace(t);
     const protectedStore = store(path.join(directory, 'secrets'));
     let offline = false;
@@ -44,7 +44,8 @@ function fixture(t) {
                     uid,
                     domainId: 'exam',
                     root: false,
-                    tid: body.tid || '',
+                    tid: body.rid ? recordOptions.tid || '1234567890abcdef12345678' : body.tid || '',
+                    ...(body.rid ? { rid: recordOptions.rid || body.rid } : {}),
                     routePid: body.problem || '',
                     pid: 100,
                     proctorEnabled: true,
@@ -604,3 +605,48 @@ test('暂停保留服务端开放会话和加密日志，重启续写后再最�
 });
 
 export {};
+
+test('记录、下载和回放依据服务端签名解析比赛，复用个人会话且每次读取生成独立证明', async (t) => {
+    const f = fixture(t);
+    const controller = new ProctorController(f.options);
+    try {
+        const rid = 'abcdef1234567890abcdef12';
+        const url = `https://oj.example.com/d/exam/record/${rid}`;
+        await controller.sync(url);
+        assert.equal(controller.current.context.tid, '1234567890abcdef12345678');
+        assert.ok(controller.current.journal);
+        const nonces = new Set();
+        await forEachSerial(['', '/replay', '/replay/data'], async (suffix) => {
+            const requestPath = `/d/exam/record/${rid}${suffix}`;
+            const headers = await controller.headers(url, { action: 'record_view', method: 'GET', path: requestPath, payload: { rid } });
+            const proof = JSON.parse(Buffer.from(headers['x-proctor-proof'], 'base64url').toString());
+            assert.equal(proof.payload.action, 'record_view');
+            assert.equal(proof.payload.path, requestPath);
+            assert.equal(proof.payload.payloadHash, digest(canonical({ rid })));
+            assert.ok(verify(proof.payload, proof.signature, f.options.protectedStore.device().publicKey));
+            nonces.add(proof.payload.nonce);
+        });
+        assert.equal(nonces.size, 3);
+        assert.equal(controller.records.size, 1);
+        assert.equal(f.requests.filter((request) => request.operation === 'handshake').length, 1);
+    } finally {
+        controller.shutdown();
+    }
+});
+
+test('记录读取拒绝错误签名归属、跨比赛及已结束个人监考', async (t) => {
+    const rid = 'abcdef1234567890abcdef12';
+    const request = { action: 'record_view', method: 'GET', path: `/d/exam/record/${rid}`, payload: { rid } };
+    const wrong = new ProctorController(fixture(t, { rid: 'f'.repeat(24) }).options);
+    await assert.rejects(wrong.headers(contestUrl, request));
+    const cross = new ProctorController(fixture(t, { tid: 'f'.repeat(24) }).options);
+    await assert.rejects(cross.headers(contestUrl, request));
+    const f = fixture(t);
+    const controller = new ProctorController(f.options);
+    await controller.sync(contestUrl);
+    await controller.finish();
+    await assert.rejects(controller.headers(contestUrl, request), /本场监考已结束|监考正在结束/);
+    wrong.shutdown();
+    cross.shutdown();
+    controller.shutdown();
+});
