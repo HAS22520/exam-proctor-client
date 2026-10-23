@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { LogRetryControls } from '../app/renderer/components/LogRetryControls';
 import { panelView } from '../app/renderer/lib/panel-view';
 import { activityTiming } from '../app/renderer/lib/status-view';
 import { DialogContent } from '../app/renderer/pages/DialogPage';
@@ -11,6 +12,26 @@ import { UploadContent } from '../app/renderer/pages/UploadPage';
 import { applicationRoot, projectRoot } from '../scripts/project-layout';
 
 // 静态 React 渲染与状态逻辑回归；不启动浏览器或进行 UI 验收。
+test('补传入口始终展示，按登录及忙碌状态禁用，展示逐份进度与未结束日志提醒', () => {
+    const render = (status, pending = false) => renderToStaticMarkup(createElement(LogRetryControls, { status, pending, onRetry() {} }));
+    assert.match(render({}), /disabled=""[^>]*title="请先登录原考试账号"[^>]*>补传日志/);
+    assert.doesNotMatch(render({ loggedIn: true, pendingUploads: 0 }), /disabled=""/);
+    const html = render({
+        loggedIn: true,
+        retrying: true,
+        logRetry: { phase: 'uploading', total: 3, uploaded: 1, failed: 1, unreadable: 1, open: 2 },
+        upload: { phase: 'uploading', tid: '1'.repeat(24), percent: 50, sent: 100, total: 200 },
+    });
+    assert.match(html, /disabled=""/);
+    assert.match(html, /补传中…/);
+    assert.match(html, /已上传 1\/3 份，失败 1 份/);
+    assert.match(html, /50%（100 \/ 200 字节）/);
+    assert.match(html, /<progress[^>]*value="50"/);
+    assert.match(html, /另有 2 场监考尚未结束/);
+    assert.match(html, /有 1 份日志状态无法读取/);
+    assert.match(render({ loggedIn: true, logRetry: { phase: 'complete', total: 0 } }), /没有已结束且待补传的日志/);
+});
+
 test('React 上传页收到回执后才允许退出，区分离线保留并转义提示内容', () => {
     const render = (status) => renderToStaticMarkup(createElement(UploadContent, { status, onExit: () => {} }));
     assert.match(render({ upload: { phase: 'verifying', percent: 100 }, exitReady: false }), /disabled=""/);

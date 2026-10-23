@@ -5,6 +5,7 @@ import { waitWhile } from '../../shared/async';
 import AuditLogger = require('../audit/audit-logger');
 import type { ProtectedStore } from '../audit/device-store';
 import { atomicWrite } from '../audit/device-store';
+import { scanJournals } from '../audit/journal-scan';
 import type {
     ActivityRunner,
     ClientConfig,
@@ -12,6 +13,7 @@ import type {
     ClientStatus,
     DeviceIdentity,
     LoginIdentity,
+    LogRetryStatus,
     ProofRequest,
     RouteContext,
     SubmissionPayload,
@@ -43,6 +45,11 @@ interface ControllerOptions {
     trace?: Trace;
     activity?: ActivityRunner;
     createTransport?: (origin: string, timeout?: number) => Transport;
+}
+
+interface SyncOptions {
+    force?: boolean;
+    restoreJournals?: boolean;
 }
 
 function submission(request: ProofRequest, context: RouteContext, login: LoginIdentity) {
@@ -110,6 +117,8 @@ class ProctorController {
     declare syncPending: Promise<ControllerRecord> | null;
     declare finishing: boolean;
     declare retryPending: Promise<void> | null;
+    declare manualRetryPending: Promise<LogRetryStatus> | null;
+    declare logRetry: LogRetryStatus | null;
     declare proofPending: Promise<void>;
     declare uploadProgress: UploadProgress | null;
     declare identityCache: Map<string, { record: ControllerRecord, login: LoginIdentity, validUntil: number }>;
@@ -151,6 +160,8 @@ class ProctorController {
         this.syncPending = null;
         this.finishing = false;
         this.retryPending = null;
+        this.manualRetryPending = null;
+        this.logRetry = null;
         this.proofPending = Promise.resolve();
         this.uploadProgress = null;
         this.identityCache = new Map();
@@ -167,6 +178,7 @@ class ProctorController {
         this.pendingIdentities.clear();
         this.current = null;
         this.lastUrl = null;
+        this.logRetry = null;
         for (const record of this.records.values()) if (record.auth) record.auth.session = null;
         this.status('登录状态已变化，请重新验证身份。');
     }
@@ -201,20 +213,8 @@ class ProctorController {
                 : [...this.records.values()].find(
                     (record) => record.login.uid === this.current?.login.uid && record.journal?.state.phase === 'open',
                 );
-        let pendingUploads = 0;
-        if (fs.existsSync(this.directory)) {
-            for (const entry of fs.readdirSync(this.directory)) {
-                if (!/^[a-f0-9]{64}$/.test(entry)) continue;
-                try {
-                    const state = JSON.parse(fs.readFileSync(path.join(this.directory, entry, 'state.json'), 'utf8'));
-                    if (['closing', 'pending-upload'].includes(state.phase) && state.binding.uid === this.current?.login.uid) {
-                        pendingUploads++;
-                    }
-                } catch {
-                    /* 损坏状态交由恢复流程处理，此处不能直接覆盖。 */
-                }
-            }
-        }
+        const pendingUploads = scanJournals(this.directory, this.current?.login.uid, this.config.exam.allowedOrigins)
+            .entries.filter(({ state }) => ['closing', 'pending-upload'].includes(state.phase)).length;
         const ended = !!active?.completed || (!!active?.journal && active.journal.state.phase !== 'open');
         const phase =
             !ended && this.authenticationError
@@ -238,6 +238,9 @@ class ProctorController {
             createdAt: active?.journal?.state.createdAt || null,
             root: !!this.current?.login.root,
             pendingUploads,
+            loggedIn: !!this.current?.login.uid,
+            retrying: !!this.manualRetryPending || !!this.retryPending || ['scanning', 'uploading'].includes(this.logRetry?.phase),
+            logRetry: this.logRetry && { ...this.logRetry },
             finishing: this.finishing,
             upload: this.uploadProgress,
             message:
@@ -251,11 +254,11 @@ class ProctorController {
         this.status(proctorErrorMessage(error, this.version));
     }
 
-    sync(url: string, options: { force?: boolean } = {}) {
+    sync(url: string, options: SyncOptions = {}) {
         const epoch = this.identityEpoch;
         let key;
         try {
-            key = `${this.identityEpoch}:${!!options.force}:${this.identityKey(url)}`;
+            key = `${this.identityEpoch}:${!!options.force}:${options.restoreJournals !== false}:${this.identityKey(url)}`;
         } catch (error) {
             return Promise.reject(error);
         }
@@ -280,7 +283,7 @@ class ProctorController {
         return work;
     }
 
-    async syncSerial(url: string, { force = false }: { force?: boolean } = {}) {
+    async syncSerial(url: string, { force = false, restoreJournals = true }: SyncOptions = {}) {
         if (this.finishing) throw new Error('监考正在结束，请等待日志处理完成');
         const key = this.identityKey(url);
         const epoch = this.identityEpoch;
@@ -289,14 +292,16 @@ class ProctorController {
             if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
             if (cached) return cached;
         }
-        const record = await this.syncNow(url, epoch);
+        const record = await this.syncNow(url, epoch, restoreJournals);
         if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
+        // 补传只验证账号，不能让这次检查阻止下一次正常导航恢复开放监考。
+        if (!restoreJournals) return record;
         this.identityCache.set(key, { record, login: record.login, validUntil: Date.now() + 20000 });
         if (this.identityCache.size > 64) this.identityCache.delete(this.identityCache.keys().next().value);
         return record;
     }
 
-    async syncNow(url: string, epoch: number) {
+    async syncNow(url: string, epoch: number, restoreJournals = true) {
         const context = contextFromUrl(url);
         if (!this.config.exam.allowedOrigins.includes(context.origin)) throw new Error('考试地址不在信任范围内');
         const transport = this.createTransport(context.origin);
@@ -319,7 +324,7 @@ class ProctorController {
         this.lastUrl = url;
         if (!login.uid || !login.proctorEnabled || !context.tid) {
             this.current = { login, context, transport };
-            if (login.uid) await this.resumeOpen();
+            if (login.uid && restoreJournals) await this.resumeOpen();
             if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
             await this.onIdentity(login);
             this.authenticationError = null;
@@ -395,11 +400,10 @@ class ProctorController {
         if (!fs.existsSync(this.directory)) return;
         const current = this.current;
         const epoch = this.identityEpoch;
-        for await (const entry of fs.readdirSync(this.directory)) {
+        const { entries } = scanJournals(this.directory, current.login.uid, this.config.exam.allowedOrigins, this.trace);
+        for await (const { key: entry, directory, state } of entries) {
             if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
-            if (!/^[a-f0-9]{64}$/.test(entry) || this.records.has(entry)) continue;
-            const directory = path.join(this.directory, entry);
-            const state = JSON.parse(fs.readFileSync(path.join(directory, 'state.json'), 'utf8'));
+            if (this.records.has(entry)) continue;
             if (
                 state.phase !== 'open'
                 || state.binding.uid !== current.login.uid
@@ -527,18 +531,24 @@ class ProctorController {
         return false;
     }
 
-    async upload(record: ControllerRecord) {
+    async upload(record: ControllerRecord, assertIdentity: () => void = () => {}) {
+        assertIdentity();
         this.progress('preparing', record);
         const filename = await record.journal.finalize();
+        assertIdentity();
         const size = fs.statSync(filename).size;
         const hash = crypto.createHash('sha256');
         for await (const chunk of fs.createReadStream(filename)) hash.update(chunk);
+        assertIdentity();
         const sha256 = hash.digest('hex');
         if (await this.confirmedUpload(record, sha256)) {
+            assertIdentity();
             this.progress('complete', record, { percent: 100 });
             return;
         }
+        assertIdentity();
         const session = await record.auth.ensure();
+        assertIdentity();
         if (session.completed) {
             if (!(await this.confirmedUpload(record, sha256))) throw new Error('服务端回执与本地日志不匹配');
             this.progress('complete', record, { percent: 100 });
@@ -570,6 +580,7 @@ class ProctorController {
         // 先停止生成新证明，再等待已排队的认证和提交完成。
         await this.proofPending.catch(() => {});
         if (this.syncPending) await this.syncPending.catch(() => {});
+        if (this.manualRetryPending) await this.manualRetryPending.catch(() => {});
         const deadline = Date.now() + 30000;
         await waitWhile(() => this.inFlight.size > 0, deadline);
         for (const record of this.records.values()) {
@@ -589,6 +600,7 @@ class ProctorController {
         await beforeFinish();
         await this.proofPending;
         if (this.syncPending) await this.syncPending.catch(() => {});
+        if (this.manualRetryPending) await this.manualRetryPending.catch(() => {});
         if (this.retryPending) await this.retryPending;
         const active = [...this.records.values()].filter((record) => record.journal && record.journal.state.phase !== 'uploaded');
         const deadline = Date.now() + 30000;
@@ -633,48 +645,81 @@ class ProctorController {
         return allUploaded;
     }
 
-    async retryManually(url: string) {
-        await this.sync(url);
-        const uid = this.current?.login.uid;
-        if (!uid || this.finishing) throw new Error('请登录原考试账号后补传');
-        if (this.retryPending) await this.retryPending;
-        if (fs.existsSync(this.directory)) {
-            for (const entry of fs.readdirSync(this.directory)) {
-                if (!/^[a-f0-9]{64}$/.test(entry)) continue;
-                const filename = path.join(this.directory, entry, 'state.json');
-                const state = JSON.parse(fs.readFileSync(filename, 'utf8'));
-                if (state.binding.uid !== uid || !['closing', 'pending-upload'].includes(state.phase)) continue;
-                state.permanentError = false;
-                state.retryAfter = 0;
-                atomicWrite(filename, JSON.stringify(state));
-            }
-        }
-        await this.retryUploads();
+    retryManually(url: string) {
+        if (this.finishing) return Promise.reject(new Error('监考正在结束，请等待日志处理完成'));
+        // 主进程合并重复点击，不能只依赖按钮的禁用状态。
+        if (this.manualRetryPending) return this.manualRetryPending;
+        this.manualRetryPending = this.retryManuallyNow(url).finally(() => {
+            this.manualRetryPending = null;
+            this.status();
+        });
+        return this.manualRetryPending;
     }
 
-    async retryUploads() {
-        if (this.retryPending || this.finishing || !this.current?.login.uid) return;
-        this.retryPending = this.retryUploadsNow();
+    private async retryManuallyNow(url: string) {
+        const epoch = this.identityEpoch;
+        const result: LogRetryStatus = { phase: 'scanning', total: 0, uploaded: 0, failed: 0, unreadable: 0, open: 0 };
+        this.logRetry = result;
+        this.uploadProgress = null;
+        this.status('正在验证账号并扫描本机待补传日志');
+        try {
+            // 显式补传不使用缓存身份；服务端仍校验每场比赛的账号、会话和日志签名。
+            const context = contextFromUrl(url);
+            // 使用域首页验证登录即可；历史开放监考的握手失败不能阻塞已封存日志的补传。
+            await this.sync(`${context.origin}${context.prefix}/`, { force: true, restoreJournals: false });
+            const uid = this.current?.login.uid;
+            if (!uid || this.finishing) throw new Error('请登录原考试账号后补传');
+            if (this.retryPending) await this.retryPending;
+            if (epoch !== this.identityEpoch || this.current?.login.uid !== uid) throw new Error('登录状态已变化，请重新补传');
+            const { entries, unreadable } = scanJournals(this.directory, uid, this.config.exam.allowedOrigins, this.trace);
+            result.unreadable = unreadable;
+            result.open = entries.filter(({ state }) => state.phase === 'open').length;
+            const pending = entries.filter(({ state }) => ['closing', 'pending-upload'].includes(state.phase));
+            result.total = pending.length;
+            for (const { key, directory, state } of pending) {
+                state.permanentError = false;
+                state.retryAfter = 0;
+                atomicWrite(path.join(directory, 'state.json'), JSON.stringify(state));
+                const journal = this.records.get(key)?.journal;
+                if (journal) Object.assign(journal.state, { permanentError: false, retryAfter: 0 });
+            }
+            result.phase = 'uploading';
+            this.status();
+            await this.retryUploads(true);
+            if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新补传');
+            result.phase = 'complete';
+            this.status();
+            return { ...result };
+        } catch (error) {
+            result.phase = 'failed';
+            if (epoch === this.identityEpoch) this.status();
+            throw error;
+        }
+    }
+
+    async retryUploads(manual = false) {
+        if (this.retryPending || this.finishing || !this.current?.login.uid || (this.manualRetryPending && !manual)) return;
+        this.retryPending = this.retryUploadsNow(manual);
         try {
             await this.retryPending;
         } finally {
             this.retryPending = null;
+            this.status();
         }
     }
 
-    async retryUploadsNow() {
+    async retryUploadsNow(manual = false) {
         fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-        for await (const entry of fs.readdirSync(this.directory)) {
-            if (!/^[a-f0-9]{64}$/.test(entry)) continue;
-            const directory = path.join(this.directory, entry);
-            const filename = path.join(directory, 'state.json');
-            if (!fs.existsSync(filename)) continue;
-            const state = JSON.parse(fs.readFileSync(filename, 'utf8'));
+        const current = this.current;
+        const epoch = this.identityEpoch;
+        const { entries } = scanJournals(this.directory, current.login.uid, this.config.exam.allowedOrigins, this.trace);
+        for await (const { key: entry, directory, state } of entries) {
+            if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新补传');
             if (
                 !['closing', 'pending-upload'].includes(state.phase)
                 || state.retryAfter > Date.now()
                 || (state.permanentError && state.failureVersion === this.version && state.failureKeyId === this.config.trust.keyId)
-                || state.binding.uid !== this.current.login.uid
+                || state.binding.uid !== current.login.uid
                 || !this.config.exam.allowedOrigins.includes(state.binding.origin)
             ) {
                 continue;
@@ -682,13 +727,16 @@ class ProctorController {
             let record;
             try {
                 const prefix =
-                    this.current.context.origin === state.binding.origin && this.current.login.domainId === state.binding.domainId
-                        ? this.current.context.prefix
+                    current.context.origin === state.binding.origin && current.login.domainId === state.binding.domainId
+                        ? current.context.prefix
                         : `/d/${encodeURIComponent(state.binding.domainId)}`;
                 const context = contextFromUrl(`${state.binding.origin}${prefix}/contest/${state.binding.tid}`);
                 const transport = this.createTransport(context.origin, 120000);
                 const login = await identity(transport, context, this.config.trust);
-                if (login.uid !== state.binding.uid || login.domainId !== state.binding.domainId) continue;
+                if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新补传');
+                if (login.uid !== state.binding.uid || login.domainId !== state.binding.domainId) {
+                    throw new Error('该比赛的登录账号与原考试账号不一致');
+                }
                 record = this.records.get(entry) || {
                     context,
                     login,
@@ -718,8 +766,13 @@ class ProctorController {
                     attemptId: state.binding.attemptId,
                 });
                 this.records.set(entry, record);
-                await this.upload(record);
+                await this.upload(record, () => {
+                    if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新补传');
+                });
+                if (manual && this.logRetry) this.logRetry.uploaded++;
             } catch (error) {
+                if (epoch !== this.identityEpoch) throw error;
+                if (manual && this.logRetry) this.logRetry.failed++;
                 this.trace('error', 'logs.retry-failed', { name: error.name, status: error.status, message: error.message });
                 if (record?.journal) {
                     const count = (record.journal.state.retryCount || 0) + 1;
@@ -736,6 +789,7 @@ class ProctorController {
                 }
                 this.status('存在待补传日志；版本、密钥或环境错误需管理员处理');
             }
+            this.status();
         }
         const pending = [...this.records.values()].some((record) => record.journal?.state.phase === 'pending-upload');
         this.status(pending ? '日志尚未上传，成绩待确认；请检查联网、账号和服务端策略' : '');

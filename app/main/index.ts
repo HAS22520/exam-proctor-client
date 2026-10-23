@@ -726,7 +726,7 @@ app.whenReady()
             await requestExit();
         });
         ipcMain.handle('exam:retry', async (event) => {
-            await controller.retryManually(ipcContext(event));
+            return controller.retryManually(ipcContext(event));
         });
         ipcMain.handle('exam:upload-status', (event) => {
             uploadContext(event);

@@ -17,12 +17,18 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
     let challenge;
     let attempts = 0;
     let loseResponse = false;
+    let activeTid = '1234567890abcdef12345678';
+    const blockedUploads = new Set<string>();
     const accounts = new Map();
     const account = () => {
-        if (!accounts.has(uid)) {
-            accounts.set(uid, { state: 'open', attemptId: uid === 7 ? 'b'.repeat(24) : uid.toString(16).padStart(24, '0') });
+        const key = `${uid}:${activeTid}`;
+        if (!accounts.has(key)) {
+            const attemptId = activeTid === '1234567890abcdef12345678'
+                ? uid === 7 ? 'b'.repeat(24) : uid.toString(16).padStart(24, '0')
+                : digest(key).slice(0, 24);
+            accounts.set(key, { state: 'open', attemptId });
         }
-        return accounts.get(uid);
+        return accounts.get(key);
     };
     const requests = [];
     const tokens = new Map();
@@ -32,6 +38,8 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
         fetch: async (url, request) => {
             if (offline) throw new Error('网络已断开');
             const body = typeof request.body === 'string' ? JSON.parse(request.body.toString()) : request.body;
+            activeTid = new URL(url).pathname.match(/\/contest\/([a-f\d]{24})/)?.[1]
+                || body?.tid || '1234567890abcdef12345678';
             requests.push({ url: String(url), method: request.method, operation: body?.operation });
             let response;
             if (String(url).endsWith('/proctor/identity')) {
@@ -91,7 +99,7 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
                     origin: 'https://oj.example.com',
                     uid,
                     domainId: 'exam',
-                    tid: '1234567890abcdef12345678',
+                    tid: activeTid,
                     fingerprint: body.fingerprint,
                     version: body.version,
                     publicKey: body.publicKey,
@@ -130,6 +138,7 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
                 account().state = 'closing';
                 response = { ok: true };
             } else if (body instanceof FormData) {
+                if (blockedUploads.has(activeTid)) throw new Error('该比赛暂时无法上传');
                 attempts++;
                 const file = body.get('file') as File;
                 const bytes = Buffer.from(await file.arrayBuffer());
@@ -181,6 +190,7 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
         options,
         statuses,
         requests,
+        blockedUploads,
         get attempts() {
             return attempts;
         },
@@ -480,6 +490,137 @@ test('显式重试仅对签名确认的当前账号解除策略暂停', async (t
     await restarted.retryManually('https://oj.example.com/d/exam/');
     assert.equal(f.attempts, 1);
     assert.equal([...restarted.records.values()][0].journal.state.phase, 'uploaded');
+});
+
+test('主动扫描跨比赛补传，隔离单份失败和损坏状态，不结束开放监考或上传其他账号日志', async (t) => {
+    const f = fixture(t);
+    const tids = ['1'.repeat(24), '2'.repeat(24)];
+    const saved: { directory: string, bytes: Buffer }[] = [];
+    await forEachSerial(tids, async (tid) => {
+        const controller = new ProctorController(f.options);
+        await controller.sync(contestUrl.replace(/[^/]+$/, tid));
+        f.offline = true;
+        assert.equal(await controller.finish(), false);
+        const { directory } = controller.current.journal;
+        saved.push({ directory, bytes: fs.readFileSync(path.join(directory, 'final.hplog')) });
+        controller.shutdown();
+        f.offline = false;
+    });
+    const open = new ProctorController(f.options);
+    await open.sync(contestUrl);
+    await open.pause();
+    open.shutdown();
+    const openBytes = fs.readFileSync(open.current.journal.journalPath);
+    f.uid = 8;
+    const other = new ProctorController(f.options);
+    await other.sync(contestUrl);
+    f.offline = true;
+    await other.finish();
+    other.shutdown();
+    f.offline = false;
+    f.uid = 7;
+    const broken = path.join(f.options.directory, '0'.repeat(64));
+    fs.mkdirSync(broken);
+    fs.writeFileSync(path.join(broken, 'state.json'), '损坏状态');
+    f.blockedUploads.add(tids[0]);
+    const restarted = new ProctorController(f.options);
+    const before = f.requests.filter((item) => item.operation === 'finish').length;
+    const work = restarted.retryManually('https://oj.example.com/d/exam/');
+    assert.equal(restarted.retryManually('https://oj.example.com/d/exam/'), work, '并发点击共用同一轮扫描');
+    assert.deepEqual(await work, { phase: 'complete', total: 2, uploaded: 1, failed: 1, unreadable: 1, open: 1 });
+    assert.equal(f.attempts, 1);
+    assert.equal(f.requests.filter((item) => item.operation === 'finish').length, before);
+    assert.equal([...restarted.records.values()].some((record) => record.journal?.state.phase === 'open'), false,
+        '补传扫描不恢复或重新握手历史开放监考');
+    assert.equal(JSON.parse(fs.readFileSync(open.current.journal.statePath, 'utf8')).phase, 'open');
+    assert.deepEqual(fs.readFileSync(open.current.journal.journalPath), openBytes);
+    assert.equal(JSON.parse(fs.readFileSync(other.current.journal.statePath, 'utf8')).phase, 'pending-upload');
+    for (const item of saved) assert.deepEqual(fs.readFileSync(path.join(item.directory, 'final.hplog')), item.bytes);
+    assert.equal(fs.readFileSync(path.join(broken, 'state.json'), 'utf8'), '损坏状态');
+    assert.ok(f.statuses.some((status) => status.logRetry?.total === 2 && status.upload?.percent === 50));
+    assert.equal(f.statuses.at(-1).retrying, false);
+    f.blockedUploads.clear();
+    assert.equal((await restarted.retryManually('https://oj.example.com/d/exam/')).uploaded, 1);
+    assert.equal(f.attempts, 2);
+    assert.equal((await restarted.retryManually('https://oj.example.com/d/exam/')).total, 0);
+    assert.equal(f.attempts, 2, '有效回执对应的日志不再上传');
+    restarted.shutdown();
+});
+
+test('补传主动刷新签名身份，不能沿用旧账号缓存上传日志', async (t) => {
+    const f = fixture(t);
+    const controller = new ProctorController(f.options);
+    await controller.sync(contestUrl);
+    f.offline = true;
+    await controller.finish();
+    controller.shutdown();
+    f.offline = false;
+    const restarted = new ProctorController(f.options);
+    await restarted.sync('https://oj.example.com/d/exam/');
+    f.uid = 8;
+    const result = await restarted.retryManually('https://oj.example.com/d/exam/');
+    assert.equal(result.total, 0);
+    assert.equal(f.attempts, 0);
+    assert.equal(JSON.parse(fs.readFileSync(controller.current.journal.statePath, 'utf8')).phase, 'pending-upload');
+    restarted.shutdown();
+});
+
+test('补传验证时断网会保留日志并解除忙碌状态，联网后可再次扫描成功', async (t) => {
+    const f = fixture(t);
+    const first = new ProctorController(f.options);
+    await first.sync(contestUrl);
+    f.offline = true;
+    await first.finish();
+    first.shutdown();
+    const restarted = new ProctorController(f.options);
+    await assert.rejects(restarted.retryManually('https://oj.example.com/d/exam/'), /网络已断开/);
+    assert.equal(f.statuses.at(-1).retrying, false);
+    assert.equal(f.statuses.at(-1).logRetry.phase, 'failed');
+    assert.equal(f.attempts, 0);
+    f.offline = false;
+    const result = await restarted.retryManually('https://oj.example.com/d/exam/');
+    assert.equal(result.uploaded, 1);
+    assert.equal(result.failed, 0);
+    assert.equal(f.attempts, 1);
+    restarted.shutdown();
+});
+
+test('补传等待比赛身份时切换账号会中止，不继续生成上传证明', async (t) => {
+    const f = fixture(t);
+    const first = new ProctorController(f.options);
+    await first.sync(contestUrl);
+    f.offline = true;
+    await first.finish();
+    first.shutdown();
+    f.offline = false;
+    let release: () => void;
+    let arrived: () => void;
+    const waiting = new Promise<void>((resolve) => { arrived = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const original = f.options.createTransport;
+    f.options.createTransport = (origin, timeout) => {
+        const transport = original(origin, timeout);
+        const request = transport.request.bind(transport);
+        transport.request = async (target, options) => {
+            const body = typeof options?.body === 'string' ? JSON.parse(options.body) : options?.body;
+            if (target.endsWith('/proctor/identity') && body?.tid) {
+                arrived();
+                await gate;
+            }
+            return request(target, options);
+        };
+        return transport;
+    };
+    const restarted = new ProctorController(f.options);
+    const work = restarted.retryManually('https://oj.example.com/d/exam/');
+    await waiting;
+    f.uid = 8;
+    restarted.invalidateIdentity();
+    release();
+    await assert.rejects(work, /登录状态已变化/);
+    assert.equal(f.attempts, 0);
+    assert.equal(f.statuses.at(-1).logRetry, null);
+    restarted.shutdown();
 });
 
 test('受保护题目读取要求匹配客户端和开放会话，每次生成新 GET 证明', async (t) => {

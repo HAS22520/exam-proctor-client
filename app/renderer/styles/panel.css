@@ -8,3 +8,4 @@
   
 
 .brand{overflow-wrap:anywhere;flex:1;min-width:0}.badge,.toggle{flex:none}
+.log-retry{margin-top:12px}.log-retry .message{margin-top:6px;overflow-wrap:anywhere}.log-retry progress{display:block;width:100%;margin-top:4px;accent-color:#4265b1}

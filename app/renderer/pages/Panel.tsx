@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ClientStatus } from '../../types/status';
 import { Activity } from '../components/Activity';
+import { LogRetryControls } from '../components/LogRetryControls';
 import { usePanelDrag } from '../hooks/use-panel-drag';
 import type { StatusSource } from '../hooks/use-status';
 import { panelView } from '../lib/panel-view';
@@ -105,10 +106,10 @@ export function Panel({ bridge, host }: { bridge: PanelBridge, host: HTMLElement
           {update.canHotUpdate ? button('exam:update-install', '更新并重启', view.busy || view.installBlocked, view.installTitle) : null}
           {update.installerUrl ? button('exam:update-download', '下载安装包', view.busy) : null}
         </div>
+        <LogRetryControls status={status} pending={pending.includes('exam:retry')} onRetry={() => void action('exam:retry')} />
         <div className="actions">
-          {status.pendingUploads ? button('exam:retry', '补传日志') : null}
           {status.root && status.allowRootDebug ? button('exam:debug', '调试控制台') : null}
-          {button('exam:request-quit', '退出 / 结束监考', !!status.finishing, undefined, 'end')}
+          {button('exam:request-quit', '退出 / 结束监考', !!status.finishing || !!status.retrying, undefined, 'end')}
         </div>
       </div>
     </div>

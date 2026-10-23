@@ -19,6 +19,7 @@ export type {
     ClientStatus,
     DiagnosticEntry,
     DiagnosticSnapshot,
+    LogRetryStatus,
     Trace,
     TraceLevel,
     UpdateAnchor,

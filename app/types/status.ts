@@ -30,6 +30,16 @@ export interface UploadProgress {
     empty?: boolean;
 }
 
+/** 补传仅处理已关闭的日志，开放监考仍保持可续写。 */
+export interface LogRetryStatus {
+    phase: 'scanning' | 'uploading' | 'complete' | 'failed';
+    total: number;
+    uploaded: number;
+    failed: number;
+    unreadable: number;
+    open: number;
+}
+
 export interface UpdatePackage {
     version: string;
     buildVersion?: string;
@@ -82,6 +92,9 @@ export interface ClientStatus {
     createdAt?: string;
     root?: boolean;
     pendingUploads?: number;
+    loggedIn?: boolean;
+    retrying?: boolean;
+    logRetry?: LogRetryStatus;
     finishing?: boolean;
     upload?: UploadProgress;
     activity?: ActivityStatus;
