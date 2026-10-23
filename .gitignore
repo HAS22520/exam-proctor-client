@@ -30,6 +30,7 @@ app.asar
 *.zip
 .env.*
 config/build.local.json
+build.local.json.dev
 build.local.json.docker
 config/pem
 config/pem-dev
