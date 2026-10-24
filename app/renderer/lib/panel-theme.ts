@@ -13,9 +13,18 @@ export function panelAccent(value: string | null, dark: boolean) {
 }
 
 export function panelIconColor(color: string) {
-  if (!/^#[\da-f]{6}$/i.test(color)) return '#ffffff';
+  let hex = (color || '').trim();
+  if (/^#[\da-f]{3}$/i.test(hex)) {
+    hex = `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`;
+  } else {
+    const rgbMatch = hex.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (rgbMatch) {
+      hex = `#${rgbMatch.slice(1, 4).map((v) => Number(v).toString(16).padStart(2, '0')).join('')}`;
+    }
+  }
+  if (!/^#[\da-f]{6}$/i.test(hex)) return '#ffffff';
   const rgb = [1, 3, 5].map((start) => {
-    const value = Number.parseInt(color.slice(start, start + 2), 16) / 255;
+    const value = Number.parseInt(hex.slice(start, start + 2), 16) / 255;
     return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
   });
   return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722 > 0.179 ? '#142b3b' : '#ffffff';
@@ -44,6 +53,9 @@ export function bindPanelTheme(host: HTMLElement) {
     host.setAttribute('data-theme', dark ? 'dark' : 'light');
     host.style.setProperty('--panel-accent', fallback);
     host.style.setProperty('--panel-icon-color', panelIconColor(primary));
+    host.style.setProperty('--panel-icon-color-pending', panelIconColor(primary));
+    host.style.setProperty('--panel-icon-color-failed', panelIconColor(failed));
+    host.style.setProperty('--panel-icon-color-success', panelIconColor(success));
     host.style.setProperty('--panel-status-pending', primary);
     host.style.setProperty('--panel-status-failed', failed);
     host.style.setProperty('--panel-status-success', success);

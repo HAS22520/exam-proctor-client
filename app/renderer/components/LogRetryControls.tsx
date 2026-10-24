@@ -1,25 +1,30 @@
 /* eslint style/indent: ['warn', 2], style/indent-binary-ops: ['warn', 2] -- 前端遵循两空格缩进，其余检查保持启用。 */
+import type { ReactNode } from 'react';
 import type { ClientStatus } from '../../types/status';
 
 /** 入口始终可见，不依赖进入某场比赛后才发现的待上传数量。 */
-export function LogRetryControls({ status, pending, onRetry }: {
+export function LogRetryControls({ status, pending, onRetry, children }: {
   status: ClientStatus;
   pending: boolean;
   onRetry: () => void;
+  children?: ReactNode;
 }) {
   const busy = pending || status.retrying;
   const result = status.logRetry;
   const upload = status.upload;
   return (
     <div className="log-retry">
-      <button
-        disabled={!status.loggedIn || !!status.finishing || !!busy}
-        data-busy={!!busy}
-        title={status.loggedIn ? '扫描当前账号已结束但未上传的日志，按比赛逐份补传' : '请先登录原考试账号'}
-        onClick={onRetry}
-      >
-        {busy ? result?.phase === 'scanning' ? '扫描中…' : '补传中…' : '补传日志'}
-      </button>
+      <div className="action-row">
+        {children}
+        <button
+          disabled={!status.loggedIn || !!status.finishing || !!busy}
+          data-busy={!!busy}
+          title={status.loggedIn ? '扫描当前账号已结束但未上传的日志，按比赛逐份补传' : '请先登录原考试账号'}
+          onClick={onRetry}
+        >
+          {busy ? result?.phase === 'scanning' ? '扫描中…' : '补传中…' : '补传日志'}
+        </button>
+      </div>
       {result && (
         <div className="message" role="status" aria-live="polite">
           {result.phase === 'scanning' ? '正在验证账号并扫描本机日志…'

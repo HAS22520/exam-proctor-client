@@ -36,44 +36,29 @@
   flex-direction: column;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              height 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              min-height 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-              border-radius 0.25s ease,
-              background 0.25s ease,
-              border-color 0.25s ease,
+  transition: width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              height 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              max-height 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              min-height 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+              border-radius 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+              background 0.2s ease,
+              border-color 0.2s ease,
               box-shadow 0.25s ease;
 }
 
 .panel[data-state=pending] {
   --panel-status: var(--panel-status-pending, var(--hydro-primary, var(--panel-accent, #3f879c)));
-  --panel-ink: var(--panel-icon-color, #ffffff);
+  --panel-ink: var(--panel-icon-color-pending, var(--panel-icon-color, #ffffff));
 }
 
 .panel[data-state=failed] {
   --panel-status: var(--panel-status-failed, #dc2626);
-  --panel-ink: #ffffff;
+  --panel-ink: var(--panel-icon-color-failed, #ffffff);
 }
 
 .panel[data-state=success] {
   --panel-status: var(--panel-status-success, #15803d);
-  --panel-ink: #ffffff;
-}
-
-/* 顶部状态装饰线：球展开为信息栏时强化状态色关联 */
-.panel::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, var(--panel-status), color-mix(in srgb, var(--panel-status) 60%, transparent));
-  opacity: 1;
-  transition: opacity 0.2s ease, background 0.25s ease;
-  pointer-events: none;
-  z-index: 10;
+  --panel-ink: var(--panel-icon-color-success, #ffffff);
 }
 
 /* 拖动中禁用过渡动画，保证指针跟随绝对流畅 */
@@ -83,7 +68,7 @@
   transition: none !important;
 }
 
-/* 收起形态：悬浮球 */
+/* 收起形态：悬浮球（扁平化纯色，无渐变） */
 .panel.collapsed {
   width: 56px;
   height: 56px;
@@ -94,11 +79,7 @@
   background: transparent;
   border-radius: 50%;
   box-shadow: none;
-  overflow: visible;
-}
-
-.panel.collapsed::before {
-  opacity: 0;
+  overflow: hidden;
 }
 
 .status-ball {
@@ -110,30 +91,30 @@
   width: 56px;
   height: 56px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  border: 0;
   border-radius: 50%;
-  background: radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.1) 42%, transparent 70%), var(--panel-status);
+  background: var(--panel-status);
   color: var(--panel-ink);
-  box-shadow: 0 6px 20px -2px color-mix(in srgb, var(--panel-status) 40%, transparent),
-              0 2px 6px rgba(0, 0, 0, 0.16),
-              inset 0 -2px 6px rgba(0, 0, 0, 0.15),
-              inset 0 2px 4px rgba(255, 255, 255, 0.35);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--panel-status) 35%, transparent),
+              0 2px 4px rgba(0, 0, 0, 0.08);
   cursor: grab;
   touch-action: none;
   user-select: none;
   opacity: 1;
   transform: scale(1);
   pointer-events: auto;
-  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1) 0.06s,
+              transform 0.22s cubic-bezier(0.16, 1, 0.3, 1) 0.04s,
+              box-shadow 0.2s ease,
+              background 0.2s ease,
+              color 0.2s ease;
   z-index: 5;
 }
 
 .status-ball:hover {
-  transform: translateY(-2px) scale(1.06);
-  box-shadow: 0 10px 26px -2px color-mix(in srgb, var(--panel-status) 55%, transparent),
-              0 4px 10px rgba(0, 0, 0, 0.2),
-              inset 0 -2px 6px rgba(0, 0, 0, 0.15),
-              inset 0 2px 4px rgba(255, 255, 255, 0.45);
+  transform: scale(1.06);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--panel-status) 45%, transparent),
+              0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 .status-ball:active {
@@ -143,19 +124,19 @@
 
 .panel:not(.collapsed) .status-ball {
   opacity: 0;
-  transform: scale(0.5);
+  transform: scale(0.65);
   pointer-events: none;
   visibility: hidden;
-  transition: opacity 0.15s ease, transform 0.2s ease, visibility 0s 0.2s;
+  transition: opacity 0.12s ease, transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s 0.18s;
 }
 
 .ball-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.22));
+  width: 24px;
+  height: 24px;
+  color: inherit;
 }
 
 .ball-pulse {
@@ -177,20 +158,21 @@
   100% { transform: scale(1.18); opacity: 0; }
 }
 
-/* 展开信息栏内容容器 */
+/* 展开信息栏内容容器：固定宽度 296px 杜绝缩放过程中的文字重排抖动 */
 .panel-content {
   display: flex;
   flex-direction: column;
-  width: 100%;
+  width: 296px;
+  min-width: 296px;
   opacity: 1;
   transform: scale(1) translateY(0);
   pointer-events: auto;
-  transition: opacity 0.25s ease 0.06s, transform 0.28s cubic-bezier(0.16, 1, 0.3, 1) 0.04s;
+  transition: opacity 0.2s ease 0.06s, transform 0.24s cubic-bezier(0.16, 1, 0.3, 1) 0.04s;
 }
 
 .panel.collapsed .panel-content {
   opacity: 0;
-  transform: scale(0.9) translateY(8px);
+  transform: scale(0.94) translateY(6px);
   pointer-events: none;
   visibility: hidden;
   height: 0;
@@ -327,16 +309,24 @@
   white-space: pre-line;
 }
 
-.updates {
+/* 同一行操作工具栏：“检查更新”、“下载安装包”、“补传日志”并列在同一行 */
+.action-row {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
-.updates button {
+.action-row button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 4px;
   font-size: 11px;
-  padding: 4px 8px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  text-align: center;
 }
 
 .actions {
@@ -460,7 +450,7 @@ button[hidden], .update-warning[hidden], .waiting[hidden] {
 }
 
 .log-retry {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .log-retry .message {

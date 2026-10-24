@@ -11,7 +11,14 @@ import { generateIcons } from './generate-icons.mts';
 const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'out');
-fs.rmSync(output, { recursive: true, force: true });
+try {
+    fs.rmSync(output, { recursive: true, force: true });
+} catch {
+    if (fs.existsSync(output)) {
+        const trash = path.join(root, `.out-trash-${Date.now()}`);
+        fs.renameSync(output, trash);
+    }
+}
 for (const config of ['tsconfig.json', 'tsconfig.tests.json', 'tsconfig.renderer.json']) {
     const child = spawnSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', config], {
         cwd: root,

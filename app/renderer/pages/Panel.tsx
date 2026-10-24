@@ -162,12 +162,11 @@ export function Panel({ bridge, host }: { bridge: PanelBridge, host: HTMLElement
             </div>
             <div className="version">{view.version}</div>
             {view.warning ? <div className="update-warning">{view.warning}</div> : null}
-            <div className="updates">
+            <LogRetryControls status={status} pending={pending.includes('exam:retry')} onRetry={() => void action('exam:retry')}>
               {update.enabled ? button('exam:update-check', '检查更新', view.busy) : null}
               {update.canHotUpdate ? button('exam:update-install', '更新并重启', view.busy || view.installBlocked, view.installTitle) : null}
               {update.installerUrl ? button('exam:update-download', '下载安装包', view.busy) : null}
-            </div>
-            <LogRetryControls status={status} pending={pending.includes('exam:retry')} onRetry={() => void action('exam:retry')} />
+            </LogRetryControls>
             <div className="actions">
               {status.root && status.allowRootDebug ? button('exam:debug', '调试控制台') : null}
               {button('exam:request-quit', '退出 / 结束监考', !!status.finishing || !!status.retrying, undefined, 'end')}

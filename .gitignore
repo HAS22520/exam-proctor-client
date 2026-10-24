@@ -13,6 +13,8 @@ records/
 # 构建输出
 /dist/
 /out/
+/.out-*/
+/.out-trash*/
 /build/
 
 # 本地环境
