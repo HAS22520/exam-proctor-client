@@ -3,22 +3,16 @@ import type { ClientStatus } from '../../types/status';
 
 export function panelView(data: ClientStatus) {
   const info = data.update || { phase: 'disabled' };
+  const failed = ['network-error', 'authentication-error'].includes(data.phase || '');
+  const authenticated = !!data.authenticated && !failed;
   return {
-    badge: data.debug
-      ? '管理员'
-      : data.ended
-        ? '已结束'
-        : data.authenticated
-          ? '已认证'
-          : data.phase === 'network-error'
-            ? '连接中断'
-            : '待验证',
-    state: data.debug ? 'debug' : data.authenticated ? 'connected' : 'pending',
+    badge: failed ? '失败' : authenticated ? '成功' : '待认证',
+    state: failed ? 'failed' as const : authenticated ? 'success' as const : 'pending' as const,
     title: data.debug
       ? '管理员调试模式'
       : data.ended
         ? '本场监考已结束'
-        : data.authenticated
+        : authenticated
           ? '监考进行中'
           : data.phase === 'network-error'
             ? '网络连接中断'
@@ -37,7 +31,7 @@ export function panelView(data: ClientStatus) {
     message:
       data.upload && ['uploading', 'verifying'].includes(data.upload.phase)
         ? `日志${data.upload.phase === 'verifying' ? '等待服务端确认' : '上传中'}${Number.isFinite(data.upload.percent) ? ` · ${data.upload.percent}%` : ''}`
-        : data.message || (data.authenticated ? '结束监考时请完成日志上传。' : '请登录并进入比赛，客户端将自动验证。'),
+        : data.message || (authenticated ? '结束监考时请完成日志上传。' : '请登录并进入比赛，客户端将自动验证。'),
     version: [
       [`版本 ${info.version || '未知'}`, `构建 ${info.buildVersion || '未配置'}`, info.source === 'asar' ? 'ASAR' : '']
         .filter(Boolean)

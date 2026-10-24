@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LogRetryControls } from '../app/renderer/components/LogRetryControls';
+import { panelAccent, panelIconColor } from '../app/renderer/lib/panel-theme';
 import { panelView } from '../app/renderer/lib/panel-view';
 import { activityTiming } from '../app/renderer/lib/status-view';
 import { DialogContent } from '../app/renderer/pages/DialogPage';
@@ -12,6 +13,32 @@ import { UploadContent } from '../app/renderer/pages/UploadPage';
 import { applicationRoot, projectRoot } from '../scripts/project-layout';
 
 // 静态 React 渲染与状态逻辑回归；不启动浏览器或进行 UI 验收。
+test('监考状态球仅区分待认证、失败与成功，错误状态不能显示为成功', () => {
+    assert.equal(panelView({}).state, 'pending');
+    assert.equal(panelView({}).badge, '待认证');
+    assert.equal(panelView({ authenticated: true }).state, 'success');
+    assert.equal(panelView({ authenticated: true }).badge, '成功');
+    for (const phase of ['authentication-error', 'network-error']) {
+        const view = panelView({ phase, authenticated: true });
+        assert.equal(view.state, 'failed');
+        assert.equal(view.badge, '失败');
+    }
+    assert.equal(panelView({ ended: true, authenticated: false }).state, 'pending');
+    assert.equal(panelView({ debug: true }).state, 'pending');
+});
+
+test('待认证颜色支持 OJ 的预设及自定义主题色，图标在深浅底色上均可辨认', () => {
+    assert.equal(panelAccent('violet', false), '#7950f2');
+    assert.equal(panelAccent('violet', true), '#b197fc');
+    assert.equal(panelAccent('blue', false), '#228be6');
+    assert.equal(panelAccent('rose', true), '#f06595');
+    assert.equal(panelAccent('#12ABef', true), '#12ABef');
+    assert.equal(panelAccent(null, false), '#3f879c');
+    assert.equal(panelAccent('invalid', true), '#6bb3c7');
+    assert.equal(panelIconColor('#ffffff'), '#142b3b');
+    assert.equal(panelIconColor('#000000'), '#ffffff');
+});
+
 test('补传入口始终展示，按登录及忙碌状态禁用，展示逐份进度与未结束日志提醒', () => {
     const render = (status, pending = false) => renderToStaticMarkup(createElement(LogRetryControls, { status, pending, onRetry() {} }));
     assert.match(render({}), /disabled=""[^>]*title="请先登录原考试账号"[^>]*>补传日志/);
