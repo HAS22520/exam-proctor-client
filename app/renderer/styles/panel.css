@@ -1,8 +1,9 @@
 * { box-sizing: border-box; }
 
 :host, #hydro-proctor-status {
-  --panel-status: var(--panel-status-pending, var(--hydro-primary, var(--panel-accent, #3f879c)));
-  --panel-ink: var(--panel-icon-color, #ffffff);
+  --panel-status: var(--panel-status-pending, var(--mantine-primary-color-filled, var(--hydro-primary, var(--panel-accent, #3f879c))));
+  --panel-status-hover: var(--panel-status-pending-hover, var(--mantine-primary-color-filled-hover, var(--hydro-primary-strong, color-mix(in srgb, var(--panel-status) 88%, #000000))));
+  --panel-ink: var(--panel-icon-color-pending, var(--panel-icon-color, #ffffff));
   --panel-surface-bg: var(--hydro-surface-raised, #ffffff);
   --panel-text-color: var(--hydro-text, #23324b);
   --panel-text-muted-color: var(--hydro-text-muted, #71819b);
@@ -19,8 +20,9 @@
 }
 
 .panel {
-  --panel-status: var(--panel-status-pending, var(--hydro-primary, var(--panel-accent, #3f879c)));
-  --panel-ink: var(--panel-icon-color, #ffffff);
+  --panel-status: var(--panel-status-pending, var(--mantine-primary-color-filled, var(--hydro-primary, var(--panel-accent, #3f879c))));
+  --panel-status-hover: var(--panel-status-pending-hover, color-mix(in srgb, var(--panel-status) 88%, #000000));
+  --panel-ink: var(--panel-icon-color-pending, var(--panel-icon-color, #ffffff));
   position: relative;
   width: 296px;
   max-width: 100%;
@@ -47,17 +49,20 @@
 }
 
 .panel[data-state=pending] {
-  --panel-status: var(--panel-status-pending, var(--hydro-primary, var(--panel-accent, #3f879c)));
+  --panel-status: var(--panel-status-pending, var(--mantine-primary-color-filled, var(--hydro-primary, var(--panel-accent, #3f879c))));
+  --panel-status-hover: var(--panel-status-pending-hover, color-mix(in srgb, var(--panel-status) 88%, #000000));
   --panel-ink: var(--panel-icon-color-pending, var(--panel-icon-color, #ffffff));
 }
 
 .panel[data-state=failed] {
   --panel-status: var(--panel-status-failed, #dc2626);
+  --panel-status-hover: var(--panel-status-failed-hover, #b91c1c);
   --panel-ink: var(--panel-icon-color-failed, #ffffff);
 }
 
 .panel[data-state=success] {
   --panel-status: var(--panel-status-success, #15803d);
+  --panel-status-hover: var(--panel-status-success-hover, #166534);
   --panel-ink: var(--panel-icon-color-success, #ffffff);
 }
 
@@ -68,7 +73,7 @@
   transition: none !important;
 }
 
-/* 收起形态：悬浮球（扁平化纯色，无渐变） */
+/* 收起形态：悬浮球（与 topbar 注册按钮相同的纯色扁平化设计） */
 .panel.collapsed {
   width: 56px;
   height: 56px;
@@ -106,15 +111,18 @@
   transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1) 0.06s,
               transform 0.22s cubic-bezier(0.16, 1, 0.3, 1) 0.04s,
               box-shadow 0.2s ease,
-              background 0.2s ease,
-              color 0.2s ease;
+              background-color 0.18s ease,
+              color 0.18s ease;
   z-index: 5;
 }
 
+/* 悬停时按 Filled 按钮规范微加深色调，保持高对比度自适应图标 */
 .status-ball:hover {
-  transform: scale(1.06);
+  background: var(--panel-status-hover, color-mix(in srgb, var(--panel-status) 88%, #000000));
+  color: var(--panel-ink);
+  transform: scale(1.05);
   box-shadow: 0 6px 18px color-mix(in srgb, var(--panel-status) 45%, transparent),
-              0 2px 5px rgba(0, 0, 0, 0.1);
+              0 2px 5px rgba(0, 0, 0, 0.12);
 }
 
 .status-ball:active {
@@ -137,6 +145,7 @@
   width: 24px;
   height: 24px;
   color: inherit;
+  pointer-events: none;
 }
 
 .ball-pulse {
@@ -227,6 +236,7 @@
   display: block;
   width: 100%;
   height: 100%;
+  stroke: currentColor;
   pointer-events: none;
 }
 
@@ -336,7 +346,8 @@
   margin-top: 12px;
 }
 
-button {
+/* 常规面板按钮样式（排除悬浮球 status-ball 与收起按键 toggle） */
+button:not(.status-ball):not(.toggle) {
   border: 1px solid var(--panel-border-color);
   border-radius: 8px;
   background: var(--panel-surface-bg);
@@ -347,12 +358,12 @@ button {
   transition: background 0.15s, border-color 0.15s, transform 0.1s;
 }
 
-button:hover:not(:disabled) {
+button:not(.status-ball):not(.toggle):hover:not(:disabled) {
   background: var(--panel-soft-bg);
   border-color: color-mix(in srgb, var(--panel-status) 50%, var(--panel-border-color));
 }
 
-button:active:not(:disabled) {
+button:not(.status-ball):not(.toggle):active:not(:disabled) {
   transform: scale(0.98);
 }
 

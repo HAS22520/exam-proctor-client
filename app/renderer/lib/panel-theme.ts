@@ -45,10 +45,20 @@ export function bindPanelTheme(host: HTMLElement) {
     if (scheme === 'dark' || scheme === 'light') dark = scheme === 'dark';
     if (root.classList.contains('dark')) dark = true;
 
+    const rootStyles = getComputedStyle(root);
     const fallback = panelAccent(accent, dark);
-    const primary = getComputedStyle(root).getPropertyValue('--hydro-primary').trim() || fallback;
+    // 优先与 OJ topbar 注册按钮（Mantine primary filled 按钮）保持一致
+    const primary = rootStyles.getPropertyValue('--mantine-primary-color-filled').trim()
+        || rootStyles.getPropertyValue('--hydro-primary').trim()
+        || fallback;
+    const primaryHover = rootStyles.getPropertyValue('--mantine-primary-color-filled-hover').trim()
+        || rootStyles.getPropertyValue('--hydro-primary-strong').trim()
+        || (dark ? 'color-mix(in srgb, var(--panel-status) 90%, #ffffff)' : 'color-mix(in srgb, var(--panel-status) 88%, #000000)');
+
     const failed = dark ? '#ef4444' : '#dc2626';
+    const failedHover = dark ? '#dc2626' : '#b91c1c';
     const success = dark ? '#22c55e' : '#15803d';
+    const successHover = dark ? '#16a34a' : '#166534';
 
     host.setAttribute('data-theme', dark ? 'dark' : 'light');
     host.style.setProperty('--panel-accent', fallback);
@@ -57,8 +67,11 @@ export function bindPanelTheme(host: HTMLElement) {
     host.style.setProperty('--panel-icon-color-failed', panelIconColor(failed));
     host.style.setProperty('--panel-icon-color-success', panelIconColor(success));
     host.style.setProperty('--panel-status-pending', primary);
+    host.style.setProperty('--panel-status-pending-hover', primaryHover);
     host.style.setProperty('--panel-status-failed', failed);
+    host.style.setProperty('--panel-status-failed-hover', failedHover);
     host.style.setProperty('--panel-status-success', success);
+    host.style.setProperty('--panel-status-success-hover', successHover);
   };
   sync();
   const observer = new MutationObserver(sync);
