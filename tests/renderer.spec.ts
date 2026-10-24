@@ -9,6 +9,7 @@ import { panelAccent, panelIconColor } from '../app/renderer/lib/panel-theme';
 import { panelView } from '../app/renderer/lib/panel-view';
 import { activityTiming } from '../app/renderer/lib/status-view';
 import { DialogContent } from '../app/renderer/pages/DialogPage';
+import { Panel } from '../app/renderer/pages/Panel';
 import { UploadContent } from '../app/renderer/pages/UploadPage';
 import { applicationRoot, projectRoot } from '../scripts/project-layout';
 
@@ -25,6 +26,26 @@ test('监考状态球仅区分待认证、失败与成功，错误状态不能�
     }
     assert.equal(panelView({ ended: true, authenticated: false }).state, 'pending');
     assert.equal(panelView({ debug: true }).state, 'pending');
+});
+
+test('监考面板启动时默认为展开状态，包含悬浮球与信息栏形态且自适应各状态', () => {
+    const mockHost = {
+        style: { setProperty() {} },
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 296, height: 200 }),
+    };
+    const mockBridge = {
+        status: async () => ({}),
+        onStatus: () => () => {},
+        action: async () => {},
+    };
+    const html = renderToStaticMarkup(createElement(Panel, { bridge: mockBridge, host: mockHost as any }));
+    assert.match(html, /class="panel expanded"/);
+    assert.match(html, /data-state="pending"/);
+    assert.match(html, /data-collapsed="false"/);
+    assert.match(html, /class="status-ball"/);
+    assert.match(html, /class="panel-content"/);
+    assert.match(html, /class="badge"[^>]*data-state="pending"[^>]*>待认证/);
+    assert.match(html, /aria-label="收起监考面板"/);
 });
 
 test('待认证颜色支持 OJ 的预设及自定义主题色，图标在深浅底色上均可辨认', () => {

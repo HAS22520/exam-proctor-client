@@ -26,12 +26,21 @@ export function Panel({ bridge, host }: { bridge: PanelBridge, host: HTMLElement
   const drag = usePanelDrag(host, () => flushSync(() => setCollapsed(true)));
   useEffect(() => bindPanelTheme(host), [host]);
   useEffect(() => {
-    const collapse = (event: MouseEvent) => {
+    const collapse = (event: Event) => {
       if (!event.composedPath().includes(host)) setCollapsed(true);
     };
     const document = host.ownerDocument;
+    document.addEventListener('pointerdown', collapse, true);
     document.addEventListener('click', collapse, true);
-    return () => document.removeEventListener('click', collapse, true);
+    const onBlur = () => {
+      if (document.activeElement?.tagName === 'IFRAME') setCollapsed(true);
+    };
+    window.addEventListener('blur', onBlur);
+    return () => {
+      document.removeEventListener('pointerdown', collapse, true);
+      document.removeEventListener('click', collapse, true);
+      window.removeEventListener('blur', onBlur);
+    };
   }, [host]);
   useEffect(() => {
     let active = true;
@@ -95,34 +104,55 @@ export function Panel({ bridge, host }: { bridge: PanelBridge, host: HTMLElement
   );
   return (
     <div
-      className={`panel${collapsed ? ' collapsed' : ''}`}
+      className={`panel${collapsed ? ' collapsed' : ' expanded'}`}
       data-state={view.state}
+      data-collapsed={collapsed}
       {...drag}
-      onClick={() => { if (collapsed) setCollapsed(false); }}
+      onClick={() => {
+        if (collapsed) setCollapsed(false);
+      }}
     >
-      {collapsed ? (
-        <button
-          type="button"
-          className="status-ball"
-          data-panel-drag-handle
-          aria-label={`${view.badge}，展开监考面板`}
-          aria-expanded={false}
-          title={`${view.badge} · 点击展开，拖动移动`}
-        >
+      <button
+        type="button"
+        className="status-ball"
+        data-panel-drag-handle
+        aria-label={`${view.badge}，展开监考面板`}
+        aria-expanded={!collapsed}
+        title={`${view.badge} · 点击展开，拖动移动`}
+        tabIndex={collapsed ? 0 : -1}
+      >
+        <span className="ball-icon">
           <ProctorStatusIcon state={view.state} />
-        </button>
-      ) : (
-        <>
-          <div className="heading" title="拖动标题收起并移动监考面板" data-panel-drag-handle>
+        </span>
+        <span className="ball-pulse" aria-hidden="true" />
+      </button>
+
+      <div className="panel-content" aria-hidden={collapsed}>
+        <div className="heading" title="拖动标题收起并移动监考面板" data-panel-drag-handle>
+          <div className="heading-left">
             <span className="status-icon"><ProctorStatusIcon state={view.state} /></span>
             <span className="brand">{status.productName || '监考客户端'}</span>
+          </div>
+          <div className="heading-right">
             <span className="badge" data-state={view.state}>
               {view.badge}
             </span>
-            <button className="toggle" aria-label="收起监考面板" aria-expanded onClick={() => setCollapsed(true)}>
+            <button
+              type="button"
+              className="toggle"
+              aria-label="收起监考面板"
+              aria-expanded={!collapsed}
+              title="收起为悬浮球"
+              onClick={(event) => {
+                event.stopPropagation();
+                setCollapsed(true);
+              }}
+            >
               −
             </button>
           </div>
+        </div>
+        <div className="panel-scroll-body">
           <Activity activity={status.activity} compact />
           <div className="body">
             <div className="status">{view.title}</div>
@@ -143,8 +173,8 @@ export function Panel({ bridge, host }: { bridge: PanelBridge, host: HTMLElement
               {button('exam:request-quit', '退出 / 结束监考', !!status.finishing || !!status.retrying, undefined, 'end')}
             </div>
           </div>
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 }

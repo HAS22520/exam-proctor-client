@@ -34,10 +34,19 @@ export function bindPanelTheme(host: HTMLElement) {
     } catch { /* 页面禁用存储时仍继承 CSS 主题。 */ }
     const scheme = root.getAttribute('data-mantine-color-scheme');
     if (scheme === 'dark' || scheme === 'light') dark = scheme === 'dark';
+    if (root.classList.contains('dark')) dark = true;
+
     const fallback = panelAccent(accent, dark);
     const primary = getComputedStyle(root).getPropertyValue('--hydro-primary').trim() || fallback;
+    const failed = dark ? '#ef4444' : '#dc2626';
+    const success = dark ? '#22c55e' : '#15803d';
+
+    host.setAttribute('data-theme', dark ? 'dark' : 'light');
     host.style.setProperty('--panel-accent', fallback);
     host.style.setProperty('--panel-icon-color', panelIconColor(primary));
+    host.style.setProperty('--panel-status-pending', primary);
+    host.style.setProperty('--panel-status-failed', failed);
+    host.style.setProperty('--panel-status-success', success);
   };
   sync();
   const observer = new MutationObserver(sync);

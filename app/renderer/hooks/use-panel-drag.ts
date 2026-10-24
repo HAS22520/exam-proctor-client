@@ -7,7 +7,7 @@ const clamp = (value: number, max: number) => Math.max(0, Math.min(value, Math.m
 /** 仅存归一化坐标；窗口缩放、收起或内容变高时重新约束到可见区域。 */
 export function usePanelDrag(host: HTMLElement, onDragStart: () => void) {
   const position = useRef<{ x: number, y: number }>(null);
-  const dragging = useRef<{ id: number, x: number, y: number, startX: number, startY: number, moved: boolean }>(null);
+  const dragging = useRef<{ id: number, x: number, y: number, startX: number, startY: number, moved: boolean, wasExpanded: boolean }>(null);
   const suppressClick = useRef(false);
   const place = () => {
     if (!position.current) return;
@@ -38,6 +38,7 @@ export function usePanelDrag(host: HTMLElement, onDragStart: () => void) {
     if (!dragging.current || dragging.current.id !== event.pointerId) return;
     const { moved } = dragging.current;
     dragging.current = null;
+    host.removeAttribute('data-dragging');
     if (!moved) return;
     try {
       if (position.current) localStorage.setItem(storageKey, JSON.stringify(position.current));
@@ -53,6 +54,7 @@ export function usePanelDrag(host: HTMLElement, onDragStart: () => void) {
       dragging.current = {
         id: event.pointerId, x: event.clientX - rect.left, y: event.clientY - rect.top,
         startX: event.clientX, startY: event.clientY, moved: false,
+        wasExpanded: rect.width > 64,
       };
       // 捕获在始终存在的外层，收起后仍能继续接收同一次拖动。
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -64,11 +66,12 @@ export function usePanelDrag(host: HTMLElement, onDragStart: () => void) {
       if (!drag.moved) {
         if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
         const before = host.getBoundingClientRect();
+        host.setAttribute('data-dragging', 'true');
         onDragStart();
         const after = host.getBoundingClientRect();
-        if (before.width !== after.width || before.height !== after.height) {
-          drag.x = after.width / 2;
-          drag.y = after.height / 2;
+        if (drag.wasExpanded || before.width !== after.width || before.height !== after.height) {
+          drag.x = (after.width || 56) / 2;
+          drag.y = (after.height || 56) / 2;
         }
         drag.moved = true;
         suppressClick.current = true;
