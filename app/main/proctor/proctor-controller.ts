@@ -33,6 +33,7 @@ interface ControllerRecord {
     auth?: ProctorAuth;
     journal?: AuditLogger;
     completed?: boolean;
+    previousAttemptId?: string;
 }
 interface ControllerOptions {
     config: Pick<ClientConfig, 'trust'> & { exam: Pick<ClientConfig['exam'], 'allowedOrigins'> };
@@ -90,7 +91,7 @@ function submission(request: ProofRequest, context: RouteContext, login: LoginId
 function requireOpenAttempt(record: ControllerRecord) {
     let message, code;
     if (record.completed || record.journal?.state.phase === 'uploaded') {
-        message = '本场监考已结束且日志已上传，原账号不能继续本场比赛。请进入新比赛或联系管理员处理。';
+        message = '本场监考已结束且日志已上传。如需继续本场比赛，请联系管理员允许继续比赛后重新验证；旧日志将保留。';
         code = 'PROCTOR_ATTEMPT_COMPLETE';
     } else if (!record.journal || record.journal.state.phase !== 'open') {
         message = '本场监考已结束，日志尚待上传。请使用原账号补传日志；不能继续做题。';
@@ -192,6 +193,8 @@ class ProctorController {
     async cachedIdentity(url: string, key: string) {
         const entry = this.identityCache.get(key);
         if (!entry || entry.validUntil <= Date.now() || Date.parse(entry.login.expiresAt) <= Date.now() + 5000) return null;
+        // 终态不复用缓存，管理员恢复比赛后下一次导航即可发现新的签名轮次。
+        if (entry.record.completed || (entry.record.journal && entry.record.journal.state.phase !== 'open')) return null;
         const current = { ...entry.record, context: contextFromUrl(url), login: entry.login };
         if (current.auth && !current.completed && !current.auth.session) return null;
         if (current.context.rid && current.login.tid) {
@@ -226,10 +229,10 @@ class ProctorController {
                     : active?.journal?.state.phase || 'idle';
         const fallback =
             active?.completed || phase === 'uploaded'
-                ? '本场监考已结束且日志已上传，原账号不能继续本场比赛。请进入新比赛或联系管理员处理。'
+                ? '本轮监考已结束且日志已上传。管理员允许继续比赛后，重新验证即可开启新一轮监考，旧日志保留。'
                 : ended
                     ? '本场监考已结束，日志尚待上传。请使用原账号补传日志。'
-                    : '';
+                    : active?.previousAttemptId ? '已恢复监考，正在记录本轮新日志；之前的日志保持不变。' : '';
         const session = active?.auth?.session;
         this.onStatus({
             authenticated: !ended && !this.authenticationError && !!session && Date.parse(session.expiresAt) > Date.now(),
@@ -331,8 +334,13 @@ class ProctorController {
             this.status(login.root ? '已验证 root 身份' : '请登录并进入启用监考的比赛');
             return this.current;
         }
-        const recordKey = digest(canonical({ origin: context.origin, uid: login.uid, domainId: login.domainId, tid: context.tid }));
-        let record = this.records.get(recordKey);
+        const scope = { origin: context.origin, uid: login.uid, domainId: login.domainId, tid: context.tid };
+        let recordKey = digest(canonical(scope));
+        const prior = [...this.records.entries()].find(([, item]) => item.login.uid === login.uid
+            && item.login.domainId === login.domainId && item.context.origin === context.origin && item.context.tid === context.tid
+            && (!login.attemptId || (item.journal?.binding.attemptId || item.auth?.attemptId || item.login.attemptId) === login.attemptId));
+        let record = prior?.[1];
+        if (prior) recordKey = prior[0];
         if (!record) {
             record = { login, context, transport };
             record.auth = new ProctorAuth({
@@ -348,6 +356,7 @@ class ProctorController {
             if (epoch !== this.identityEpoch) throw new Error('登录状态已变化，请重新认证');
             if (session.completed) {
                 record.completed = true;
+                if (login.attemptId) recordKey = digest(canonical({ ...scope, attemptId: login.attemptId }));
                 this.records.set(recordKey, record);
                 this.current = record;
                 await this.onIdentity(login);
@@ -355,6 +364,7 @@ class ProctorController {
                 this.status();
                 return record;
             }
+            if (login.attemptId && session.attemptId !== login.attemptId) throw new Error('监考轮次已变化，请重新验证');
             const binding = {
                 origin: context.origin,
                 uid: login.uid,
@@ -364,6 +374,12 @@ class ProctorController {
                 publicKey: this.device.publicKey,
                 fingerprint: this.device.fingerprint,
             };
+            // 每轮独立存储；旧版按比赛命名的目录仍按绑定轮次定位并续写，绝不覆盖最终文件。
+            const journals = scanJournals(this.directory, login.uid, this.config.exam.allowedOrigins).entries;
+            const existing = journals
+                .find(({ state }) => state.binding.origin === context.origin && state.binding.domainId === login.domainId
+                    && state.binding.tid === context.tid && state.binding.attemptId === session.attemptId);
+            recordKey = existing?.key || digest(canonical({ ...scope, attemptId: session.attemptId }));
             record.journal = new AuditLogger({
                 directory: path.join(this.directory, recordKey),
                 binding,
@@ -371,8 +387,17 @@ class ProctorController {
                 logPublicKey: this.config.trust.logPublicKey,
                 keyId: this.config.trust.keyId,
             });
+            const previous = journals.filter(({ state }) => state.binding.origin === context.origin
+                && state.binding.domainId === login.domainId && state.binding.tid === context.tid
+                && state.binding.attemptId !== session.attemptId && state.phase !== 'open')
+                .sort((a, b) => Date.parse(b.state.createdAt) - Date.parse(a.state.createdAt)
+                    || b.state.binding.attemptId.localeCompare(a.state.binding.attemptId))[0];
+            if (previous) {
+                record.previousAttemptId = previous.state.binding.attemptId;
+                record.journal.append('PROCTOR_RESUMED', { previousAttemptId: record.previousAttemptId });
+            }
             record.journal.append('HANDSHAKE_SUCCEEDED');
-            const remote = await transport.request(context.proctorPath, { method: 'GET' });
+            const remote = await transport.request(`${context.proctorPath}?attemptId=${session.attemptId}`, { method: 'GET' });
             if (remote.state !== 'open' && record.journal.state.phase === 'open') record.journal.close();
             this.records.set(recordKey, record);
         }
@@ -440,7 +465,7 @@ class ProctorController {
             });
             auth.log = (event) => journal.append(event);
             journal.append('HANDSHAKE_SUCCEEDED');
-            const status = await transport.request(context.proctorPath, { method: 'GET' });
+            const status = await transport.request(`${context.proctorPath}?attemptId=${state.binding.attemptId}`, { method: 'GET' });
             if (status.state !== 'open') journal.close();
             this.records.set(entry, { context, login, transport, auth, journal });
         }
@@ -518,7 +543,8 @@ class ProctorController {
     }
 
     async confirmedUpload(record: ControllerRecord, sha256: string) {
-        const status = await record.transport.request(record.context.proctorPath, { method: 'GET' });
+        const status = await record.transport.request(`${record.context.proctorPath}?attemptId=${record.journal.binding.attemptId}`,
+            { method: 'GET' });
         if (
             status.state === 'complete'
             && status.logUploaded

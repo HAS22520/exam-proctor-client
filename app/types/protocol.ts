@@ -18,6 +18,8 @@ export interface DeviceIdentity {
 }
 
 export interface LoginIdentity {
+    /** 服务端签名确认的当前监考轮次；旧服务端可不提供。 */
+    attemptId?: string;
     rid?: string;
     uid: number;
     domainId: string;

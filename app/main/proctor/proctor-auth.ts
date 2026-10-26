@@ -34,6 +34,7 @@ async function identity(transport: Transport, context: RouteContext, trust: Trus
     });
     if (
         typeof payload.tid !== 'string'
+        || (payload.attemptId !== undefined && payload.attemptId !== '' && !/^[a-f0-9]{24}$/.test(payload.attemptId))
         || (payload.tid !== '' && !/^[a-f0-9]{24}$/.test(payload.tid))
         || (context.rid && payload.proctorEnabled && !payload.tid)
         || !Number.isSafeInteger(payload.uid)
@@ -127,6 +128,7 @@ class ProctorAuth {
             clientNonce,
             publicKey: this.device.publicKey,
             deviceInfo: info,
+            ...(this.attemptId ? { attemptId: this.attemptId } : {}),
         });
         const payload = verifyEnvelope<HandshakePayload>(response, this.trust.authPublicKey, {
             ...this.expected('handshake'),

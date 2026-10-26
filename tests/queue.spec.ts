@@ -20,13 +20,17 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
     let activeTid = '1234567890abcdef12345678';
     const blockedUploads = new Set<string>();
     const accounts = new Map();
+    const history = new Map();
+    let requestedAttempt: string | undefined;
     const account = () => {
+        if (requestedAttempt) return history.get(requestedAttempt);
         const key = `${uid}:${activeTid}`;
         if (!accounts.has(key)) {
             const attemptId = activeTid === '1234567890abcdef12345678'
                 ? uid === 7 ? 'b'.repeat(24) : uid.toString(16).padStart(24, '0')
                 : digest(key).slice(0, 24);
             accounts.set(key, { state: 'open', attemptId });
+            history.set(attemptId, accounts.get(key));
         }
         return accounts.get(key);
     };
@@ -40,6 +44,9 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
             const body = typeof request.body === 'string' ? JSON.parse(request.body.toString()) : request.body;
             activeTid = new URL(url).pathname.match(/\/contest\/([a-f\d]{24})/)?.[1]
                 || body?.tid || '1234567890abcdef12345678';
+            requestedAttempt = body?.attemptId || new URL(url).searchParams.get('attemptId')
+                || (body?.operation === 'handshake' ? challenge?.attemptId : undefined)
+                || tokens.get(request.headers?.['x-proctor-token'])?.attemptId || undefined;
             requests.push({ url: String(url), method: request.method, operation: body?.operation });
             let response;
             if (String(url).endsWith('/proctor/identity')) {
@@ -57,6 +64,7 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
                     routePid: body.problem || '',
                     pid: 100,
                     proctorEnabled: true,
+                    ...(body.tid || body.rid ? { attemptId: account().attemptId } : {}),
                     expiresAt: new Date(Date.now() + 60000).toISOString(),
                 });
             } else if (request.method === 'GET' && String(url).endsWith('/problems')) {
@@ -66,6 +74,7 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
                 const p = proof.payload;
                 assert.equal(session.uid, uid);
                 assert.equal(account().state, 'open');
+                assert.equal(session.attemptId, accounts.get(`${uid}:${activeTid}`).attemptId);
                 assert.equal(p.tokenHash, digest(token));
                 assert.equal(p.action, 'contest_view');
                 assert.equal(p.method, 'GET');
@@ -104,6 +113,7 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
                     version: body.version,
                     publicKey: body.publicKey,
                     deviceInfo: body.deviceInfo,
+                    ...(body.attemptId ? { attemptId: body.attemptId } : {}),
                     clientNonce: body.clientNonce,
                     challengeId: nonce(),
                     serverNonce: nonce(),
@@ -115,7 +125,7 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
                 if (account().receipt) response = { completed: true, receipt: account().receipt.id };
                 else {
                     const token = nonce();
-                    tokens.set(token, { uid });
+                    tokens.set(token, { uid, attemptId: account().attemptId });
                     response = {
                         token,
                         ...envelope({
@@ -191,6 +201,13 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
         statuses,
         requests,
         blockedUploads,
+        resume() {
+            const key = `${uid}:1234567890abcdef12345678`;
+            const next = { state: 'open', attemptId: digest(nonce()).slice(0, 24) };
+            accounts.set(key, next);
+            history.set(next.attemptId, next);
+            return next.attemptId;
+        },
         get attempts() {
             return attempts;
         },
@@ -233,7 +250,7 @@ test('登录变化立即撤销认证状态，同时保留可续写的加密日�
     }
 });
 
-test('已结束握手为终态，不重复握手，其他账号仍可独立访问同场比赛', async (t) => {
+test('未经管理员恢复的已结束轮次不重复握手，其他账号仍可独立访问同场比赛', async (t) => {
     const f = fixture(t);
     const first = new ProctorController(f.options);
     await first.sync(contestUrl);
@@ -281,6 +298,80 @@ test('已结束握手为终态，不重复握手，其他账号仍可独立访�
     assert.equal((await f.options.session.fetch(`${contestUrl}/problems`, { method: 'GET', headers })).status, 200);
     assert.equal(restarted.current.login.uid, 8);
     assert.equal(hasUnfinishedJournals(path.dirname(f.options.directory)), true);
+});
+
+test('管理员恢复后同一客户端识别新的签名轮次，保留旧文件并上传独立新日志', async (t) => {
+    const f = fixture(t);
+    const first = new ProctorController(f.options);
+    await first.sync(contestUrl);
+    await first.finish();
+    first.shutdown();
+    const oldJournal = first.current.journal;
+    const oldFile = path.join(oldJournal.directory, 'final.hplog');
+    const oldBytes = fs.readFileSync(oldFile);
+    const client = new ProctorController(f.options);
+    await client.sync(contestUrl);
+    assert.equal(client.current.completed, true);
+    const attemptId = f.resume();
+    const request: any = { action: 'contest_view', method: 'GET',
+        path: '/d/exam/contest/1234567890abcdef12345678/problems', payload: { tid: '1234567890abcdef12345678' } };
+    const headers = await client.headers(contestUrl, request);
+    assert.equal(client.current.auth.attemptId, attemptId);
+    assert.notEqual(client.current.journal.directory, oldJournal.directory);
+    assert.equal((await f.options.session.fetch(`${contestUrl}/problems`, { method: 'GET', headers })).status, 200);
+    assert.equal(f.statuses.at(-1).authenticated, true);
+    assert.match(f.statuses.at(-1).message, /已恢复监考/);
+    assert.equal(await client.finish(), true);
+    assert.equal(f.attempts, 2);
+    assert.deepEqual(fs.readFileSync(oldFile), oldBytes);
+    const newFile = path.join(client.current.journal.directory, 'final.hplog');
+    assert.notDeepEqual(fs.readFileSync(newFile), oldBytes);
+    assert.equal(decryptLog(newFile)[0].binding.attemptId, attemptId);
+    assert.ok(decryptLog(newFile).some((entry) => entry.type === 'PROCTOR_RESUMED'));
+    client.shutdown();
+});
+
+test('重启后定位旧版按比赛命名的目录，续写原轮次而不创建重复日志', async (t) => {
+    const f = fixture(t);
+    const first = new ProctorController(f.options);
+    await first.sync(contestUrl);
+    const original = first.current.journal;
+    const legacyKey = digest(canonical({ origin: 'https://oj.example.com', uid: 7, domainId: 'exam', tid: '1234567890abcdef12345678' }));
+    first.shutdown();
+    const legacyDirectory = path.join(f.options.directory, legacyKey);
+    fs.renameSync(original.directory, legacyDirectory);
+    const restarted = new ProctorController(f.options);
+    await restarted.sync(contestUrl);
+    assert.equal(restarted.current.journal.directory, legacyDirectory);
+    assert.equal(restarted.current.auth.attemptId, original.binding.attemptId);
+    assert.equal(fs.readdirSync(f.options.directory).length, 1);
+    restarted.shutdown();
+});
+
+test('恢复后的新旧日志可以分别上传，历史补传始终绑定原轮次', async (t) => {
+    const f = fixture(t);
+    const first = new ProctorController(f.options);
+    await first.sync(contestUrl);
+    f.blockedUploads.add('1234567890abcdef12345678');
+    assert.equal(await first.finish(), false);
+    first.shutdown();
+    const oldJournal = first.current.journal;
+    const oldBytes = fs.readFileSync(path.join(oldJournal.directory, 'final.hplog'));
+    f.blockedUploads.clear();
+    const nextAttempt = f.resume();
+    const next = new ProctorController(f.options);
+    await next.sync(contestUrl);
+    assert.equal(next.current.auth.attemptId, nextAttempt);
+    assert.equal(await next.finish(), true);
+    next.shutdown();
+    const nextBytes = fs.readFileSync(path.join(next.current.journal.directory, 'final.hplog'));
+    const retry = new ProctorController(f.options);
+    assert.equal((await retry.retryManually('https://oj.example.com/d/exam/')).uploaded, 1);
+    assert.equal(f.attempts, 2);
+    assert.deepEqual(fs.readFileSync(path.join(oldJournal.directory, 'final.hplog')), oldBytes);
+    assert.deepEqual(fs.readFileSync(path.join(next.current.journal.directory, 'final.hplog')), nextBytes);
+    assert.equal(JSON.parse(fs.readFileSync(oldJournal.statePath, 'utf8')).phase, 'uploaded');
+    retry.shutdown();
 });
 test('同账号同路由的并发认证共享一次握手和进度', async (t) => {
     const ActivityProgress = require('../app/main/diagnostics/activity-progress');
