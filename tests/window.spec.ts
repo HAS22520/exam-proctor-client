@@ -700,6 +700,23 @@ test('已结束比赛认证时不重新启用网络限制', async (t) => {
     assert.equal(f.windows[0].kiosk, false);
 });
 
+test('赛前已建立日志仍不锁网络或焦点，正式开赛后启用保护', async (t) => {
+    const f = await fixture(t, { delayLock: true });
+    const login = { uid: 7, root: false, proctorEnabled: true, beginAt: new Date(Date.now() + 60000).toISOString() };
+    f.controller.current = { login, journal: { state: { phase: 'open' } } };
+    f.controller.records.set('preflight', f.controller.current);
+    await f.controller.options.onIdentity(login);
+    assert.equal(f.antiCheatStarts, 0);
+    assert.equal(f.windows[0].kiosk, false);
+    login.beginAt = new Date(Date.now() - 1000).toISOString();
+    const applying = f.controller.options.onIdentity(login);
+    await f.locking;
+    f.releaseLock();
+    await applying;
+    assert.equal(f.windows[0].kiosk, true);
+    assert.equal(f.antiCheatStarts, 1);
+});
+
 test('不上传退出会暂停考试并恢复网络，不创建上传窗口', async (t) => {
     const f = await fixture(t, { exitChoice: 1 });
     await f.handlers.get('exam:request-quit')(f.event(f.windows[0]));

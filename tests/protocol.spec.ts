@@ -145,6 +145,28 @@ test('身份校验拒绝篡改的 root 权限', async () => {
     };
     await assert.rejects(identity(transport, c, trust));
 });
+
+test('开赛时间必须来自签名身份且格式有效，兼容旧服务端未提供时间', async () => {
+    const c = contextFromUrl('https://oj.example.com/d/exam/contest/1234567890abcdef12345678');
+    const beginAt = new Date(Date.now() + 60000).toISOString();
+    for await (const value of [undefined, beginAt, 'invalid', 123]) {
+        const transport: any = {
+            json: async (_, request) => {
+                const payload = { protocol: 'hydro-proctor/1', action: 'identity', keyId: trust.keyId, origin: c.origin,
+                    clientNonce: request.clientNonce, uid: 7, domainId: 'exam', root: false, tid: c.tid, routePid: '',
+                    proctorEnabled: true, expiresAt: new Date(Date.now() + 60000).toISOString(),
+                    ...(value === undefined ? {} : { beginAt: value }) };
+                return { payload, signature: sign(payload, auth.privateKey) };
+            },
+        };
+        if (value === undefined || value === beginAt) {
+            assert.equal((await identity(transport, c, trust)).beginAt, value);
+        } else {
+            await assert.rejects(identity(transport, c, trust), /身份无效/);
+        }
+    }
+});
+
 test('桥限制数字题号、准确域路径、动作和业务字段', () => {
     const request: any = {
         action: 'submit',

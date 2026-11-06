@@ -12,17 +12,21 @@ export function panelView(data: ClientStatus) {
       ? '管理员调试模式'
       : data.ended
         ? '本场监考已结束'
-        : authenticated
-          ? '监考进行中'
-          : data.phase === 'network-error'
-            ? '网络连接中断'
-            : data.phase === 'authentication-error'
-              ? '认证未完成'
-              : '等待比赛认证',
+        : data.phase === 'waiting' && authenticated
+          ? '认证通过，等待比赛开始'
+          : authenticated
+            ? '监考进行中'
+            : data.phase === 'network-error'
+              ? '网络连接中断'
+              : data.phase === 'authentication-error'
+                ? '认证未完成'
+                : '等待比赛认证',
     meta: [
-      data.createdAt
-        ? `已监考 ${Math.max(0, Math.floor((Date.now() - Date.parse(data.createdAt)) / 60000))} 分钟`
-        : '登录后进入比赛，自动验证客户端',
+      data.phase === 'waiting' && data.beginAt
+        ? `开赛时间：${new Date(data.beginAt).toLocaleString('zh-CN', { hour12: false })}`
+        : data.createdAt
+          ? `已监考 ${Math.max(0, Math.floor((Date.now() - Math.max(Date.parse(data.createdAt), Date.parse(data.beginAt || '') || 0)) / 60000))} 分钟`
+          : '登录后进入比赛，自动验证客户端',
       data.networkMode === 'macos-audit-only' ? 'macOS 仅记录日志，不限制系统网络' : '',
       data.pendingUploads ? `待补传 ${data.pendingUploads} 份` : '',
     ]

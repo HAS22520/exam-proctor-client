@@ -90,6 +90,7 @@ export interface ClientStatus {
     authenticated?: boolean;
     ended?: boolean;
     createdAt?: string;
+    beginAt?: string;
     root?: boolean;
     pendingUploads?: number;
     loggedIn?: boolean;

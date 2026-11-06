@@ -227,14 +227,17 @@ async function applyIdentity(login: LoginIdentity | null) {
     publishClientStatus();
     const uid = login?.uid ?? controller?.current?.login.uid;
     const ongoing = [...(controller?.records.values() || [])].some(
-        (record) => record.login.uid === uid && record.journal?.state.phase === 'open',
+        (record) => record.login.uid === uid && record.journal?.state.phase === 'open'
+            && !(Date.parse(record.login.beginAt || '') > Date.now()),
     );
     const activeRecord = controller?.current;
     const closed =
         !!activeRecord
         && activeRecord.login.uid === uid
         && (activeRecord.completed || (!!activeRecord.journal && activeRecord.journal.state.phase !== 'open'));
-    protectedFocus = !!uid && ((!!login?.proctorEnabled && !closed) || ongoing) && !debug;
+    // 赛前握手会建立加密日志，但系统网络和焦点保护等到正式开赛才启用。
+    const waiting = Date.parse(login?.beginAt || '') > Date.now();
+    protectedFocus = !!uid && ((!!login?.proctorEnabled && !waiting && !closed) || ongoing) && !debug;
     const protectedExam = protectedFocus && !exiting;
     if (protectedExam) {
         if (config.globalFirewallLock?.enabled) {

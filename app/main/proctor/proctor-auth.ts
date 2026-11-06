@@ -34,6 +34,7 @@ async function identity(transport: Transport, context: RouteContext, trust: Trus
     });
     if (
         typeof payload.tid !== 'string'
+        || (payload.beginAt !== undefined && (typeof payload.beginAt !== 'string' || !Number.isFinite(Date.parse(payload.beginAt))))
         || (payload.attemptId !== undefined && payload.attemptId !== '' && !/^[a-f0-9]{24}$/.test(payload.attemptId))
         || (payload.tid !== '' && !/^[a-f0-9]{24}$/.test(payload.tid))
         || (context.rid && payload.proctorEnabled && !payload.tid)

@@ -9,7 +9,8 @@ import { hasUnfinishedJournals } from '../app/main/updates/update-cache';
 import { auth, decryptLog, forEachSerial, store, trust, workspace } from './helpers';
 
 const contestUrl = 'https://oj.example.com/d/exam/contest/1234567890abcdef12345678';
-function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
+
+function fixture(t, recordOptions: { tid?: string, rid?: string, beginAt?: string } = {}) {
     const directory = workspace(t);
     const protectedStore = store(path.join(directory, 'secrets'));
     let offline = false;
@@ -64,6 +65,7 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
                     routePid: body.problem || '',
                     pid: 100,
                     proctorEnabled: true,
+                    ...(recordOptions.beginAt ? { beginAt: recordOptions.beginAt } : {}),
                     ...(body.tid || body.rid ? { attemptId: account().attemptId } : {}),
                     expiresAt: new Date(Date.now() + 60000).toISOString(),
                 });
@@ -231,6 +233,34 @@ function fixture(t, recordOptions: { tid?: string, rid?: string } = {}) {
         },
     };
 }
+
+test('赛前完成握手并保持等待状态，拒绝题目证明；开赛后复用同一轮次和日志', async (t) => {
+    const settings = { beginAt: new Date(Date.now() + 60000).toISOString() };
+    const f = fixture(t, settings);
+    const controller = new ProctorController(f.options);
+    try {
+        const record = await controller.sync(contestUrl);
+        assert.equal(f.statuses.at(-1).phase, 'waiting');
+        assert.equal(f.statuses.at(-1).authenticated, true);
+        assert.match(f.statuses.at(-1).message, /认证通过，等待比赛开始/);
+        const request: any = { action: 'contest_view', method: 'GET',
+            path: '/d/exam/contest/1234567890abcdef12345678/problems', payload: { tid: '1234567890abcdef12345678' } };
+        await assert.rejects(controller.headers(contestUrl, request), (error: any) => error.code === 'PROCTOR_CONTEST_NOT_STARTED');
+        assert.equal(controller.authenticationError, null);
+        assert.equal(f.statuses.at(-1).phase, 'waiting');
+        assert.equal(f.statuses.at(-1).authenticated, true);
+        settings.beginAt = new Date(Date.now() - 1000).toISOString();
+        const opened = await controller.sync(contestUrl, { force: true });
+        assert.equal(opened.journal, record.journal);
+        assert.equal(opened.auth.attemptId, record.auth.attemptId);
+        assert.equal(f.statuses.at(-1).phase, 'open');
+        assert.equal(f.statuses.at(-1).authenticated, true);
+        assert.ok((await controller.headers(contestUrl, request))['x-proctor-token']);
+        assert.equal(f.requests.filter((item) => item.operation === 'handshake').length, 1);
+    } finally {
+        controller.shutdown();
+    }
+});
 
 test('登录变化立即撤销认证状态，同时保留可续写的加密日志', async (t) => {
     const f = fixture(t);

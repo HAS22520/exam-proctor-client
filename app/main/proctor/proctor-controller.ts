@@ -96,6 +96,9 @@ function requireOpenAttempt(record: ControllerRecord) {
     } else if (!record.journal || record.journal.state.phase !== 'open') {
         message = '本场监考已结束，日志尚待上传。请使用原账号补传日志；不能继续做题。';
         code = 'PROCTOR_ATTEMPT_CLOSED';
+    } else if (Date.parse(record.login.beginAt || '') > Date.now()) {
+        message = '认证通过，等待比赛开始。开赛前不能读取题目或提交代码。';
+        code = 'PROCTOR_CONTEST_NOT_STARTED';
     }
     if (message) throw Object.assign(new Error(message), { code, publicMessage: message });
 }
@@ -219,6 +222,7 @@ class ProctorController {
         const pendingUploads = scanJournals(this.directory, this.current?.login.uid, this.config.exam.allowedOrigins)
             .entries.filter(({ state }) => ['closing', 'pending-upload'].includes(state.phase)).length;
         const ended = !!active?.completed || (!!active?.journal && active.journal.state.phase !== 'open');
+        const waiting = !ended && Date.parse(active?.login.beginAt || '') > Date.now();
         const phase =
             !ended && this.authenticationError
                 ? isNetworkError(this.authenticationError)
@@ -226,19 +230,21 @@ class ProctorController {
                     : 'authentication-error'
                 : active?.completed
                     ? 'complete'
-                    : active?.journal?.state.phase || 'idle';
+                    : waiting ? 'waiting' : active?.journal?.state.phase || 'idle';
         const fallback =
             active?.completed || phase === 'uploaded'
                 ? '本轮监考已结束且日志已上传。管理员允许继续比赛后，重新验证即可开启新一轮监考，旧日志保留。'
                 : ended
                     ? '本场监考已结束，日志尚待上传。请使用原账号补传日志。'
-                    : active?.previousAttemptId ? '已恢复监考，正在记录本轮新日志；之前的日志保持不变。' : '';
+                    : waiting ? '认证通过，等待比赛开始。开赛后客户端会自动进入监考状态。'
+                        : active?.previousAttemptId ? '已恢复监考，正在记录本轮新日志；之前的日志保持不变。' : '';
         const session = active?.auth?.session;
         this.onStatus({
             authenticated: !ended && !this.authenticationError && !!session && Date.parse(session.expiresAt) > Date.now(),
             phase,
             ended,
             createdAt: active?.journal?.state.createdAt || null,
+            beginAt: active?.login.beginAt,
             root: !!this.current?.login.root,
             pendingUploads,
             loggedIn: !!this.current?.login.uid,
@@ -490,7 +496,8 @@ class ProctorController {
                 return record.auth.proof('submit', request.path, payload);
             })
             .catch((error) => {
-                if (epoch === this.identityEpoch && !error.code?.startsWith('PROCTOR_ATTEMPT_')) {
+                if (epoch === this.identityEpoch && !error.code?.startsWith('PROCTOR_ATTEMPT_')
+                    && error.code !== 'PROCTOR_CONTEST_NOT_STARTED') {
                     this.authenticationFailed(error);
                 }
                 throw error;

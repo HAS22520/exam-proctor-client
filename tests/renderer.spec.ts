@@ -28,6 +28,17 @@ test('监考状态球仅区分待认证、失败与成功，错误状态不能�
     assert.equal(panelView({ debug: true }).state, 'pending');
 });
 
+test('赛前面板显示认证成功与开赛时间，不显示监考进行中或已监考时长', () => {
+    const view = panelView({ phase: 'waiting', authenticated: true, beginAt: new Date(Date.now() + 60000).toISOString(),
+        createdAt: new Date().toISOString(), message: '认证通过，等待比赛开始。' });
+    assert.equal(view.state, 'success');
+    assert.equal(view.badge, '成功');
+    assert.equal(view.title, '认证通过，等待比赛开始');
+    assert.match(view.meta, /开赛时间/);
+    assert.doesNotMatch(view.meta, /已监考/);
+    assert.equal(panelView({ phase: 'open', authenticated: true }).title, '监考进行中');
+});
+
 test('监考面板启动时默认为展开状态，包含悬浮球与信息栏形态且自适应各状态', () => {
     const mockHost = {
         style: { setProperty() {} },

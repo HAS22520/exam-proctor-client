@@ -18,6 +18,8 @@ export interface DeviceIdentity {
 }
 
 export interface LoginIdentity {
+    /** 服务端签名的比赛开始时间；兼容未提供此字段的旧服务端。 */
+    beginAt?: string;
     /** 服务端签名确认的当前监考轮次；旧服务端可不提供。 */
     attemptId?: string;
     rid?: string;
