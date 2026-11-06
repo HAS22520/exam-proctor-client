@@ -2,6 +2,8 @@ import * as assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { Writable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 import { test } from 'node:test';
 import { validateConfig } from '../app/main/security/config-policy';
 import { buildVersion } from '../app/main/updates/build-version';
@@ -177,6 +179,36 @@ test('真实 ASAR 包含发布签名且不含私钥，篡改字节即使外部�
         verifyArchive(result.filename, { ...result, sha256: crypto.createHash('sha256').update(bytes).digest('hex') }, f.anchor),
         /文件签名校验失败/,
     );
+});
+test('归档等待输出流完成后才生成元数据，写入失败不报告成功', async (t) => {
+    const f = fixture(t);
+    const asar = require('@electron/asar');
+    const createPackage = asar.createPackage;
+    let writeError = false;
+    t.after(() => { asar.createPackage = createPackage; });
+    // 模拟 ASAR 3 在 end() 后返回、底层文件仍在写入的行为。
+    asar.createPackage = async (source, destination) => {
+        const stream = new Writable({
+            final(callback) {
+                setImmediate(async () => {
+                    try {
+                        if (writeError) throw new Error('archive write failed');
+                        await finished(await createPackage(source, destination));
+                        callback();
+                    } catch (error) {
+                        callback(error);
+                    }
+                });
+            },
+        });
+        return stream.end();
+    };
+    const result = await release(f);
+    await verifyArchive(result.filename, result, f.anchor);
+    assert.equal(result.size, fs.statSync(result.filename).size);
+    writeError = true;
+    await assert.rejects(release(f, { PROCTOR_CLIENT_BUILD_VERSION: '2026101003' }), /archive write failed/);
+    assert.equal(fs.existsSync(path.join(f.root, 'updates/app-1.0.0-2026101003.json')), false);
 });
 test('签名归档不能更改信任密钥、白名单、调试权限、身份或 Electron 运行时', async (t) => {
     const f = fixture(t);

@@ -361,6 +361,7 @@ async function fixture(t, scenario: any = {}) {
     runInNewContext(fs.readFileSync(source, 'utf8'), {
         exports: {},
         URL,
+        Date: scenario.Date || Date,
         __dirname: path.dirname(source),
         require: (name) => mocks[name] || require(name),
         process: {
@@ -371,8 +372,8 @@ async function fixture(t, scenario: any = {}) {
         },
         setInterval: () => 1,
         clearInterval: () => {},
-        setTimeout,
-        clearTimeout,
+        setTimeout: scenario.setTimeout || setTimeout,
+        clearTimeout: scenario.clearTimeout || clearTimeout,
     });
     await initialized;
     await new Promise((resolve) => setImmediate(resolve));
@@ -669,12 +670,27 @@ test('控制台要求构建允许调试且 root 身份未过期', async (t) => {
         expiresAt: new Date(Date.now() + 60000).toISOString(),
     });
     assert.equal(disabled.windows.length, 1);
-    const f = await fixture(t, { debug: true });
-    await f.controller.options.onIdentity({ uid: 1, root: true, expiresAt: new Date(Date.now() - 1).toISOString() });
+    let now = Date.now();
+    let timer;
+    const f = await fixture(t, {
+        debug: true,
+        Date: class extends Date { static now() { return now; } },
+        setTimeout: (callback, delay) => (timer = { callback, delay, unref() {} }),
+        clearTimeout: () => { timer = null; },
+    });
+    await f.controller.options.onIdentity({ uid: 1, root: true, expiresAt: new Date(now - 1).toISOString() });
     assert.equal(f.windows.length, 1);
-    await f.controller.options.onIdentity({ uid: 1, root: true, expiresAt: new Date(Date.now() + 50).toISOString() });
+    await f.controller.options.onIdentity({ uid: 1, root: true, expiresAt: new Date(now + 50).toISOString() });
     const console = f.windows[1];
-    await new Promise((resolve) => setTimeout(resolve, 70));
+    assert.equal(timer.delay, 50);
+    const earlyTimer = timer;
+    now += 49;
+    earlyTimer.callback();
+    assert.equal(console.isDestroyed(), false);
+    assert.notEqual(timer, earlyTimer, '定时器提前触发时必须重新安排到期检查');
+    assert.equal(timer.delay, 1);
+    now += 1;
+    timer.callback();
     assert.equal(console.isDestroyed(), true);
     assert.throws(() => f.handlers.get('exam:debug-logs')(f.event(console), 0), /受信任/);
 });

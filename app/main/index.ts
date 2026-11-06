@@ -196,11 +196,18 @@ async function applyIdentity(login: LoginIdentity | null) {
     debugExpiry = next ? Date.parse(login.expiresAt) : 0;
     clearTimeout(debugTimer);
     if (next) {
-        debugTimer = setTimeout(() => {
-            if (debug && Date.now() >= debugExpiry) {
+        const checkExpiry = () => {
+            if (!debug || revision !== identityRevision) return;
+            const remaining = debugExpiry - Date.now();
+            if (remaining <= 0) {
                 applyIdentity(null).catch((error) => diagnostics.error('identity.revoke-failed', error));
+            } else {
+                // 定时器可能略早于墙上时钟到期，需再次安排检查。
+                debugTimer = setTimeout(checkExpiry, remaining);
+                debugTimer.unref?.();
             }
-        }, Math.max(1, debugExpiry - Date.now()));
+        };
+        debugTimer = setTimeout(checkExpiry, Math.max(1, debugExpiry - Date.now()));
         debugTimer.unref?.();
     }
     if (next !== debug) {

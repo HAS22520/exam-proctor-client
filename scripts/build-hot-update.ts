@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { finished } from 'node:stream/promises';
 import { sign, verify } from '../app/main/proctor/proctor-crypto';
 import { ENTRY } from '../app/main/updates/signed-archive';
 import { buildEnvironment } from './build';
@@ -94,7 +95,9 @@ async function buildArchive(env = process.env, root = projectRoot) {
             }
             fs.writeFileSync(path.join(staging, 'release.json'), JSON.stringify({ payload, signature }));
         }
-        await asar.createPackage(staging, filename);
+        // ASAR 3 返回已调用 end() 的输出流，此时文件可能仍未写完。
+        // 等待关闭后再读取大小和哈希，同时传播底层写入错误。
+        await finished(await asar.createPackage(staging, filename));
         const hash = crypto.createHash('sha256');
         for await (const chunk of fs.createReadStream(filename)) hash.update(chunk);
         const metadata = {
