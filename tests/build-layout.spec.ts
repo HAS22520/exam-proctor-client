@@ -118,6 +118,11 @@ test('Docker 暂存编译后应用，不复制 TS、本地配置或旧信任信�
 // 校验真实 electron-builder 的双 package.json 规则，不触发下载、打包或 UI。
 test('electron-builder 将 out 识别为应用根目录，并保持 npm 与父工作区隔离', async (t) => {
     const { Packager } = require('app-builder-lib/out/packager');
+    const { log } = require('builder-util');
+    const originalStream = log.stream;
+    // Node 22 的测试进程用 stdout 发送结果，builder 的 Unicode 日志可能打断该消息流。
+    log.stream = process.stderr;
+    t.after(() => { log.stream = originalStream; });
     const packager = new Packager({ projectDir: projectRoot });
     t.after(() => packager.tempDirManager.cleanup());
     await packager.validateConfig();
