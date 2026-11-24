@@ -29,7 +29,8 @@ const productName = running.identity.productName || DEFAULT_PRODUCT_NAME;
 const prompts = new DialogService({ BrowserWindow, ipcMain, dialog, productName });
 const diagnostics = new Diagnostics();
 let activity: ActivityProgress;
-const waitingWindow = new WaitingWindow(BrowserWindow, productName);
+const bootstrapWindow = running.takeWaitingWindow?.();
+const waitingWindow = bootstrapWindow || new WaitingWindow(BrowserWindow, productName);
 const trace = (
     level: TraceLevel,
     event: string,
@@ -75,7 +76,6 @@ let syncRequested = false;
 let lastUploadStage: string;
 let identityRevision = 0;
 let lastTick = Date.now();
-let preparationTimer: ReturnType<typeof setInterval>;
 let startupReady = false;
 let pageFailurePrompt = false;
 diagnostics.log('info', 'startup.process', { platform: process.platform, arch: process.arch });
@@ -88,7 +88,11 @@ app.on('second-instance', () => {
         prompts.focus();
         return;
     }
-    const target = uploadWindow && !uploadWindow.isDestroyed() ? uploadWindow : window || waitingWindow.window;
+    if (!startupReady) {
+        waitingWindow.focus();
+        return;
+    }
+    const target = uploadWindow && !uploadWindow.isDestroyed() ? uploadWindow : window;
     if (target && !target.isDestroyed()) {
         target.restore();
         target.show();
@@ -121,6 +125,15 @@ async function showExamDialog(options: ClientDialogOptions, owner = window) {
     } finally {
         dialogDepth--;
         applyWindowFocus();
+    }
+}
+
+async function showStartupDialog(options: ClientDialogOptions) {
+    dialogDepth++;
+    try {
+        return await prompts.show(options, waitingWindow.visibleWindow);
+    } finally {
+        dialogDepth--;
     }
 }
 
@@ -188,6 +201,7 @@ function publishActivity(status: ActivityStatus | null) {
 }
 
 activity = new ActivityProgress({ onChange: publishActivity });
+waitingWindow.bindStatus(ipcMain, () => activity.snapshot());
 
 async function applyIdentity(login: LoginIdentity | null) {
     const revision = ++identityRevision;
@@ -370,7 +384,7 @@ async function syncLogin(force = false) {
 }
 
 async function requestExit() {
-    if (exiting) return;
+    if (exiting || !startupReady) return;
     exiting = true;
     let response;
     try {
@@ -535,6 +549,8 @@ async function pageLoadFailed(code: number, message: string, url: string, isMain
 
 app.whenReady()
     .then(async () => {
+        // 兼容使用旧启动加载器安装、通过 ASAR 更新到当前主程序的客户端。
+        if (!bootstrapWindow) await waitingWindow.show().catch((error) => diagnostics.error('startup.progress-failed', error));
         app.setAboutPanelOptions?.({ applicationName: productName });
         if (process.platform === 'darwin') {
             const menu = Menu?.getApplicationMenu();
@@ -544,11 +560,11 @@ app.whenReady()
         // 原生辅助进程不会自动请求提权。
         const privilegeGuard = new FirewallGuard({}, null);
         try {
-            await privilegeGuard.checkPrivileges();
+            await activity.run('startup', 'check-privileges', () => privilegeGuard.checkPrivileges());
         } catch (error) {
             privilegeGuard.close();
             if (error.code !== 'ADMIN_REQUIRED') throw error;
-            await prompts.show({
+            await showStartupDialog({
                 type: 'warning',
                 title: '需要管理员权限',
                 message: '请使用管理员模式打开监考客户端',
@@ -558,22 +574,13 @@ app.whenReady()
                 cancelId: 0,
             });
             quitting = true;
+            waitingWindow.close();
             app.exit(1);
             return;
         }
         privilegeGuard.close();
         config = loadConfig();
         const updateSession = electronSession?.fromPartition('proctor-updates');
-        ipcMain.handle('exam:waiting-status', (event) => {
-            waitingWindow.context(event);
-            return activity.snapshot();
-        });
-        // 准备耗时明显时才打开本地 React 进度窗口；
-        // 网络恢复始终先于 OJ 页面加载完成。
-        preparationTimer = setTimeout(
-            () => waitingWindow.show().catch((error) => diagnostics.error('startup.progress-failed', error)),
-            350,
-        );
         if (config.debug.allowRoot) await diagnostics.enable(directory);
         trace('info', 'startup.config-loaded', {
             ...running.identity,
@@ -636,6 +643,7 @@ app.whenReady()
             height: 800,
             title: productName,
             icon: windowIcon,
+            show: false,
             autoHideMenuBar: true,
             webPreferences: {
                 preload: path.join(__dirname, '../preload/preload.js'),
@@ -656,8 +664,12 @@ app.whenReady()
         protectExamInput(window.webContents, logger);
         examNetwork = new ExamNetwork(window.webContents.session,
             [...new Set([...config.exam.allowedOrigins, ...(config.updater.allowedOrigins || [])])], trace, () => firewall.refresh(), updateSession);
-        if (process.platform === 'win32') await diagnostics.span('startup.direct-connection', () => examNetwork.prepare());
-        await diagnostics.span('startup.clear-login', () => resetLogin(window.webContents.session));
+        if (process.platform === 'win32') {
+            await diagnostics.span('startup.direct-connection', () =>
+                activity.run('startup', 'prepare-connection', () => examNetwork.prepare()));
+        }
+        await diagnostics.span('startup.clear-login', () =>
+            activity.run('startup', 'clear-login', () => resetLogin(window.webContents.session)));
         network = new NetworkGuard(config, logger);
         network.install(window);
         antiCheat = new AntiCheatGuard(window, config, logger);
@@ -692,6 +704,7 @@ app.whenReady()
         });
         ipcMain.handle('exam:update-install', async (event) => {
             ipcContext(event);
+            if (!startupReady) throw new Error('客户端正在启动，请稍候');
             if (!config.updater.enabled) throw new Error('更新功能未启用');
             if (exiting || hasUnfinishedJournals(directory)) throw new Error('请先上传日志并结束所有监考，再更新客户端');
             await updates.stage();
@@ -834,11 +847,11 @@ app.whenReady()
         await diagnostics.span('startup.load-exam', () =>
             activity.run('startup', 'load-exam', () => window.loadURL(config.exam.targetUrl)),
         );
-        trace('info', 'startup.ready');
-        startupReady = true;
-        clearTimeout(preparationTimer);
-        waitingWindow.close();
         running.markReady();
+        startupReady = true;
+        window.show();
+        waitingWindow.close();
+        trace('info', 'startup.ready');
         if (running.failure) trace('warn', 'update.rollback', running.failure);
         // 获取更新清单不能延迟登录和比赛认证。
         if (config.updater.enabled) {
@@ -863,11 +876,9 @@ app.whenReady()
         timer = setInterval(() => syncLogin(true), 15000);
     })
     .catch(async (error) => {
-        clearTimeout(preparationTimer);
-        waitingWindow.close();
         diagnostics.error('startup.failed', error);
         try {
-            await prompts.show({
+            await showStartupDialog({
                 type: 'error',
                 title: '客户端启动失败',
                 message: '客户端启动失败',
@@ -883,10 +894,12 @@ app.whenReady()
             diagnostics.error('startup.restore-failed', restoreError);
         }
         await diagnostics.pending;
+        quitting = true;
+        waitingWindow.close();
         app.exit(1);
     });
 app.on('before-quit', (event) => {
-    if (!quitting && window) {
+    if (!quitting && startupReady) {
         event.preventDefault();
         requestExit();
     }

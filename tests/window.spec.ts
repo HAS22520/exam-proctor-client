@@ -13,6 +13,7 @@ async function fixture(t, scenario: any = {}) {
     const directory = workspace(t);
     const handlers = new Map();
     const windows = [];
+    let waitingWindow;
     const choices = [];
     let quitCount = 0;
     let shutdownCount = 0;
@@ -56,7 +57,7 @@ async function fixture(t, scenario: any = {}) {
             quitCount++;
         },
         exit: (code) => {
-            if (!scenario.recoveryError && !scenario.adminError) assert.fail('初始化期间不应退出客户端');
+            if (!scenario.recoveryError && !scenario.adminError && !scenario.loadError) assert.fail('初始化期间不应退出客户端');
             assert.equal(code, 1);
             exitCount++;
             ready();
@@ -109,19 +110,27 @@ async function fixture(t, scenario: any = {}) {
                     },
                 },
                 setWindowOpenHandler: () => {},
-                send: (channel, value) => this.sent.push({ channel, value }),
+                send: (channel, value) => {
+                    this.sent.push({ channel, value });
+                    if (this === waitingWindow && channel === 'exam:waiting-status') {
+                        scenario.onWaitingStatus?.(value, this, handlers, startupSteps);
+                    }
+                },
                 isDevToolsOpened: () => false,
                 closeDevTools: () => {},
                 openDevTools: () => {},
                 getURL: () => this.webContents.mainFrame.url,
             });
             this.on('request-second-instance', () => app.emit('second-instance'));
-            windows.push(this);
+            if (options.webPreferences.partition === 'proctor-waiting') waitingWindow = this;
+            else windows.push(this);
         }
 
         async loadURL(url) {
             startupSteps.push('load-page');
             this.webContents.mainFrame.url = url;
+            await scenario.onLoadPage?.(this, waitingWindow, app);
+            if (scenario.loadError) throw scenario.loadError;
             ready();
         }
 
@@ -131,6 +140,10 @@ async function fixture(t, scenario: any = {}) {
 
         isDestroyed() {
             return !!this.destroyed;
+        }
+
+        isVisible() {
+            return !!this.showCount && !this.destroyed;
         }
 
         destroy() {
@@ -382,6 +395,7 @@ async function fixture(t, scenario: any = {}) {
         app,
         handlers,
         windows,
+        waitingWindow,
         choices,
         controller,
         errors,
@@ -418,6 +432,7 @@ test('非管理员启动在考试或恢复前提示关闭，并以管理员权�
     const error = Object.assign(new Error('请关闭软件，右键选择“以管理员身份运行”'), { code: 'ADMIN_REQUIRED' });
     const f = await fixture(t, { adminError: error });
     assert.equal(f.windows.length, 0);
+    assert.equal(f.waitingWindow.destroyed, true);
     assert.equal(f.recoverCount, 0);
     assert.equal(f.exitCount, 1);
     assert.match(f.choices[0].message, /管理员模式/);
@@ -537,7 +552,7 @@ test('后台认证和页面桥保留带版本说明的中文错误', async (t) =
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(f.handlers.get('exam:status')(f.event(main)).message, '网络设置失败');
 });
-test('启动恢复较慢时先展示本地进度，完成恢复后关闭进度窗口', async (t) => {
+test('启动窗口先出现，展示恢复进度，OJ 加载完成后才交接给主窗口', async (t) => {
     let release, show;
     const recoveryGate = new Promise((resolve) => {
         release = resolve;
@@ -547,7 +562,17 @@ test('启动恢复较慢时先展示本地进度，完成恢复后关闭进度�
     });
     const preparing = fixture(t, {
         recoveryGate,
-        onWaitingShow: (window, handlers, startupSteps) => show({ window, handlers, startupSteps }),
+        onWaitingStatus: (status, window, handlers, startupSteps) => {
+            if (status?.stage === 'restore') show({ window, handlers, startupSteps });
+        },
+        onLoadPage: (main, splash, app) => {
+            assert.equal(main.options.show, false);
+            assert.equal(main.isVisible(), false);
+            assert.equal(splash.isVisible(), true);
+            app.emit('second-instance');
+            assert.equal(splash.focusCount, 1);
+            assert.equal(main.isVisible(), false);
+        },
     });
     let native;
     try {
@@ -566,7 +591,16 @@ test('启动恢复较慢时先展示本地进度，完成恢复后关闭进度�
     const f = await preparing;
     assert.equal(native.window.destroyed, true);
     const main = f.windows.find((window) => window.webContents.mainFrame.url.startsWith('https://'));
+    assert.equal(main.showCount, 1);
     assert.equal(f.handlers.get('exam:status')(f.event(main)).activity, null);
+});
+
+test('OJ 首次加载失败时显示错误并关闭启动窗，主窗口始终隐藏', async (t) => {
+    const f = await fixture(t, { loadError: new Error('OJ 连接失败') });
+    assert.equal(f.windows[0].isVisible(), false);
+    assert.equal(f.waitingWindow.destroyed, true);
+    assert.equal(f.exitCount, 1);
+    assert.equal(f.errors[0].message, 'OJ 连接失败');
 });
 
 test('退出恢复失败时仍处理日志，上传后显示网络警告', async (t) => {

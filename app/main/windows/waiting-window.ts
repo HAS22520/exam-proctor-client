@@ -1,4 +1,5 @@
 import { DEFAULT_PRODUCT_NAME } from '../../shared/branding';
+import type { ActivityStatus } from '../contracts';
 import { localPreferences, pageFile, requireLocalFrame, secureLocalPage, windowIcon } from './local-page';
 
 class WaitingWindow {
@@ -40,7 +41,27 @@ class WaitingWindow {
         requireLocalFrame(this.window, 'waiting', event);
     }
 
-    publish(status: import('../contracts').ActivityStatus | null) {
+    bindStatus(ipcMain: Pick<Electron.IpcMain, 'handle'>, snapshot: () => ActivityStatus | null) {
+        ipcMain.handle('exam:waiting-status', (event) => {
+            this.context(event);
+            return snapshot();
+        });
+    }
+
+    get visibleWindow() {
+        const window = this.window;
+        return window && !window.isDestroyed() && window.isVisible() ? window : undefined;
+    }
+
+    focus() {
+        const window = this.window;
+        if (window && !window.isDestroyed() && (window.isVisible() || window.isMinimized())) {
+            window.restore();
+            window.focus();
+        }
+    }
+
+    publish(status: ActivityStatus | null) {
         if (this.window && !this.window.isDestroyed()) this.window.webContents.send('exam:waiting-status', status);
     }
 

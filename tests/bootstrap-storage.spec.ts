@@ -5,12 +5,15 @@ import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import { workspace } from './helpers';
 
-// 模拟慢迁移时 ready 已发出，无需启动 Electron 或窗口。
-test('加载器在异步迁移进入 ready 前固定所有 Electron 路径', async (t) => {
+// 模拟 Electron 的 ready、窗口和 IPC，不启动原生界面。
+test('加载器先配置路径，ready 后展示窗口，再迁移数据并把窗口交给主入口', async (t) => {
     const root = workspace(t);
     const directory = path.join(root, 'state');
     const calls = [];
     let ready = false;
+    let shown = false;
+    let status;
+    let splash;
     let loaded;
     let failed;
     const done = new Promise<void>((resolve, reject) => {
@@ -25,7 +28,9 @@ test('加载器在异步迁移进入 ready 前固定所有 Electron 路径', asy
         setName: () => {},
         requestSingleInstanceLock: () => true,
         setPath,
-        whenReady: async () => {},
+        on: () => {},
+        removeListener: () => {},
+        whenReady: async () => { ready = true; },
         exit: () => failed(new Error('启动过程应当成功')),
     };
     const source = path.resolve(__dirname, '../app/main/bootstrap.js');
@@ -36,7 +41,8 @@ test('加载器在异步迁移进入 ready 前固定所有 Electron 路径', asy
         process: { versions: { electron: '44.7.0' } },
         require(name) {
             if (name === '../shared/branding') return require('../app/shared/branding');
-            if (name === 'electron') return { app, ipcMain: { removeHandler: () => {} } };
+            if (name === './diagnostics/activity-progress') return require('../app/main/diagnostics/activity-progress');
+            if (name === 'electron') return { app, ipcMain: { removeHandler: () => { status = undefined; } } };
             if (name === './storage') {
                 return {
                     configureStorage: () => {
@@ -44,7 +50,8 @@ test('加载器在异步迁移进入 ready 前固定所有 Electron 路径', asy
                         return { root, directory, previous: '/old' };
                     },
                     migrateStorage: async () => {
-                        ready = true;
+                        assert.equal(shown, true);
+                        assert.equal(status().stage, 'prepare-data');
                         await new Promise((resolve) => setImmediate(resolve));
                     },
                     restoreBrowserProfile: async (state, browser) => {
@@ -58,6 +65,8 @@ test('加载器在异步迁移进入 ready 前固定所有 Electron 路径', asy
                 return {
                     UpdateCache: class {
                         async select() {
+                            assert.equal(shown, true);
+                            assert.equal(status().stage, 'verify-app');
                             return null;
                         }
 
@@ -65,6 +74,14 @@ test('加载器在异步迁移进入 ready 前固定所有 Electron 路径', asy
                             return null;
                         }
                     },
+                };
+            }
+            if (name === './windows/waiting-window') {
+                return class {
+                    constructor() { splash = this; }
+                    publish() {}
+                    bindStatus(_ipc, snapshot) { status = snapshot; }
+                    async show() { assert.equal(ready, true); shown = true; }
                 };
             }
             if (name === './updates/signed-archive') return { ENTRY: 'app/main/index.js' };
@@ -78,6 +95,8 @@ test('加载器在异步迁移进入 ready 前固定所有 Electron 路径', asy
                 };
             }
             if (name === './index') {
+                assert.equal(status, undefined);
+                assert.equal(context.__hydroProctorRuntime.takeWaitingWindow(), splash);
                 loaded();
                 return {};
             }

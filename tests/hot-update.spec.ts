@@ -428,6 +428,8 @@ test('安装包加载器选择缓存 ASAR 并展示实际版本，加载失败�
         let relaunch = 0;
         const app: any = {
             setName: () => {},
+            on: () => {},
+            removeListener: () => {},
             setPath: () => {},
             requestSingleInstanceLock: () => true,
             getPath: () => f.directory,
@@ -439,6 +441,7 @@ test('安装包加载器选择缓存 ASAR 并展示实际版本，加载失败�
         };
         context.require = (name) => {
             if (name === '../shared/branding') return require('../app/shared/branding');
+            if (name === './diagnostics/activity-progress') return require('../app/main/diagnostics/activity-progress');
             if (name === './storage') {
                 return {
                     configureStorage: () => ({ root: f.directory, directory: f.directory, previous: f.directory }),
@@ -447,7 +450,18 @@ test('安装包加载器选择缓存 ASAR 并展示实际版本，加载失败�
                 };
             }
             if (name === './windows/dialog-service') return { DialogService: class {} };
-            if (name === 'electron') return { app, dialog: { showErrorBox: (_title, message) => assert.fail(message) } };
+            if (name === './windows/waiting-window') {
+                return class {
+                    publish() {}
+                    bindStatus() {}
+                    show() { return Promise.resolve(); }
+                    close() {}
+                };
+            }
+            if (name === 'electron') {
+                return { app, ipcMain: { removeHandler: () => {} },
+                    dialog: { showErrorBox: (_title, message) => assert.fail(message) } };
+            }
             if (name === './updates/update-cache') return require('../app/main/updates/update-cache');
             if (name === './updates/signed-archive') return require('../app/main/updates/signed-archive');
             if (name === './index' || name.endsWith(path.join('.asar', 'app', 'main', 'index.js'))) {

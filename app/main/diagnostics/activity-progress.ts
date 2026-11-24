@@ -14,7 +14,12 @@ const stages: Record<string, [string, number, number]> = {
     'restore-outbound-policy': ['正在恢复原有网络访问策略', 3000, 20000],
     'restore-original-rules': ['正在恢复原有防火墙规则', 3000, 20000],
     'remove-exam-rules': ['正在移除考试网络限制', 3000, 20000],
+    'prepare-data': ['正在准备本地数据', 500, 10000],
+    'verify-app': ['正在检查客户端文件', 500, 5000],
+    'check-privileges': ['正在检查运行权限', 500, 5000],
     'boot-identity': ['正在检查系统重启状态', 1000, 5000],
+    'prepare-connection': ['正在准备考试网络连接', 500, 5000],
+    'clear-login': ['正在清理上次的登录状态', 500, 5000],
     'load-exam': ['正在打开考试页面', 1000, 10000],
     pause: ['正在保留日志并等待已发出的请求完成', 1000, 10000],
 };
